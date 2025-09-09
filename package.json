@@ -1,0 +1,22 @@
+{
+    "name": "system-design",
+    "version": "1.0.0",
+    "private": true,
+    "packageManager": "pnpm@9.1.0",
+    "scripts": {
+      "dev": "turbo run dev --parallel",
+      "lint": "turbo run lint",
+      "typecheck": "turbo run check-types",
+      "test": "turbo run test"
+    },
+    "devDependencies": {
+      "turbo": "latest",
+      "typescript": "^5.5.0",
+      "eslint": "^9.0.0",
+      "prettier": "^3.2.0"
+    },
+    "workspaces": [
+      "apps/*",
+      "packages/*"
+    ]
+  }
