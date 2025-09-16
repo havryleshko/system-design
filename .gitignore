@@ -4,3 +4,5 @@
 apps/web/.env
 apps/backend/.env
 node_modules
+/pycache
+/*.pyc
