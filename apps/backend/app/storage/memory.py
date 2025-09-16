@@ -1,0 +1,27 @@
+from __future__ import annotations
+from typing import List, Dict, Optional
+from uuid import uuid4
+from app.schemas.runs import RunStart, RunStatus, RunEvent, RunTrace
+
+_RUNS: Dict[str, RunStatus] = {}
+_EVENTS: Dict[str, List[RunEvent]] = {}
+
+def create_run(payload: RunStart) -> RunStatus:
+    run_id = str(uuid4())
+    status = RunStatus(id=run_id, status="queued")
+    _RUNS[run_id] = status
+    _EVENTS[run_id] = [RunEvent(ts_ms=0, level="info", message=f"started: {payload.input}")]
+    return status
+
+def get_run(run_id: str) -> Optional[RunStatus]:
+    return _RUNS.get(run_id)
+
+def add_event(run_id: str, event: RunEvent) -> None:
+    if run_id not in _EVENTS:
+        _EVENTS[run_id] = []
+    _EVENTS[run_id].append(event)
+
+def get_trace(run_id: str) -> Optional[RunTrace]:
+    if run_id not in _RUNS:
+        return None
+    return RunTrace(id=run_id, events=_EVENTS.get(run_id, []))
