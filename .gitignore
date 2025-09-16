@@ -6,3 +6,5 @@ apps/backend/.env
 node_modules
 /pycache
 /*.pyc
+/pycache
+/*.pyc
