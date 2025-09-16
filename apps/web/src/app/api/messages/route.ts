@@ -1,24 +1,15 @@
-import { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+
+const BASE = process.env.BACKEND_URL!;
 
 export async function POST(req: Request) {
-  try {
-    const { content } = await req.json()
-    const reply = { role: 'assistant', content: `Echo: ${content}` }
-    return new Response(JSON.stringify({ ok: true, reply }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: 'Bad request' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  }
-}
-
-
-export async function GET() {
-  return new Response(JSON.stringify({ ok: true, items: [] }), {
-    headers: { 'Content-Type': 'application/json' },
-  })
+  const body = await req.json();       
+  const r = await fetch(`${BASE}/runs`, { 
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input: body?.input ?? "" }),
+    
+  });
+  const json = await r.json();
+  return NextResponse.json(json, { status: r.status }); 
 }
