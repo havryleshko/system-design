@@ -1,12 +1,2 @@
-.turbo
-.env
-.env.local
-apps/web/.env
-apps/backend/.env
-node_modules
-/pycache
-/*.pyc
-/pycache
-/*.pyc
 /pycache
 /*.pyc
