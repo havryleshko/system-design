@@ -1,0 +1,18 @@
+{
+  "dependencies": [
+    "langgraph",
+    "langchain",
+    "langchain-openai",
+    "openai",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "httpx"
+  ],
+  "graphs": {
+    "system_design_agent": "app.agent.system_design.graph:graph"
+  },
+  "env": "./.env"
+}
