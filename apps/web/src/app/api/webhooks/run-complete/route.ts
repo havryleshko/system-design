@@ -8,6 +8,7 @@ const supabase = createClient(
 
 export async function POST(req: NextRequest) {
   try {
+    const payload = await req.json();
  
     // 1. Insert run trace into `trace_logs`
     const runTrace = {
@@ -24,23 +25,27 @@ export async function POST(req: NextRequest) {
       return new Response('Failed trace_logs insert: ' + traceError.message, { status: 500 });
     }
 
-
     const values = payload.state?.values ?? {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const messages: Array<{ role: string; content: any }> = Array.isArray(values.messages) ? values.messages : [];
     const qnaRows = messages
-    .filter(m => m.role === "user" || m.role === "assistant")
-    .map((m, i) => ({
+      .filter(m => m.role === "user" || m.role === "assistant")
+      .map((m, i) => ({
         thread_id: payload.thread_id,
         turn_index: i,
         role: m.role,
         content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-    }));
+      }));
+    
     if (qnaRows.length) {
-    const { error: qnaError } = await supabase.from("qna").upsert(qnaRows, { onConflict: "thread_id,turn_index" });
-    if (qnaError) {
+      const { error: qnaError } = await supabase.from("qna").upsert(qnaRows, { onConflict: "thread_id,turn_index" });
+      if (qnaError) {
         return new Response("Failed qna upsert: " + qnaError.message, { status: 500 });
-    }
+      }
     }
 
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  } catch (error) {
+    return new Response("Error: " + (error instanceof Error ? error.message : 'Unknown error'), { status: 500 });
   }
 }
