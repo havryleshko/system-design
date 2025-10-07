@@ -6,7 +6,8 @@ export default async function ResultPage() {
     await createThread();
     const { state } = await getState();
     const plan = state?.values?.plan || "";
-    const design = state?.values?.design || "";
+    const designBrief = state?.values?.design_brief || "";
+    const designJson = state?.values?.design_json || {};
     const output = state?.values?.output || "";
 
 
@@ -29,8 +30,10 @@ export default async function ResultPage() {
                 <summary>Debug fields</summary>
                 <h3>Plan</h3>
                 <pre style={{ whiteSpace: "pre-wrap"}}>{plan}</pre>
-                <h3>Design</h3>
-                <pre style={{ whiteSpace: "pre-wrap"}}>{design}</pre>
+                <h3>Design Brief</h3>
+                <pre style={{ whiteSpace: "pre-wrap"}}>{designBrief}</pre>
+                <h3>Design JSON</h3>
+                <pre style={{ whiteSpace: "pre-wrap"}}>{JSON.stringify(designJson, null, 2)}</pre>
             </details>
         </div>
     );

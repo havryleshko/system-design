@@ -10,5 +10,10 @@ class State(TypedDict, total=False):
     plan: str
     design: str
     output: str
+    grounding_queries: Annotated[list[str], operator.add]
+    grounding_snippets: Annotated[list[dict], operator.add]
+    citations: Annotated[list[dict], operator.add]
+    design_json: dict
+    design_brief: str
 
 MAX_ITERATIONS = 2
