@@ -2,26 +2,22 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { ASSISTANT_ID, BASE } from "@/utils/langgraph"; // if no path alias, use "../../utils/langgraph"
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { ASSISTANT_ID, BASE } from "@/utils/langgraph";
 
-// Read the thread_id cookie (Server Action only)
 async function getThreadCookie(): Promise<string | null> {
-  const store = await cookies(); // cookies() must be awaited in Server Actions
+  const store = await cookies();
   return store.get("thread_id")?.value ?? null;
 }
 
-// Write the thread_id cookie
-async function setThreadCookie(id: string): Promise<void> {
+export async function setThreadCookie(id: string): Promise<void> {
   const store = await cookies();
   store.set("thread_id", id, { path: "/", httpOnly: true });
 }
 
-// Create a thread if missing and persist its id in a cookie
-export async function createThread(): Promise<string> {
-  const existing = await getThreadCookie();
-  if (existing) return existing;
-
-  const res = await fetch(`${BASE}/threads`, { method: "POST" }); // POST /threads creates a thread
+export async function forceCreateThread(): Promise<string> {
+  const res = await fetch(`${BASE}/threads`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to create thread: ${res.status}`);
   const data = await res.json();
   const id: string = data.thread_id || data.id;
@@ -29,18 +25,60 @@ export async function createThread(): Promise<string> {
   return id;
 }
 
-// Fetch current thread state (values, next, metadata)
-export async function getState(threadId?: string) {
-  const tid = threadId || (await getThreadCookie()) || (await createThread());
-  const res = await fetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" }); // GET thread state
+type CreateThreadOptions = {
+  force?: boolean;
+};
+
+export async function createThread(options: CreateThreadOptions = {}): Promise<string> {
+  if (!options.force) {
+    const existing = await getThreadCookie();
+    if (existing) return existing;
+  }
+  const id = await forceCreateThread();
+  revalidatePath("/clarifier");
+  revalidatePath("/result");
+  revalidatePath("/chat");
+  return id;
+}
+
+function buildEnsureThreadUrl(redirectTo: string, force = false) {
+  const params = new URLSearchParams({ redirect: redirectTo });
+  if (force) params.set("force", "1");
+  return `/api/thread/ensure?${params.toString()}`;
+}
+
+type GetStateOptions = {
+  redirectTo?: string;
+};
+
+export async function getState(threadId?: string, options: GetStateOptions = {}) {
+  const redirectTo = options.redirectTo ?? "/";
+  const tid = threadId ?? (await getThreadCookie());
+  if (!tid) {
+    redirect(buildEnsureThreadUrl(redirectTo));
+  }
+  const res = await fetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" });
+  if (res.status === 404) {
+    redirect(buildEnsureThreadUrl(redirectTo, true));
+  }
   if (!res.ok) throw new Error(`Failed to fetch state: ${res.status}`);
   const state = await res.json();
-  return { threadId: tid, state };
+  const runId = state?.values?.run_id ?? null;
+  return { threadId: tid, state, runId };
+}
+
+export async function fetchTrace(runId: string) {
+  const res = await fetch(`${BASE}/runs/${runId}/trace`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch trace: ${res.status} ${text}`);
+  }
+  return res.json();
 }
 
 // Submit clarifier answers to resume the graph
 export async function submitClarifier(formData: FormData) {
-  const tid = (await getThreadCookie()) || (await createThread());
+  const tid = await createThread();
   const answers = Object.fromEntries(formData.entries());
 
   // Send answers as a user message; backend nodes normalize dicts/strings
@@ -60,7 +98,7 @@ export async function submitClarifier(formData: FormData) {
 
 // Backtrack one checkpoint and resume
 export async function backtrackLast() {
-  const tid = (await getThreadCookie()) || (await createThread());
+  const tid = await createThread();
 
   // 1) History (newest first)
   const histRes = await fetch(`${BASE}/threads/${tid}/history`, { cache: "no-store" }); // GET history

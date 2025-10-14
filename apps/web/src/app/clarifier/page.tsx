@@ -1,4 +1,4 @@
-import { createThread, getState, submitClarifier, backtrackLast } from "../actions";
+import { getState, submitClarifier, backtrackLast } from "../actions";
 import Link from "next/link";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,8 +16,7 @@ function lastAiQuestion(state: any): string {
 }
 
 export default async function ClarifierPage() {
-    await createThread();
-    const { state } = await getState();
+    const { state } = await getState(undefined, { redirectTo: "/clarifier" });
     const missing = state?.values?.missing_fields || [];
     const question = lastAiQuestion(state);
     const done = !missing || missing.length === 0;

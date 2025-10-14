@@ -5,6 +5,8 @@ from app.schemas.runs import RunStart, RunStatus, RunEvent, RunTrace
 
 _RUNS: Dict[str, RunStatus] = {}
 _EVENTS: Dict[str, List[RunEvent]] = {}
+_THREADS: Dict[str, Dict[str, any]] = {}
+_HISTORY: Dict[str, List[Dict[str, any]]] = {}
 
 def create_run(payload: RunStart) -> RunStatus:
     run_id = str(uuid4())
@@ -25,3 +27,22 @@ def get_trace(run_id: str) -> Optional[RunTrace]:
     if run_id not in _RUNS:
         return None
     return RunTrace(id=run_id, events=_EVENTS.get(run_id, []))
+
+
+def create_thread() -> Dict[str, any]:
+    thread_id = str(uuid4())
+    state = {"id": thread_id, "values": {}, "metadata": {}, "next": None}
+    _THREADS[thread_id] = state
+    _HISTORY[thread_id] = [{"state": state, "checkpoint_id": "root"}]
+    return {"thread_id": thread_id, "id": thread_id}
+
+
+def get_thread_state(thread_id: str) -> Optional[Dict[str, any]]:
+    state = _THREADS.get(thread_id)
+    if not state:
+        return None
+    return state
+
+
+def get_thread_history(thread_id: str) -> Optional[List[Dict[str, any]]]:
+    return _HISTORY.get(thread_id)
