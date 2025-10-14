@@ -12,6 +12,8 @@ class RunStatus(BaseModel):
 class RunEvent(BaseModel):
     ts_ms: int
     level: Literal["info", "warn", "error"]
+    message: str
+    data: dict | None = None
 
 class RunTrace(BaseModel):
     id: str

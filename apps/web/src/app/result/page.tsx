@@ -1,13 +1,15 @@
 
-import { createThread, getState } from "../actions";
+import { getState } from "../actions";
 
 
 export default async function ResultPage() {
-    await createThread();
-    const { state } = await getState();
+    const { state } = await getState(undefined, { redirectTo: "/result" });
     const plan = state?.values?.plan || "";
     const designBrief = state?.values?.design_brief || "";
     const designJson = state?.values?.design_json || {};
+    const criticScore = state?.values?.critic_score;
+    const criticNotes = state?.values?.critic_notes || "";
+    const criticFixes: string[] = state?.values?.critic_fixes || [];
     const output = state?.values?.output || "";
 
 
@@ -34,6 +36,20 @@ export default async function ResultPage() {
                 <pre style={{ whiteSpace: "pre-wrap"}}>{designBrief}</pre>
                 <h3>Design JSON</h3>
                 <pre style={{ whiteSpace: "pre-wrap"}}>{JSON.stringify(designJson, null, 2)}</pre>
+                <h3>Critic Score</h3>
+                <pre style={{ whiteSpace: "pre-wrap"}}>{criticScore ?? "n/a"}</pre>
+                <h3>Critic Notes</h3>
+                <pre style={{ whiteSpace: "pre-wrap"}}>{criticNotes}</pre>
+                {criticFixes.length ? (
+                    <>
+                        <h3>Critic Fixes</h3>
+                        <ul>
+                            {criticFixes.map((fix, idx) => (
+                                <li key={idx}>{fix}</li>
+                            ))}
+                        </ul>
+                    </>
+                ) : null}
             </details>
         </div>
     );
