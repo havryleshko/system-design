@@ -1,7 +1,7 @@
 from typing import Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from functools import lru_cache
 import json, os, math, requests
 from jsonschema import validate as jsonschema_validate, ValidationError
@@ -120,6 +120,94 @@ def trim_snippet(text: str, max_chars: int = 320) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
+
+
+def embed_query(text: str) -> Optional[list[float]]:
+    model_name = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        embedder = OpenAIEmbeddings(model=model_name)
+        return embedder.embed_query(text)
+    except Exception:
+        return None
+
+
+def kb_search(state: State) -> Dict[str, any]:
+    goal = (state.get("goal") or "").strip()
+    latest_user = last_human_text(state.get("messages", []))
+    query_parts = [goal]
+    if latest_user and latest_user.lower() != goal.lower():
+        query_parts.append(latest_user)
+    query = " ".join(part for part in query_parts if part).strip()
+    if not query:
+        return {}
+
+    embedding = embed_query(query)
+    if not embedding:
+        return {}
+
+    supabase_url = (os.getenv("SUPABASE_URL") or "").rstrip("/")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or ""
+    rpc_name = os.getenv("KB_MATCH_RPC", "match_playbook_chunks")
+    top_k = int(os.getenv("KB_TOP_K", "3") or 3)
+    if not supabase_url or not supabase_key:
+        return {}
+
+    payload = {
+        "query_embedding": embedding,
+        "match_count": top_k,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+    }
+    url = f"{supabase_url}/rest/v1/rpc/{rpc_name}"
+    snippets: list[dict[str, str | int]] = []
+    qualified = 0
+    threshold = float(os.getenv("KB_SIM_THRESHOLD", "0.78") or 0.78)
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        resp.raise_for_status()
+        results = resp.json() or []
+    except Exception:
+        results = []
+
+    for idx, row in enumerate(results[:top_k], start=1):
+        content = str(row.get("content") or "").strip()
+        if not content:
+            continue
+        summary = trim_snippet(content, 320)
+        sim = float(row.get("similarity") or 0.0)
+        if sim >= threshold:
+            qualified += 1
+        topic = str(row.get("topic") or row.get("category") or "kb").strip()
+        title = str(row.get("title") or topic.title() or "Playbook").strip()
+        cid = f"[KB{idx}]"
+        snippets.append({
+            "id": cid,
+            "summary": summary,
+            "source_url": f"kb://{topic}/{title}",
+            "token_count": estimate_tokens(summary),
+        })
+
+    metadata = state.setdefault("metadata", {})
+    metadata.update({
+        "kb_hits": len(snippets),
+        "kb_qualified": qualified,
+        "kb_threshold": threshold,
+    })
+
+    if not snippets:
+        return {"metadata": metadata}
+
+    return {
+        "grounding_snippets": snippets,
+        "citations": snippets,
+        "metadata": metadata,
+    }
 
 
 def tavily_search(

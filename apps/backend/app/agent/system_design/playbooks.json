@@ -1,0 +1,22 @@
+[
+  {
+    "topic": "auth",
+    "title": "Authentication Playbook",
+    "content": "Principles: use managed IdP (OIDC/OAuth2) when possible; short-lived tokens with refresh tokens stored server-side. Separate authN from authZ. Service-to-service: use mTLS or cloud workload identity and rotate secrets automatically. Multi-tenant: include tenant_id in claims and enforce row-level security. Browser sessions: SameSite=strict cookies, PKCE, rotate session ids after privilege changes. Logging: never store secrets, audit admin access."
+  },
+  {
+    "topic": "observability",
+    "title": "Observability Playbook",
+    "content": "Logging: structured JSON with request_id, trace_id, tenant_id, user_id. Tracing: OpenTelemetry, propagate context through HTTP, queues, batch jobs. Metrics: RED (requests/errors/duration) and USE (utilisation/saturation/errors); define SLOs and alert on error budget burn. Diagnostics: health/readiness endpoints, record deploy SHA and config hash. Retention: logs 7-14d, traces 3-7d sampled, metrics 30-90d with downsampling."
+  },
+  {
+    "topic": "storage",
+    "title": "Data Storage Choices Playbook",
+    "content": "Start with Postgres for OLTP; scale using read replicas, partitioning, or tenant sharding. Keep analytics separate (warehouse or columnar store). Cache hot reads with Redis and set TTLs. Document stores for flexible schemas but beware of multi-document transactions. Time-series: TimescaleDB or ClickHouse with partition-by-time and rollups. Blob assets in S3/GCS with metadata in DB and serve via CDN."
+  },
+  {
+    "topic": "queues",
+    "title": "Queues & Async Playbook",
+    "content": "Pattern: at-least-once delivery, idempotent consumers. Separate high-priority vs bulk queues; define DLQ with max attempts and visibility timeout. Brokers: SQS/PubSub for managed simplicity; Kafka for ordered high-throughput with partitioning by business key. Workers: cap concurrency, exponential backoff, circuit breakers when downstream fails, surface metrics (lag, throughput, error rate)."
+  }
+]

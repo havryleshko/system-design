@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Literal
 from langgraph.graph import StateGraph, START, END
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
-from .nodes import intent, clarifier, planner, web_search, designer, critic, finaliser 
+from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
 
 # defining a graph with shared state
 builder = StateGraph(State)
@@ -11,6 +11,7 @@ builder = StateGraph(State)
 builder.add_node("intent", intent)
 builder.add_node("clarifier", clarifier)
 builder.add_node("planner", planner)
+builder.add_node("kb_search", kb_search)
 builder.add_node("web_search", web_search)
 builder.add_node("designer", designer)
 builder.add_node("critic", critic)
@@ -40,16 +41,31 @@ builder.add_conditional_edges(
 
 from .nodes import last_human_text
 
-def route_from_planner(state: State) -> Literal["web_search", "designer"]:
+
+def route_from_planner(state: State) -> Literal["kb_search"]:
+    return "kb_search"
+
+
+def route_from_kb(state: State) -> Literal["web_search", "designer"]:
     user_msg = last_human_text(state.get("messages", []))
-    trigger_keywords = ["web", "cite", "search", "current data", "find online", "ground", "live"]
+    trigger_keywords = ["web", "search", "google", "browse", "internet", "cite", "live"]
     use_web = any(keyword in user_msg.lower() for keyword in trigger_keywords)
+    metadata = state.get("metadata", {}) or {}
+    qualified = int(metadata.get("kb_qualified") or 0)
+    if qualified < 2:
+        use_web = True
     return "web_search" if use_web else "designer"
 
 
 builder.add_conditional_edges(
     "planner",
     route_from_planner,
+    {"kb_search": "kb_search"}
+)
+
+builder.add_conditional_edges(
+    "kb_search",
+    route_from_kb,
     {"web_search": "web_search", "designer": "designer"}
 )
 
