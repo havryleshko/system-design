@@ -122,6 +122,45 @@ def trim_snippet(text: str, max_chars: int = 320) -> str:
     return text[: max_chars - 1].rstrip() + "…"
 
 
+def _snippet_key(s: dict) -> tuple[str, str, str]:
+    source_url = str(s.get("source_url") or "").strip().lower()
+    cid = str(s.get("id") or "").strip()
+    summary = trim_snippet(str(s.get("summary") or "").strip(), 200)
+    return (source_url, cid, summary)
+
+
+def _merge_snippet_lists(
+    existing: Sequence[dict[str, str | int]] | None,
+    incoming: Sequence[dict[str, str | int]] | None,
+    *,
+    max_total: int | None = None,
+) -> list[dict[str, str | int]]:
+    merged: list[dict[str, str | int]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for s in (existing or []):
+        k = _snippet_key(s)
+        if k in seen:
+            continue
+        merged.append(s)
+        seen.add(k)
+
+    for s in (incoming or []):
+        k = _snippet_key(s)
+        if k in seen:
+            continue
+        merged.append(s)
+        seen.add(k)
+
+    if max_total is None:
+        try:
+            max_total = int(os.getenv("GROUNDING_MAX_SNIPPETS", "6") or 6)
+        except Exception:
+            max_total = 6
+
+    return merged[: max(1, int(max_total))]
+
+
 def embed_query(text: str) -> Optional[list[float]]:
     model_name = os.getenv("EMBED_MODEL", "text-embedding-3-small")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -203,9 +242,18 @@ def kb_search(state: State) -> Dict[str, any]:
     if not snippets:
         return {"metadata": metadata}
 
+    # Merge with any existing global snippets/citations in state to avoid overwrite by other nodes
+    existing_snippets = state.get("grounding_snippets", []) or []
+    existing_citations = state.get("citations", []) or []
+    merged_snippets = _merge_snippet_lists(existing_snippets, snippets)
+    merged_citations = _merge_snippet_lists(existing_citations, snippets)
+
     return {
-        "grounding_snippets": snippets,
-        "citations": snippets,
+        "grounding_snippets": merged_snippets,
+        "citations": merged_citations,
+        # Source-specific outputs for introspection/debugging
+        "kb_grounding_snippets": snippets,
+        "kb_citations": snippets,
         "metadata": metadata,
     }
 
@@ -344,10 +392,31 @@ def web_search(state: State) -> Dict[str, any]:
             "token_count": int(snip.get("token_count", 0) or 0),
         })
 
+    # Merge with any existing global snippets/citations to avoid clobbering KB results
+    existing_snippets = state.get("grounding_snippets", []) or []
+    existing_citations = state.get("citations", []) or []
+    merged_snippets = _merge_snippet_lists(existing_snippets, structured)
+    merged_citations = _merge_snippet_lists(existing_citations, structured)
+
+    # Merge queries as well (dedupe)
+    existing_queries = [str(q) for q in (state.get("grounding_queries", []) or [])]
+    new_queries = [query] if query else []
+    all_queries = []
+    seen_q: set[str] = set()
+    for q in existing_queries + new_queries:
+        qn = (q or "").strip()
+        if not qn or qn in seen_q:
+            continue
+        all_queries.append(qn)
+        seen_q.add(qn)
+
     return {
-        "grounding_queries": [query] if query else [],
-        "grounding_snippets": structured,
-        "citations": structured,
+        "grounding_queries": all_queries,
+        "grounding_snippets": merged_snippets,
+        "citations": merged_citations,
+        # Source-specific outputs for introspection/debugging
+        "web_grounding_snippets": structured,
+        "web_citations": structured,
     }
 
 def _format_grounding(snippets: Sequence[dict[str, str | int]], max_chars: int = 600) -> str:
