@@ -1,7 +1,7 @@
 from typing import Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from functools import lru_cache
 import json, os, math, requests
 from jsonschema import validate as jsonschema_validate, ValidationError
@@ -120,6 +120,162 @@ def trim_snippet(text: str, max_chars: int = 320) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
+
+
+def _snippet_key(s: dict) -> tuple[str, str, str]:
+    source_url = str(s.get("source_url") or "").strip().lower()
+    cid = str(s.get("id") or "").strip()
+    summary = trim_snippet(str(s.get("summary") or "").strip(), 200)
+    return (source_url, cid, summary)
+
+
+def _merge_snippet_lists(
+    existing: Sequence[dict[str, str | int]] | None,
+    incoming: Sequence[dict[str, str | int]] | None,
+    *,
+    max_total: int | None = None,
+) -> list[dict[str, str | int]]:
+    merged: list[dict[str, str | int]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for s in (existing or []):
+        k = _snippet_key(s)
+        if k in seen:
+            continue
+        merged.append(s)
+        seen.add(k)
+
+    for s in (incoming or []):
+        k = _snippet_key(s)
+        if k in seen:
+            continue
+        merged.append(s)
+        seen.add(k)
+
+    if max_total is None:
+        try:
+            max_total = int(os.getenv("GROUNDING_MAX_SNIPPETS", "6") or 6)
+        except Exception:
+            max_total = 6
+
+    try:
+        limit = int(max_total)
+    except Exception:
+        limit = 6
+
+    if limit <= 0:
+        return []
+
+    return merged[:limit]
+
+
+def embed_query(text: str) -> Optional[list[float]]:
+    model_name = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        embedder = OpenAIEmbeddings(model=model_name)
+        return embedder.embed_query(text)
+    except Exception:
+        return None
+
+
+def kb_search(state: State) -> Dict[str, any]:
+    goal = (state.get("goal") or "").strip()
+    latest_user = last_human_text(state.get("messages", []))
+    query_parts = [goal]
+    if latest_user and latest_user.lower() != goal.lower():
+        query_parts.append(latest_user)
+    query = " ".join(part for part in query_parts if part).strip()
+    if not query:
+        return {}
+
+    embedding = embed_query(query)
+    if not embedding:
+        return {}
+
+    supabase_url = (os.getenv("SUPABASE_URL") or "").rstrip("/")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or ""
+    rpc_name = os.getenv("KB_MATCH_RPC", "match_playbook_chunks")
+    top_k = int(os.getenv("KB_TOP_K", "3") or 3)
+    if not supabase_url or not supabase_key:
+        return {}
+
+    payload = {
+        "query_embedding": embedding,
+        "match_count": top_k,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+    }
+    url = f"{supabase_url}/rest/v1/rpc/{rpc_name}"
+    snippets: list[dict[str, str | int]] = []
+    qualified = 0
+    threshold = float(os.getenv("KB_SIM_THRESHOLD", "0.78") or 0.78)
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        resp.raise_for_status()
+        results = resp.json() or []
+    except Exception:
+        results = []
+
+    for row in results:
+        content = str(row.get("content") or "").strip()
+        if not content:
+            continue
+        summary = trim_snippet(content, 320)
+        sim = float(row.get("similarity") or 0.0)
+        if sim >= threshold:
+            qualified += 1
+        topic = str(row.get("topic") or row.get("category") or "kb").strip()
+        title = str(row.get("title") or topic.title() or "Playbook").strip()
+        cid = f"[KB{len(snippets) + 1}]"
+        snippets.append({
+            "id": cid,
+            "summary": summary,
+            "source_url": f"kb://{topic}/{title}",
+            "token_count": estimate_tokens(summary),
+        })
+        if top_k and len(snippets) >= top_k:
+            break
+
+    try:
+        required_hits = int(os.getenv("KB_REQUIRED_HITS", "2") or 2)
+    except Exception:
+        required_hits = 2
+    required_hits = max(0, required_hits)
+    force_web_env = (os.getenv("KB_FORCE_WEB_ON_LOW_RESULTS") or "").strip().lower()
+    force_web_on_low = force_web_env in {"1", "true", "yes", "on", "y"}
+
+    metadata = state.setdefault("metadata", {})
+    metadata.update({
+        "kb_hits": len(snippets),
+        "kb_qualified": qualified,
+        "kb_threshold": threshold,
+        "kb_required_hits": required_hits,
+        "kb_force_web_on_low_results": force_web_on_low,
+    })
+
+    if not snippets:
+        return {"metadata": metadata}
+
+    # Merge with any existing global snippets/citations in state to avoid overwrite by other nodes
+    existing_snippets = state.get("grounding_snippets", []) or []
+    existing_citations = state.get("citations", []) or []
+    merged_snippets = _merge_snippet_lists(existing_snippets, snippets)
+    merged_citations = _merge_snippet_lists(existing_citations, snippets)
+
+    return {
+        "grounding_snippets": merged_snippets,
+        "citations": merged_citations,
+        # Source-specific outputs for introspection/debugging
+        "kb_grounding_snippets": snippets,
+        "kb_citations": snippets,
+        "metadata": metadata,
+    }
 
 
 def tavily_search(
@@ -256,10 +412,31 @@ def web_search(state: State) -> Dict[str, any]:
             "token_count": int(snip.get("token_count", 0) or 0),
         })
 
+    # Merge with any existing global snippets/citations to avoid clobbering KB results
+    existing_snippets = state.get("grounding_snippets", []) or []
+    existing_citations = state.get("citations", []) or []
+    merged_snippets = _merge_snippet_lists(existing_snippets, structured)
+    merged_citations = _merge_snippet_lists(existing_citations, structured)
+
+    # Merge queries as well (dedupe)
+    existing_queries = [str(q) for q in (state.get("grounding_queries", []) or [])]
+    new_queries = [query] if query else []
+    all_queries = []
+    seen_q: set[str] = set()
+    for q in existing_queries + new_queries:
+        qn = (q or "").strip()
+        if not qn or qn in seen_q:
+            continue
+        all_queries.append(qn)
+        seen_q.add(qn)
+
     return {
-        "grounding_queries": [query] if query else [],
-        "grounding_snippets": structured,
-        "citations": structured,
+        "grounding_queries": all_queries,
+        "grounding_snippets": merged_snippets,
+        "citations": merged_citations,
+        # Source-specific outputs for introspection/debugging
+        "web_grounding_snippets": structured,
+        "web_citations": structured,
     }
 
 def _format_grounding(snippets: Sequence[dict[str, str | int]], max_chars: int = 600) -> str:
