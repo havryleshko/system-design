@@ -158,7 +158,15 @@ def _merge_snippet_lists(
         except Exception:
             max_total = 6
 
-    return merged[: max(1, int(max_total))]
+    try:
+        limit = int(max_total)
+    except Exception:
+        limit = 6
+
+    if limit <= 0:
+        return []
+
+    return merged[:limit]
 
 
 def embed_query(text: str) -> Optional[list[float]]:
@@ -214,7 +222,7 @@ def kb_search(state: State) -> Dict[str, any]:
     except Exception:
         results = []
 
-    for idx, row in enumerate(results[:top_k], start=1):
+    for row in results:
         content = str(row.get("content") or "").strip()
         if not content:
             continue
@@ -224,19 +232,31 @@ def kb_search(state: State) -> Dict[str, any]:
             qualified += 1
         topic = str(row.get("topic") or row.get("category") or "kb").strip()
         title = str(row.get("title") or topic.title() or "Playbook").strip()
-        cid = f"[KB{idx}]"
+        cid = f"[KB{len(snippets) + 1}]"
         snippets.append({
             "id": cid,
             "summary": summary,
             "source_url": f"kb://{topic}/{title}",
             "token_count": estimate_tokens(summary),
         })
+        if top_k and len(snippets) >= top_k:
+            break
+
+    try:
+        required_hits = int(os.getenv("KB_REQUIRED_HITS", "2") or 2)
+    except Exception:
+        required_hits = 2
+    required_hits = max(0, required_hits)
+    force_web_env = (os.getenv("KB_FORCE_WEB_ON_LOW_RESULTS") or "").strip().lower()
+    force_web_on_low = force_web_env in {"1", "true", "yes", "on", "y"}
 
     metadata = state.setdefault("metadata", {})
     metadata.update({
         "kb_hits": len(snippets),
         "kb_qualified": qualified,
         "kb_threshold": threshold,
+        "kb_required_hits": required_hits,
+        "kb_force_web_on_low_results": force_web_on_low,
     })
 
     if not snippets:

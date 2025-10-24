@@ -52,8 +52,16 @@ def route_from_kb(state: State) -> Literal["web_search", "designer"]:
     use_web = any(keyword in user_msg.lower() for keyword in trigger_keywords)
     metadata = state.get("metadata", {}) or {}
     qualified = int(metadata.get("kb_qualified") or 0)
-    if qualified < 2:
-        use_web = True
+    required_hits = int(metadata.get("kb_required_hits") or 2)
+    force_web_on_low = metadata.get("kb_force_web_on_low_results", False)
+
+    if qualified < required_hits:
+        if force_web_on_low:
+            use_web = True
+        else:
+            use_web = False
+    elif not use_web:
+        use_web = False
     return "web_search" if use_web else "designer"
 
 
