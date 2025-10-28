@@ -6,8 +6,109 @@ from functools import lru_cache
 import json, os, math, requests
 from jsonschema import validate as jsonschema_validate, ValidationError
 from datetime import datetime
-from app.storage.memory import add_event
+from app.storage.memory import add_event, record_node_tokens
 from app.schemas.runs import RunEvent
+
+ARCHITECTURE_NODE_KINDS = [
+    "Person",
+    "Person_Ext",
+    "System",
+    "System_Ext",
+    "Container",
+    "Container_Ext",
+    "Component",
+    "Component_Ext",
+    "Database",
+    "Database_Ext",
+    "Queue",
+    "Queue_Ext",
+]
+
+ARCHITECTURE_GROUP_KINDS = [
+    "SystemBoundary",
+    "ContainerBoundary",
+    "DeploymentNode",
+]
+
+ARCHITECTURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "elements": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "kind": {"type": "string", "enum": ARCHITECTURE_NODE_KINDS},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "description": {"type": "string", "maxLength": 280},
+                    "technology": {"type": "string", "maxLength": 80},
+                    "parent": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "tags": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 40},
+                    },
+                },
+                "required": ["id", "kind", "label"],
+                "additionalProperties": False,
+            },
+        },
+        "relations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 48,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "target": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "technology": {"type": "string", "maxLength": 80},
+                    "direction": {"type": "string", "enum": ["->", "<-", "<->"]},
+                },
+                "required": ["source", "target", "label"],
+                "additionalProperties": False,
+            },
+        },
+        "groups": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "kind": {"type": "string", "enum": ARCHITECTURE_GROUP_KINDS},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "technology": {"type": "string", "maxLength": 80},
+                    "children": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 32,
+                        "items": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    },
+                },
+                "required": ["id", "kind", "label", "children"],
+                "additionalProperties": False,
+            },
+        },
+        "notes": {"type": "string", "maxLength": 400},
+    },
+    "required": ["elements", "relations"],
+    "additionalProperties": False,
+}
+
+FINALISER_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "markdown": {"type": "string", "minLength": 10},
+        "architecture": ARCHITECTURE_SCHEMA,
+    },
+    "required": ["markdown", "architecture"],
+    "additionalProperties": False,
+}
 
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
@@ -83,8 +184,9 @@ def log_token_usage(run_id: str, node: str, response: BaseMessage) -> None:
     prompt_tokens = int(usage.get("input_tokens", 0))
     completion_tokens = int(usage.get("output_tokens", 0))
     total = int(usage.get("total_tokens", prompt_tokens + completion_tokens))
+    ts_ms = int(datetime.now().timestamp() * 1000)
     add_event(run_id, RunEvent(
-        ts_ms=int(datetime.now().timestamp() * 1000),
+        ts_ms=ts_ms,
         level="info",
         message=f"{node} tokens",
         data={
@@ -93,6 +195,7 @@ def log_token_usage(run_id: str, node: str, response: BaseMessage) -> None:
             "total_tokens": total,
         }
     ))
+    record_node_tokens(run_id, node, prompt_tokens, completion_tokens, total)
 
 def collect_recent_context(messages: list[BaseMessage], max_chars: int = 600) -> str:
     buf: list[str] = []
@@ -589,22 +692,42 @@ def finaliser(state: State) -> Dict[str, any]:
     citations = state.get("citations", []) or []
     critic_score = state.get("critic_score")
     critic_notes = state.get("critic_notes")
+    prev_architecture = state.get("architecture_json") or {}
     sys = SystemMessage(content=(
-        "Being an expert in system design, edit it to a clear markdown for an engineer"
-        "Include: Title with the goal, Executive Summary (3-5 bullets), Plan (numbered and in order it needs to be done), Design (sections) and Next Steps (checklist, in order of execution). Keep it short and practical"
+        "You are an expert system design summariser and diagram planner."
+        "Return JSON only matching this schema:"
+        f"{json.dumps(FINALISER_RESPONSE_SCHEMA)}"
     ))
     design_sections = json.dumps(design_json, ensure_ascii=False, indent=2)
+    architecture_hint = json.dumps(prev_architecture, ensure_ascii=False) if prev_architecture else "{}"
     prompt = (
-        f"Title: {goal}\n\n"
-        f"PLAN:\n{plan}\n\n"
-        f"DESIGN_BRIEF:\n{design_brief}\n\n"
-        f"DESIGN_JSON:\n{design_sections}\n\n"
-        + (f"CRITIC_SCORE: {critic_score}\n\n" if critic_score is not None else "")
-        + (f"CRITIC_NOTES:\n{critic_notes}\n\n" if critic_notes else "")
-        + "Assemble the final markdown now."
+        "Assemble a polished markdown summary and compact Mermaid architecture JSON.\n"
+        f"Goal: {goal}\n\n"
+        f"Plan:\n{plan}\n\n"
+        f"Design brief:\n{design_brief}\n\n"
+        f"Design JSON:\n{design_sections}\n\n"
+        f"Previous architecture JSON (if any):\n{architecture_hint}\n\n"
+        + (f"Critic score: {critic_score}\n\n" if critic_score is not None else "")
+        + (f"Critic notes:\n{critic_notes}\n\n" if critic_notes else "")
+        + "Markdown requirements: Title with goal, Executive Summary (3-5 bullets), Plan (numbered steps), "
+        "Design (sections), Next Steps (checklist, execution order). Keep concise and practical.\n"
+        "Architecture requirements: Use existing elements when possible, stick to IDs and kinds that align with Mermaid C4."
     )
     run_id = state.get("metadata", {}).get("run_id")
-    output_md = call_brain([sys, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
+    raw_response = call_brain([sys, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
+    parsed = json_only(raw_response) or {}
+    try:
+        jsonschema_validate(parsed, FINALISER_RESPONSE_SCHEMA)
+    except ValidationError:
+        recovery = SystemMessage(content=(
+            "Respond again as JSON only that matches the schema exactly."
+        ))
+        raw_response = call_brain([recovery, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
+        parsed = json_only(raw_response) or {}
+        jsonschema_validate(parsed, FINALISER_RESPONSE_SCHEMA)
+
+    output_md = str(parsed.get("markdown") or "").strip()
+    architecture_json = parsed.get("architecture") or {}
     if citations:
         ref_lines = [
             f"{str(c.get('id') or '')} {str(c.get('source_url') or '')}"
@@ -614,4 +737,4 @@ def finaliser(state: State) -> Dict[str, any]:
         if ref_lines:
             output_md = output_md.rstrip() + "\n\nReferences\n" + "\n".join(ref_lines)
 
-    return {"output": output_md}
+    return {"output": output_md, "architecture_json": architecture_json}
