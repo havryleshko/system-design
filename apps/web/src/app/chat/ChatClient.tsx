@@ -28,8 +28,7 @@ type ChatClientProps = {
 
 export default function ChatClient({
     initialMessages,
-    runId,
-    userId
+    runId
 }: ChatClientProps) {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
     const [input, setInput] = useState('')
