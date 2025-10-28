@@ -3,11 +3,12 @@ import ChatGuard from "./Guard";
 import { getState } from "../actions";
 
 export default async function Page() {
-  const { runId } = await getState(undefined, { redirectTo: "/chat" });
+  const { runId, state } = await getState(undefined, { redirectTo: "/chat" });
   const initialMessages: { role: "user" | "assistant" | "system"; content: string }[] = [];
+  const userId = state?.values?.user_id ?? null;
   return (
     <ChatGuard>
-      <ChatClient initialMessages={initialMessages} runId={runId} />
+      <ChatClient userId={userId} initialMessages={initialMessages} runId={runId} />
     </ChatGuard>
   );
 }
