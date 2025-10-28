@@ -5,6 +5,31 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { ASSISTANT_ID, BASE } from "@/utils/langgraph";
+import { createServerSupabase } from "@/utils/supabase/server";
+
+async function ensureSession(redirectTo: string): Promise<string> {
+  const supabase = await createServerSupabase();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token ?? null;
+  if (!token) {
+    const params = new URLSearchParams();
+    if (redirectTo && redirectTo !== '/') {
+      params.set('redirect', redirectTo);
+    }
+    const query = params.toString();
+    redirect(query ? `/login?${query}` : '/login');
+  }
+  return token;
+}
+
+async function authFetch(input: string, init: RequestInit = {}, redirectTo = "/chat") {
+  const token = await ensureSession(redirectTo);
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
 
 async function getThreadCookie(): Promise<string | null> {
   const store = await cookies();
@@ -17,7 +42,7 @@ export async function setThreadCookie(id: string): Promise<void> {
 }
 
 export async function forceCreateThread(): Promise<string> {
-  const res = await fetch(`${BASE}/threads`, { method: "POST" });
+  const res = await authFetch(`${BASE}/threads`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to create thread: ${res.status}`);
   const data = await res.json();
   const id: string = data.thread_id || data.id;
@@ -57,7 +82,7 @@ export async function getState(threadId?: string, options: GetStateOptions = {})
   if (!tid) {
     redirect(buildEnsureThreadUrl(redirectTo));
   }
-  const res = await fetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" });
+  const res = await authFetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" }, redirectTo);
   if (res.status === 404) {
     redirect(buildEnsureThreadUrl(redirectTo, true));
   }
@@ -68,10 +93,19 @@ export async function getState(threadId?: string, options: GetStateOptions = {})
 }
 
 export async function fetchTrace(runId: string) {
-  const res = await fetch(`${BASE}/runs/${runId}/trace`, { cache: "no-store" });
+  const res = await authFetch(`${BASE}/runs/${runId}/trace`, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to fetch trace: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+export async function fetchStatus(runId: string) {
+  const res = await authFetch(`${BASE}/runs/${runId}`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch status: ${res.status} ${text}`);
   }
   return res.json();
 }
@@ -88,7 +122,7 @@ export async function submitClarifier(formData: FormData) {
     },
   };
 
-  const res = await fetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
+  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -101,15 +135,25 @@ export async function backtrackLast() {
   const tid = await createThread();
 
   // 1) History (newest first)
-  const histRes = await fetch(`${BASE}/threads/${tid}/history`, { cache: "no-store" }); // GET history
+  const histRes = await authFetch(`${BASE}/threads/${tid}/history`, { cache: "no-store" }); // GET history
   if (!histRes.ok) throw new Error(`Failed to fetch history: ${histRes.status}`);
   const states = await histRes.json();
   if (!Array.isArray(states) || states.length < 2) return; // nothing to backtrack
 
+  const latest = states[0];
   const prev = states[1]; // previous checkpoint
 
+  const latestValues = latest?.state?.values;
+  const missing = Array.isArray(latestValues?.missing_fields) ? latestValues.missing_fields : [];
+  const hasClarifierQuestion = typeof latestValues?.clarifier_question === "string" && latestValues.clarifier_question.trim().length > 0;
+  const canBacktrack = missing.length > 0 && hasClarifierQuestion;
+
+  if (!canBacktrack) {
+    throw new Error("Backtracking is only available immediately after a clarifier turn.");
+  }
+
   // 2) Optionally edit state at that checkpoint (no edits here, just fork)
-  const updRes = await fetch(`${BASE}/threads/${tid}/state`, {
+  const updRes = await authFetch(`${BASE}/threads/${tid}/state`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -121,10 +165,13 @@ export async function backtrackLast() {
   const newCfg = await updRes.json();
 
   // 3) Resume from the new checkpoint id
-  const runRes = await fetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
+  const runRes = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ input: null, checkpoint_id: newCfg.checkpoint_id }),
   }); // POST runs.wait from checkpoint
   if (!runRes.ok) throw new Error(`Failed to resume from checkpoint: ${runRes.status}`);
+
+  revalidatePath("/clarifier");
+  revalidatePath("/result");
 }
