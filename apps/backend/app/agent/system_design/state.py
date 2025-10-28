@@ -2,11 +2,16 @@ from typing import Annotated, TypedDict, Any, Dict
 import operator
 from langchain_core.messages import BaseMessage
 
+
+def overwrite(_: Any, updated: Any) -> Any:
+    return updated
+
 class State(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
     goal: str
     missing_fields: Annotated[list[str], operator.add]
     iterations: int
+    clarifier_question: Annotated[str, overwrite]
     plan: str
     design: str
     output: str
@@ -19,6 +24,7 @@ class State(TypedDict, total=False):
     critic_notes: str
     critic_iterations: int
     critic_fixes: list[str]
+    architecture_json: dict
     metadata: Dict[str, Any]
 
 CRITIC_TARGET = 0.85
