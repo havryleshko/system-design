@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { getBrowserSupabase } from "@/utils/supabase/browser";
 
-export default function LoginPage() {
+function LoginContent() {
   const supabase = getBrowserSupabase();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -102,6 +102,20 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-black text-white">
+          <p className="text-sm text-white/60">Loading…</p>
+        </div>
+      }
+    >
+      <LoginContent />
+    </Suspense>
   );
 }
 
