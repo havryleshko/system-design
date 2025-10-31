@@ -14,6 +14,7 @@ function LoginContent() {
   const [message, setMessage] = useState<string | null>(null);
 
   const redirectTo = searchParams.get("redirect") || "/chat";
+  const callbackUrl = `${window.location.origin}?redirect=${encodeURIComponent(redirectTo)}`;
 
   async function handleMagicLink(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -22,7 +23,7 @@ function LoginContent() {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}${redirectTo}`,
+        emailRedirectTo: callbackUrl,
       },
     });
     if (error) {
@@ -38,7 +39,7 @@ function LoginContent() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}${redirectTo}`,
+        redirectTo: callbackUrl,
       },
     });
     if (error) {
