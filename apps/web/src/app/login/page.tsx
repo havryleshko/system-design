@@ -1,10 +1,12 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { getBrowserSupabase } from "@/utils/supabase/browser";
+
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
 function LoginContent() {
   const supabase = getBrowserSupabase();
@@ -14,7 +16,10 @@ function LoginContent() {
   const [message, setMessage] = useState<string | null>(null);
 
   const redirectTo = searchParams.get("redirect") || "/chat";
-  const callbackUrl = `${window.location.origin}?redirect=${encodeURIComponent(redirectTo)}`;
+  const callbackUrl = useMemo(
+    () => `${APP_URL}?redirect=${encodeURIComponent(redirectTo)}`,
+    [redirectTo]
+  );
 
   async function handleMagicLink(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,4 +124,3 @@ export default function LoginPage() {
     </Suspense>
   );
 }
-
