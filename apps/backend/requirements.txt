@@ -3,3 +3,9 @@ pydantic==2.10.6
 uvicorn[standard]==0.34.0
 langchain-openai==0.2.5
 langchain-core>=0.3.15,<0.4.0
+langgraph==0.2.76
+langgraph-cli==0.0.81
+langgraph-api==0.0.41
+httpx==0.27.2
+PyJWT==2.9.0
+jsonschema==4.25.1
