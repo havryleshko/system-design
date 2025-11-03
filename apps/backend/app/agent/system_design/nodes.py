@@ -6,7 +6,20 @@ from functools import lru_cache
 import json, os, math, requests
 from jsonschema import validate as jsonschema_validate, ValidationError
 from datetime import datetime
-from app.storage.memory import add_event, record_node_tokens
+try:
+    from app.storage.memory import add_event, record_node_tokens
+except ImportError:  # pragma: no cover - fallback for older deployments
+    from app.storage.memory import add_event
+
+    def record_node_tokens(
+        run_id: str,
+        node: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+    ) -> None:
+        """No-op fallback used when token logging helper is unavailable."""
+        return None
 from app.schemas.runs import RunEvent
 
 ARCHITECTURE_NODE_KINDS = [
