@@ -91,7 +91,16 @@ export default function ChatClient({
     setInput("")
 
     try {
-      const { runId: newRunId, state } = await startRunWait(trimmed)
+      const result = await startRunWait(trimmed)
+      if (!result.ok) {
+        const errorMessage = result.error || 'Run failed'
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
+        ])
+        return
+      }
+      const { runId: newRunId, state } = result
       const values = getValuesFromStateLike(state)
       const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
       if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
