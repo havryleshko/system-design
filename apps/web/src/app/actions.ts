@@ -118,11 +118,12 @@ export async function fetchStatus(runId: string) {
 export async function startRun(input: string): Promise<{ runId: string }> {
   const tid = await createThread();
   const payload = {
+    assistant_id: ASSISTANT_ID,
     input: {
       messages: [{ role: "user", content: input }],
     },
   };
-  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}`, {
+  const res = await authFetch(`${BASE}/threads/${tid}/runs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -140,11 +141,12 @@ export async function startRun(input: string): Promise<{ runId: string }> {
 export async function startRunWait(input: string): Promise<{ runId: string; state: unknown | null }> {
   const tid = await createThread();
   const payload = {
+    assistant_id: ASSISTANT_ID,
     input: {
       messages: [{ role: "user", content: input }],
     },
   };
-  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
+  const res = await authFetch(`${BASE}/threads/${tid}/runs/wait`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -166,12 +168,13 @@ export async function submitClarifier(formData: FormData) {
 
   // Send answers as a user message; backend nodes normalize dicts/strings
   const body = {
+    assistant_id: ASSISTANT_ID,
     input: {
       messages: [{ role: "user", content: JSON.stringify(answers) }],
     },
   };
 
-  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
+  const res = await authFetch(`${BASE}/threads/${tid}/runs/wait`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -214,10 +217,14 @@ export async function backtrackLast() {
   const newCfg = await updRes.json();
 
   // 3) Resume from the new checkpoint id
-  const runRes = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
+  const runRes = await authFetch(`${BASE}/threads/${tid}/runs/wait`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input: null, checkpoint_id: newCfg.checkpoint_id }),
+    body: JSON.stringify({
+      assistant_id: ASSISTANT_ID,
+      input: null,
+      checkpoint_id: newCfg.checkpoint_id,
+    }),
   }); // POST runs.wait from checkpoint
   if (!runRes.ok) throw new Error(`Failed to resume from checkpoint: ${runRes.status}`);
 
