@@ -1,11 +1,10 @@
-import { NextRequest } from "next/server";
 import { createServerSupabase } from "@/utils/supabase/server";
 import { BASE } from "@/utils/langgraph";
 
 export const runtime = "nodejs"; // ensure Node runtime for streaming proxy
 
 export async function GET(
-  req: NextRequest,
+  req: Request,
   { params }: { params: { threadId: string } }
 ) {
   const supabase = await createServerSupabase();
@@ -17,7 +16,8 @@ export async function GET(
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const search = req.nextUrl.search || ""; // forward mode params
+  const url = new URL(req.url);
+  const search = url.search || ""; // forward mode params
   const upstreamUrl = `${BASE}/threads/${params.threadId}/stream${search}`;
 
   const upstream = await fetch(upstreamUrl, {
@@ -26,7 +26,7 @@ export async function GET(
       Authorization: `Bearer ${token}`,
       Accept: "text/event-stream",
     },
-    signal: req.signal,
+    signal: (req as any).signal,
   });
 
   if (!upstream.ok || !upstream.body) {
