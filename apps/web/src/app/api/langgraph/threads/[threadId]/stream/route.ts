@@ -5,7 +5,7 @@ export const runtime = "nodejs"; // ensure Node runtime for streaming proxy
 
 export async function GET(
   req: Request,
-  ctx: { params: Record<string, string | string[]> }
+  context: unknown
 ) {
   const supabase = await createServerSupabase();
   const {
@@ -16,8 +16,14 @@ export async function GET(
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { params } = ctx;
-  const threadParam = params.threadId;
+  const params =
+    typeof context === "object" && context !== null && "params" in context
+      ? (context as { params?: unknown }).params
+      : undefined;
+  const threadParam =
+    typeof params === "object" && params !== null && "threadId" in params
+      ? (params as { threadId?: unknown }).threadId
+      : undefined;
   const threadId = Array.isArray(threadParam) ? threadParam[0] : threadParam;
   if (!threadId) {
     return new Response("Thread ID missing", { status: 400 });
