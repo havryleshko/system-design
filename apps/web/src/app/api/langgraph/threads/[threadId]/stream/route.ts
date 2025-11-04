@@ -5,7 +5,7 @@ export const runtime = "nodejs"; // ensure Node runtime for streaming proxy
 
 export async function GET(
   req: Request,
-  ctx: { params: { threadId: string } }
+  ctx: { params: Record<string, string | string[]> }
 ) {
   const supabase = await createServerSupabase();
   const {
@@ -17,9 +17,14 @@ export async function GET(
   }
 
   const { params } = ctx;
+  const threadParam = params.threadId;
+  const threadId = Array.isArray(threadParam) ? threadParam[0] : threadParam;
+  if (!threadId) {
+    return new Response("Thread ID missing", { status: 400 });
+  }
   const url = new URL(req.url);
   const search = url.search || ""; // forward mode params
-  const upstreamUrl = `${BASE}/threads/${params.threadId}/stream${search}`;
+  const upstreamUrl = `${BASE}/threads/${threadId}/stream${search}`;
 
   const upstream = await fetch(upstreamUrl, {
     method: "GET",
