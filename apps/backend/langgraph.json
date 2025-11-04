@@ -14,5 +14,8 @@
   "graphs": {
     "system_design_agent": "app.agent.system_design.graph:graph"
   },
-  "env": "./.env"
+  "env": "./.env",
+  "http": {
+    "app": "app.main:app"
+  }
 }
