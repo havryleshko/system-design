@@ -1,12 +1,14 @@
 from __future__ import annotations
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
-from app.schemas.runs import RunStart, RunStatus, RunEvent, RunTrace
+
+from app.schemas.runs import RunEvent, RunStart, RunStatus, RunTrace
 
 _RUNS: Dict[str, RunStatus] = {}
 _EVENTS: Dict[str, List[RunEvent]] = {}
 _THREADS: Dict[str, Dict[str, any]] = {}
 _HISTORY: Dict[str, List[Dict[str, any]]] = {}
+_TOKEN_USAGE: Dict[str, Dict[str, Dict[str, int]]] = {}
 
 def create_run(payload: RunStart) -> RunStatus:
     run_id = str(uuid4())
@@ -27,6 +29,35 @@ def get_trace(run_id: str) -> Optional[RunTrace]:
     if run_id not in _RUNS:
         return None
     return RunTrace(id=run_id, events=_EVENTS.get(run_id, []))
+
+
+def record_node_tokens(
+    run_id: str,
+    node: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+) -> None:
+    if not run_id or not node:
+        return
+
+    safe_prompt = max(int(prompt_tokens or 0), 0)
+    safe_completion = max(int(completion_tokens or 0), 0)
+    safe_total = max(int(total_tokens or 0), safe_prompt + safe_completion)
+
+    run_usage = _TOKEN_USAGE.setdefault(run_id, {})
+    entry = run_usage.get(node)
+    if not entry:
+        entry = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        run_usage[node] = entry
+
+    entry["prompt_tokens"] = max(0, entry.get("prompt_tokens", 0) + safe_prompt)
+    entry["completion_tokens"] = max(0, entry.get("completion_tokens", 0) + safe_completion)
+    entry["total_tokens"] = max(0, entry.get("total_tokens", 0) + safe_total)
 
 
 def create_thread() -> Dict[str, any]:
