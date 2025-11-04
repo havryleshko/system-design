@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react"
 import { fetchTrace } from "../actions"
-import ArchitecturePanel from "./ArchitecturePanel"
+import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 
 type TraceEvent = {
@@ -22,13 +22,11 @@ type ChatMessage = {
     content: string
 }
 
-type DesignJson = Record<string, any> | null
-
 type ChatClientProps = {
   initialMessages: ChatMessage[]
   runId: string | null
   userId?: string | null
-  designJson?: DesignJson
+  designJson?: DesignJson | null
 }
 
 export default function ChatClient({

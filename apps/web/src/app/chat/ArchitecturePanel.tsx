@@ -25,7 +25,7 @@ type DesignGroup = {
     children: string[]
 }
 
-type DesignJson = {
+export type DesignJson = {
     elements?: DesignElement[]
     relations?: DesignRelation[]
     groups?: DesignGroup[]
