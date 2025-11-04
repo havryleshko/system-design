@@ -42,7 +42,11 @@ export async function setThreadCookie(id: string): Promise<void> {
 }
 
 export async function forceCreateThread(): Promise<string> {
-  const res = await authFetch(`${BASE}/threads`, { method: "POST" });
+  const res = await authFetch(`${BASE}/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ metadata: {} }),
+  });
   if (!res.ok) throw new Error(`Failed to create thread: ${res.status}`);
   const data = await res.json();
   const id: string = data.thread_id || data.id;
