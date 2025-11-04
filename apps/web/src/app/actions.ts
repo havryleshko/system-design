@@ -141,26 +141,48 @@ function buildRunFailure(status: number | undefined, text: string | undefined, f
   };
 }
 
-export async function startRun(input: string): Promise<RunResult> {
-  try {
-    const tid = await createThread();
-    const payload = {
-      input: {
-        messages: [{ role: "user", content: input }],
-      },
-    };
-    const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}`, {
+async function executeRun({ input, wait }: { input: string; wait: boolean }): Promise<RunResult> {
+  const payload = {
+    input: {
+      messages: [{ role: "user", content: input }],
+    },
+  };
+
+  let forced = false;
+
+  while (true) {
+    const tid = forced ? await forceCreateThread() : await createThread({ force: false });
+    const suffix = wait ? "/wait" : "";
+    const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return buildRunFailure(res.status, text, "Failed to start run");
+
+    if (res.ok) {
+      const json = await res.json();
+      const runId: string = json?.id || json?.run_id || null;
+      const state = json?.state ?? null;
+      return { ok: true, runId, state };
     }
-    const json = await res.json();
-    const runId: string = json?.id || json?.run_id || null;
-    return { ok: true, runId };
+
+    const text = await res.text().catch(() => "");
+
+    if (res.status === 404 && !forced) {
+      // Thread may have expired (in-memory store). Force-create a new one and retry once.
+      forced = true;
+      continue;
+    }
+
+    return buildRunFailure(res.status, text, "Failed to start run");
+  }
+}
+
+export async function startRun(input: string): Promise<RunResult> {
+  try {
+    const result = await executeRun({ input, wait: false });
+    if (!result.ok) return result;
+    return { ok: true, runId: result.runId };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return { ok: false, error: message };
@@ -170,25 +192,7 @@ export async function startRun(input: string): Promise<RunResult> {
 // Start a run and wait for completion (simple, reliable path)
 export async function startRunWait(input: string): Promise<RunResult> {
   try {
-    const tid = await createThread();
-    const payload = {
-      input: {
-        messages: [{ role: "user", content: input }],
-      },
-    };
-    const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return buildRunFailure(res.status, text, "Failed to start run");
-    }
-    const json = await res.json();
-    const runId: string = json?.id || json?.run_id || null;
-    const state = json?.state ?? null;
-    return { ok: true, runId, state };
+    return await executeRun({ input, wait: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return { ok: false, error: message };
