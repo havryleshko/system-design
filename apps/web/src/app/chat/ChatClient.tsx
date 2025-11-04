@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { fetchTrace } from "../actions"
+import { fetchTrace, startRunWait } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 
@@ -40,6 +40,15 @@ export default function ChatClient({
   const [traceError, setTraceError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
+  const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
+
+  function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
+    if (typeof input !== "object" || input === null) return null
+    const rec = input as Record<string, unknown>
+    const values = rec.values
+    if (typeof values === "object" && values !== null) return values as Record<string, unknown>
+    return null
+  }
 
   const loadTrace = () => {
     if (!currentRunId) {
@@ -81,41 +90,38 @@ export default function ChatClient({
     setMessages((prev) => [...prev, userMessage])
     setInput("")
 
-    const res = await fetch("/api/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: trimmed }),
-    })
-    if (!res.ok) {
-      console.error("Request failed", res.status)
+    try {
+      const { runId: newRunId, state } = await startRunWait(trimmed)
+      const values = getValuesFromStateLike(state)
+      const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
+      if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
+      const outVal = values?.["output"]
+      const output = typeof outVal === "string" ? outVal : null
+      if (output && output.trim().length > 0) {
+        setMessages((prev) => [...prev, { role: "assistant", content: output }])
+      } else {
+        setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
+      }
+      if (newRunId) {
+        setCurrentRunId(newRunId)
+        setTrace(null)
+        startTransition(async () => {
+          try {
+            const data = await fetchTrace(newRunId)
+            setTrace(data)
+            setTraceError(null)
+          } catch (err) {
+            setTrace(null)
+            setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+          }
+        })
+      }
+    } catch (err) {
+      console.error("Run failed", err)
+      const message = err instanceof Error ? err.message : "Unknown error"
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Sorry, something went wrong starting that run." },
-      ])
-      return
-    }
-    const data = await res.json()
-    const newRunId = typeof data?.id === "string" ? data.id : null
-    if (newRunId) {
-      setCurrentRunId(newRunId)
-      setTrace(null)
-    }
-
-    const reply = data?.reply
-    if (reply && typeof reply === "object" && typeof reply.content === "string") {
-      const replyRole =
-        reply.role === "user" || reply.role === "assistant" || reply.role === "system"
-          ? reply.role
-          : "assistant"
-      setMessages((prev) => [...prev, { role: replyRole, content: reply.content }])
-      return
-    }
-
-    if (newRunId) {
-      const status = typeof data?.status === "string" ? data.status : "created"
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Run ${status} (${newRunId})` },
+        { role: "assistant", content: `Sorry, something went wrong: ${message}` },
       ])
     }
   }
@@ -152,7 +158,7 @@ export default function ChatClient({
       <div className="grid h-[calc(100vh-49px)] grid-cols-12">
         {/* Left: Architecture */}
         <div className="col-span-3 min-w-0 border-r border-white/10">
-          <ArchitecturePanel designJson={designJson ?? null} />
+          <ArchitecturePanel designJson={architecture ?? null} />
         </div>
 
         {/* Center: Chat */}
