@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { fetchTrace } from "../actions"
+import { fetchTrace, startRunWait } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 
@@ -40,6 +40,7 @@ export default function ChatClient({
   const [traceError, setTraceError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
+  const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
 
   const loadTrace = () => {
     if (!currentRunId) {
@@ -81,41 +82,38 @@ export default function ChatClient({
     setMessages((prev) => [...prev, userMessage])
     setInput("")
 
-    const res = await fetch("/api/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: trimmed }),
-    })
-    if (!res.ok) {
-      console.error("Request failed", res.status)
+    try {
+      const { runId: newRunId, state } = await startRunWait(trimmed)
+      if (newRunId) {
+        setCurrentRunId(newRunId)
+        setTrace(null)
+      }
+      const values = (state && (state as any).values) || null
+      const arch = values?.architecture_json || values?.design_json || null
+      if (arch) setArchitecture(arch)
+      const output = typeof values?.output === "string" ? values.output : null
+      if (output && output.trim().length > 0) {
+        setMessages((prev) => [...prev, { role: "assistant", content: output }])
+      } else if (newRunId) {
+        setMessages((prev) => [...prev, { role: "assistant", content: `Run completed (${newRunId})` }])
+      }
+      if (newRunId) {
+        startTransition(async () => {
+          try {
+            const data = await fetchTrace(newRunId)
+            setTrace(data)
+            setTraceError(null)
+          } catch (err) {
+            setTrace(null)
+            setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+          }
+        })
+      }
+    } catch (err) {
+      console.error("Run failed", err)
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Sorry, something went wrong starting that run." },
-      ])
-      return
-    }
-    const data = await res.json()
-    const newRunId = typeof data?.id === "string" ? data.id : null
-    if (newRunId) {
-      setCurrentRunId(newRunId)
-      setTrace(null)
-    }
-
-    const reply = data?.reply
-    if (reply && typeof reply === "object" && typeof reply.content === "string") {
-      const replyRole =
-        reply.role === "user" || reply.role === "assistant" || reply.role === "system"
-          ? reply.role
-          : "assistant"
-      setMessages((prev) => [...prev, { role: replyRole, content: reply.content }])
-      return
-    }
-
-    if (newRunId) {
-      const status = typeof data?.status === "string" ? data.status : "created"
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Run ${status} (${newRunId})` },
+        { role: "assistant", content: "Sorry, something went wrong running your request." },
       ])
     }
   }
@@ -152,7 +150,7 @@ export default function ChatClient({
       <div className="grid h-[calc(100vh-49px)] grid-cols-12">
         {/* Left: Architecture */}
         <div className="col-span-3 min-w-0 border-r border-white/10">
-          <ArchitecturePanel designJson={designJson ?? null} />
+          <ArchitecturePanel designJson={architecture ?? null} />
         </div>
 
         {/* Center: Chat */}

@@ -114,6 +114,29 @@ export async function fetchStatus(runId: string) {
   return res.json();
 }
 
+// Start a run and wait for completion (simple, reliable path)
+export async function startRunWait(input: string): Promise<{ runId: string; state: any | null }> {
+  const tid = await createThread();
+  const payload = {
+    input: {
+      messages: [{ role: "user", content: input }],
+    },
+  };
+  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to start run (wait): ${res.status} ${text}`);
+  }
+  const json = await res.json();
+  const runId: string = json?.id || json?.run_id || null;
+  const state = json?.state ?? null;
+  return { runId, state };
+}
+
 // Submit clarifier answers to resume the graph
 export async function submitClarifier(formData: FormData) {
   const tid = await createThread();
