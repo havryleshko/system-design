@@ -27,6 +27,4 @@
     "tailwindcss": "^4",
     "typescript": "^5"
   }
-  ,
-  "packageManager": "pnpm@10"
 }
