@@ -26,7 +26,7 @@ export async function GET(
       Authorization: `Bearer ${token}`,
       Accept: "text/event-stream",
     },
-    signal: (req as any).signal,
+    signal: req.signal,
   });
 
   if (!upstream.ok || !upstream.body) {
