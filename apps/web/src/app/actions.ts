@@ -114,6 +114,28 @@ export async function fetchStatus(runId: string) {
   return res.json();
 }
 
+// Start a run without waiting for completion (for streaming)
+export async function startRun(input: string): Promise<{ runId: string }> {
+  const tid = await createThread();
+  const payload = {
+    input: {
+      messages: [{ role: "user", content: input }],
+    },
+  };
+  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to start run: ${res.status} ${text}`);
+  }
+  const json = await res.json();
+  const runId: string = json?.id || json?.run_id || null;
+  return { runId };
+}
+
 // Start a run and wait for completion (simple, reliable path)
 export async function startRunWait(input: string): Promise<{ runId: string; state: any | null }> {
   const tid = await createThread();

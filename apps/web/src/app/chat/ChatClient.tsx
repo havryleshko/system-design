@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { fetchTrace, startRunWait } from "../actions"
+import { fetchTrace, startRunWait, startRun } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 
@@ -27,12 +27,14 @@ type ChatClientProps = {
   runId: string | null
   userId?: string | null
   designJson?: DesignJson | null
+  threadId: string
 }
 
 export default function ChatClient({
   initialMessages,
   runId,
   designJson,
+  threadId,
 }: ChatClientProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [input, setInput] = useState("")
@@ -41,6 +43,71 @@ export default function ChatClient({
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
   const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
+  const [streaming, setStreaming] = useState<boolean>(false)
+  const [streamError, setStreamError] = useState<string | null>(null)
+
+  // Open a single stream per thread; reuse across runs
+  async function ensureStream() {
+    if (streaming) return
+    setStreaming(true)
+    setStreamError(null)
+    try {
+      const res = await fetch(`/api/langgraph/threads/${threadId}/stream?mode=values,updates`)
+      if (!res.ok || !res.body) {
+        setStreamError(`Stream error: ${res.status}`)
+        setStreaming(false)
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      ;(async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            // Try parsing SSE "data: ...\n\n" blocks first
+            let idx
+            while ((idx = buffer.indexOf("\n\n")) !== -1) {
+              const block = buffer.slice(0, idx)
+              buffer = buffer.slice(idx + 2)
+              const line = block.split("\n").find(l => l.startsWith("data:")) || block
+              const payload = line.replace(/^data:\s*/, "").trim()
+              if (!payload) continue
+              try {
+                const evt = JSON.parse(payload)
+                handleStreamEvent(evt)
+              } catch (e) {
+                // try NDJSON fallback
+                try { handleStreamEvent(JSON.parse(block.trim())) } catch {}
+              }
+            }
+          }
+        } catch (e) {
+          setStreamError(e instanceof Error ? e.message : "stream read error")
+        } finally {
+          setStreaming(false)
+        }
+      })()
+    } catch (e) {
+      setStreamError(e instanceof Error ? e.message : "stream error")
+      setStreaming(false)
+    }
+  }
+
+  function handleStreamEvent(evt: any) {
+    // Update architecture when values arrive
+    const values = evt?.values || evt?.state?.values || null
+    if (values) {
+      const arch = values.architecture_json || values.design_json || null
+      if (arch) setArchitecture(arch)
+      const output = typeof values.output === "string" ? values.output : null
+      if (output && output.trim()) {
+        setMessages(prev => [...prev, { role: "assistant", content: output }])
+      }
+    }
+  }
 
   const loadTrace = () => {
     if (!currentRunId) {
@@ -83,24 +150,33 @@ export default function ChatClient({
     setInput("")
 
     try {
-      const { runId: newRunId, state } = await startRunWait(trimmed)
+      // Ensure stream is open for live updates
+      ensureStream()
+
+      // Prefer non-blocking start; if it fails, fallback to wait
+      let newRunId: string | null = null
+      try {
+        const r = await startRun(trimmed)
+        newRunId = r.runId
+      } catch (e) {
+        const r = await startRunWait(trimmed)
+        newRunId = r.runId
+        const values = (r.state && (r.state as any).values) || null
+        const arch = values?.architecture_json || values?.design_json || null
+        if (arch) setArchitecture(arch)
+        const output = typeof values?.output === "string" ? values.output : null
+        if (output && output.trim().length > 0) {
+          setMessages((prev) => [...prev, { role: "assistant", content: output }])
+        } else if (newRunId) {
+          setMessages((prev) => [...prev, { role: "assistant", content: `Run completed (${newRunId})` }])
+        }
+      }
       if (newRunId) {
         setCurrentRunId(newRunId)
         setTrace(null)
-      }
-      const values = (state && (state as any).values) || null
-      const arch = values?.architecture_json || values?.design_json || null
-      if (arch) setArchitecture(arch)
-      const output = typeof values?.output === "string" ? values.output : null
-      if (output && output.trim().length > 0) {
-        setMessages((prev) => [...prev, { role: "assistant", content: output }])
-      } else if (newRunId) {
-        setMessages((prev) => [...prev, { role: "assistant", content: `Run completed (${newRunId})` }])
-      }
-      if (newRunId) {
         startTransition(async () => {
           try {
-            const data = await fetchTrace(newRunId)
+            const data = await fetchTrace(newRunId!)
             setTrace(data)
             setTraceError(null)
           } catch (err) {
