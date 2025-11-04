@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -71,7 +71,7 @@ ARCHITECTURE_SCHEMA = {
         },
         "relations": {
             "type": "array",
-            "minItems": 1,
+            "minItems": 0,
             "maxItems": 48,
             "items": {
                 "type": "object",
@@ -122,6 +122,152 @@ FINALISER_RESPONSE_SCHEMA = {
     "required": ["markdown", "architecture"],
     "additionalProperties": False,
 }
+
+
+def _coerce_str(value: Any, *, max_len: Optional[int] = None) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value
+    else:
+        text = str(value)
+    text = text.strip()
+    if not text:
+        return None
+    if max_len is not None and len(text) > max_len:
+        text = text[:max_len].rstrip()
+    return text or None
+
+
+def _match_enum(value: Optional[str], options: Sequence[str], default: str) -> str:
+    if value:
+        for opt in options:
+            if value.lower() == opt.lower():
+                return opt
+    return default
+
+
+def _normalise_tags(raw: Any, *, limit: int = 6, max_len: int = 40) -> list[str]:
+    tags: list[str] = []
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        return tags
+    for item in raw:
+        tag = _coerce_str(item, max_len=max_len)
+        if not tag:
+            continue
+        if tag in tags:
+            continue
+        tags.append(tag)
+        if len(tags) >= limit:
+            break
+    return tags
+
+
+def _strip_nulls(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _strip_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_strip_nulls(item) for item in value if item is not None]
+    return value
+
+
+def _fallback_architecture(goal: str, design_brief: str) -> Dict[str, Any]:
+    label = _coerce_str(goal, max_len=80) or "Proposed System"
+    element: Dict[str, Any] = {"id": "system", "kind": "System", "label": label}
+    description = _coerce_str(design_brief, max_len=280)
+    if description:
+        element["description"] = description
+    return {
+        "elements": [element],
+        "relations": [],
+    }
+
+
+def normalise_architecture(raw: Any, *, goal: str, design_brief: str) -> Dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    elements: list[dict[str, Any]] = []
+    for item in data.get("elements", []) if isinstance(data.get("elements"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        element_id = _coerce_str(item.get("id"), max_len=64)
+        label = _coerce_str(item.get("label"), max_len=80)
+        kind = _match_enum(_coerce_str(item.get("kind")), ARCHITECTURE_NODE_KINDS, "Component")
+        if not element_id or not label:
+            continue
+        element: Dict[str, Any] = {"id": element_id, "kind": kind, "label": label}
+        description = _coerce_str(item.get("description"), max_len=280)
+        if description:
+            element["description"] = description
+        technology = _coerce_str(item.get("technology"), max_len=80)
+        if technology:
+            element["technology"] = technology
+        parent = _coerce_str(item.get("parent"), max_len=64)
+        if parent:
+            element["parent"] = parent
+        tags = _normalise_tags(item.get("tags"))
+        if tags:
+            element["tags"] = tags
+        elements.append(element)
+
+    relations: list[dict[str, Any]] = []
+    for rel in data.get("relations", []) if isinstance(data.get("relations"), list) else []:
+        if not isinstance(rel, dict):
+            continue
+        source = _coerce_str(rel.get("source"), max_len=64)
+        target = _coerce_str(rel.get("target"), max_len=64)
+        label = _coerce_str(rel.get("label"), max_len=120)
+        if not source or not target or not label:
+            continue
+        entry: Dict[str, Any] = {"source": source, "target": target, "label": label}
+        technology = _coerce_str(rel.get("technology"), max_len=80)
+        if technology:
+            entry["technology"] = technology
+        direction = _coerce_str(rel.get("direction"))
+        if direction:
+            entry["direction"] = _match_enum(direction, ["->", "<-", "<->"], "->")
+        relations.append(entry)
+
+    groups: list[dict[str, Any]] = []
+    for group in data.get("groups", []) if isinstance(data.get("groups"), list) else []:
+        if not isinstance(group, dict):
+            continue
+        group_id = _coerce_str(group.get("id"), max_len=64)
+        label = _coerce_str(group.get("label"), max_len=80)
+        kind = _match_enum(_coerce_str(group.get("kind")), ARCHITECTURE_GROUP_KINDS, "SystemBoundary")
+        children_raw = group.get("children")
+        if not group_id or not label or not isinstance(children_raw, list):
+            continue
+        children: list[str] = []
+        for child in children_raw:
+            child_id = _coerce_str(child, max_len=64)
+            if not child_id:
+                continue
+            if child_id not in children:
+                children.append(child_id)
+        if not children:
+            continue
+        entry: Dict[str, Any] = {"id": group_id, "kind": kind, "label": label, "children": children[:32]}
+        technology = _coerce_str(group.get("technology"), max_len=80)
+        if technology:
+            entry["technology"] = technology
+        groups.append(entry)
+
+    notes = _coerce_str(data.get("notes"), max_len=400)
+
+    if not elements:
+        return _fallback_architecture(goal, design_brief)
+
+    arch: Dict[str, Any] = {
+        "elements": elements,
+        "relations": relations,
+    }
+    if groups:
+        arch["groups"] = groups
+    if notes:
+        arch["notes"] = notes
+    return arch
 
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
@@ -728,7 +874,8 @@ def finaliser(state: State) -> Dict[str, any]:
     )
     run_id = state.get("metadata", {}).get("run_id")
     raw_response = call_brain([sys, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
-    parsed = json_only(raw_response) or {}
+    parsed = _strip_nulls(json_only(raw_response) or {})
+    parsed["architecture"] = normalise_architecture(parsed.get("architecture"), goal=goal, design_brief=design_brief)
     try:
         jsonschema_validate(parsed, FINALISER_RESPONSE_SCHEMA)
     except ValidationError:
@@ -736,8 +883,24 @@ def finaliser(state: State) -> Dict[str, any]:
             "Respond again as JSON only that matches the schema exactly."
         ))
         raw_response = call_brain([recovery, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
-        parsed = json_only(raw_response) or {}
-        jsonschema_validate(parsed, FINALISER_RESPONSE_SCHEMA)
+        parsed = _strip_nulls(json_only(raw_response) or {})
+        parsed["architecture"] = normalise_architecture(parsed.get("architecture"), goal=goal, design_brief=design_brief)
+        try:
+            jsonschema_validate(parsed, FINALISER_RESPONSE_SCHEMA)
+        except ValidationError:
+            fallback_lines = [
+                f"# {goal or 'System Design'}",
+                "",
+                "## Executive Summary",
+                "- Automated fallback summary due to validation issues.",
+                f"- Goal: {goal or 'N/A'}",
+            ]
+            if critic_notes:
+                fallback_lines.append("- Review critic notes manually.")
+            parsed = {
+                "markdown": "\n".join(fallback_lines).strip(),
+                "architecture": _fallback_architecture(goal, design_brief),
+            }
 
     output_md = str(parsed.get("markdown") or "").strip()
     architecture_json = parsed.get("architecture") or {}
