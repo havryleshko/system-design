@@ -41,8 +41,6 @@ export async function GET(
   const responseHeaders = new Headers({
     "Content-Type": upstream.headers.get("content-type") || "text/event-stream",
     "Cache-Control": "no-store",
-    Connection: "keep-alive",
-    "Transfer-Encoding": "chunked",
   });
 
   return new Response(upstream.body, { headers: responseHeaders });

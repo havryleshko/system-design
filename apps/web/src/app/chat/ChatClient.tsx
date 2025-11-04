@@ -44,17 +44,15 @@ export default function ChatClient({
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
   const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
   const [streaming, setStreaming] = useState<boolean>(false)
-  const [streamError, setStreamError] = useState<string | null>(null)
 
   // Open a single stream per thread; reuse across runs
   async function ensureStream() {
     if (streaming) return
     setStreaming(true)
-    setStreamError(null)
     try {
       const res = await fetch(`/api/langgraph/threads/${threadId}/stream?mode=values,updates`)
       if (!res.ok || !res.body) {
-        setStreamError(`Stream error: ${res.status}`)
+        console.error("Stream error:", res.status)
         setStreaming(false)
         return
       }
@@ -84,14 +82,14 @@ export default function ChatClient({
               }
             }
           }
-        } catch (e) {
-          setStreamError(e instanceof Error ? e.message : "stream read error")
+        } catch {
+          // stream read error; will reset streaming flag below
         } finally {
           setStreaming(false)
         }
       })()
-    } catch (e) {
-      setStreamError(e instanceof Error ? e.message : "stream error")
+    } catch {
+      // stream start error; ignore and allow wait-mode fallback
       setStreaming(false)
     }
   }
@@ -172,7 +170,7 @@ export default function ChatClient({
       try {
         const r = await startRun(trimmed)
         newRunId = r.runId
-      } catch (e) {
+      } catch {
         const r = await startRunWait(trimmed)
         newRunId = r.runId
         const values = getValuesFromStateLike(r.state)
