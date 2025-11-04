@@ -5,7 +5,7 @@ export const runtime = "nodejs"; // ensure Node runtime for streaming proxy
 
 export async function GET(
   req: Request,
-  { params }: { params: { threadId: string } }
+  ctx: { params: { threadId: string } }
 ) {
   const supabase = await createServerSupabase();
   const {
@@ -16,6 +16,7 @@ export async function GET(
     return new Response("Unauthorized", { status: 401 });
   }
 
+  const { params } = ctx;
   const url = new URL(req.url);
   const search = url.search || ""; // forward mode params
   const upstreamUrl = `${BASE}/threads/${params.threadId}/stream${search}`;
