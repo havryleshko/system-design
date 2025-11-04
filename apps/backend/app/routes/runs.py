@@ -4,7 +4,8 @@ from app.schemas.runs import RunStart, RunStatus, RunTrace
 from app.services import runs as run_service
 
 runs_router = APIRouter(prefix="/runs", tags=["runs"])
-threads_router = APIRouter(prefix="/threads", tags=["threads"])
+# Removed threads_router - LangGraph API handles thread management
+# Custom thread routes were conflicting with LangGraph API's built-in routes
 
 
 @runs_router.post("", status_code=status.HTTP_201_CREATED, response_model=RunStatus)
@@ -26,24 +27,3 @@ def get_run_trace(run_id: str):
     if not trace:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="trace not found")
     return trace
-
-
-@threads_router.post("", status_code=status.HTTP_201_CREATED)
-def create_thread():
-    return run_service.create_thread()
-
-
-@threads_router.get("/{thread_id}/state")
-def get_thread_state(thread_id: str):
-    state = run_service.fetch_thread_state(thread_id)
-    if not state:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="thread not found")
-    return state
-
-
-@threads_router.get("/{thread_id}/history")
-def get_thread_history(thread_id: str):
-    history = run_service.fetch_thread_history(thread_id)
-    if history is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="thread history not found")
-    return history
