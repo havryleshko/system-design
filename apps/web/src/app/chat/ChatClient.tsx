@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { fetchTrace, startRunWait, startRun } from "../actions"
+import { fetchTrace, startRunWait } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 
@@ -27,14 +27,12 @@ type ChatClientProps = {
   runId: string | null
   userId?: string | null
   designJson?: DesignJson | null
-  threadId: string
 }
 
 export default function ChatClient({
   initialMessages,
   runId,
   designJson,
-  threadId,
 }: ChatClientProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [input, setInput] = useState("")
@@ -43,56 +41,6 @@ export default function ChatClient({
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
   const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
-  const [streaming, setStreaming] = useState<boolean>(false)
-
-  // Open a single stream per thread; reuse across runs
-  async function ensureStream() {
-    if (streaming) return
-    setStreaming(true)
-    try {
-      const res = await fetch(`/api/langgraph/threads/${threadId}/stream?mode=values,updates`)
-      if (!res.ok || !res.body) {
-        console.error("Stream error:", res.status)
-        setStreaming(false)
-        return
-      }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-      ;(async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            // Try parsing SSE "data: ...\n\n" blocks first
-            let idx
-            while ((idx = buffer.indexOf("\n\n")) !== -1) {
-              const block = buffer.slice(0, idx)
-              buffer = buffer.slice(idx + 2)
-              const line = block.split("\n").find(l => l.startsWith("data:")) || block
-              const payload = line.replace(/^data:\s*/, "").trim()
-              if (!payload) continue
-              try {
-                const evt = JSON.parse(payload)
-                handleStreamEvent(evt)
-              } catch {
-                // try NDJSON fallback
-                try { handleStreamEvent(JSON.parse(block.trim())) } catch {}
-              }
-            }
-          }
-        } catch {
-          // stream read error; will reset streaming flag below
-        } finally {
-          setStreaming(false)
-        }
-      })()
-    } catch {
-      // stream start error; ignore and allow wait-mode fallback
-      setStreaming(false)
-    }
-  }
 
   function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
     if (typeof input !== "object" || input === null) return null
@@ -100,25 +48,6 @@ export default function ChatClient({
     const values = rec.values
     if (typeof values === "object" && values !== null) return values as Record<string, unknown>
     return null
-  }
-
-  function handleStreamEvent(evt: unknown) {
-    // Update architecture when values arrive
-    let values: Record<string, unknown> | null = null
-    if (typeof evt === "object" && evt !== null) {
-      const rec = evt as Record<string, unknown>
-      values = (rec.values as Record<string, unknown> | undefined) ||
-        (rec.state ? getValuesFromStateLike(rec.state) : null)
-    }
-    if (values) {
-      const arch = (values["architecture_json"] || values["design_json"]) as unknown
-      if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-      const outVal = values["output"]
-      const output = typeof outVal === "string" ? outVal : null
-      if (output && output.trim()) {
-        setMessages(prev => [...prev, { role: "assistant", content: output }])
-      }
-    }
   }
 
   const loadTrace = () => {
@@ -162,34 +91,23 @@ export default function ChatClient({
     setInput("")
 
     try {
-      // Ensure stream is open for live updates
-      ensureStream()
-
-      // Prefer non-blocking start; if it fails, fallback to wait
-      let newRunId: string | null = null
-      try {
-        const r = await startRun(trimmed)
-        newRunId = r.runId
-      } catch {
-        const r = await startRunWait(trimmed)
-        newRunId = r.runId
-        const values = getValuesFromStateLike(r.state)
-        const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
-        if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-        const outVal = values?.["output"]
-        const output = typeof outVal === "string" ? outVal : null
-        if (output && output.trim().length > 0) {
-          setMessages((prev) => [...prev, { role: "assistant", content: output }])
-        } else if (newRunId) {
-          setMessages((prev) => [...prev, { role: "assistant", content: `Run completed (${newRunId})` }])
-        }
+      const { runId: newRunId, state } = await startRunWait(trimmed)
+      const values = getValuesFromStateLike(state)
+      const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
+      if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
+      const outVal = values?.["output"]
+      const output = typeof outVal === "string" ? outVal : null
+      if (output && output.trim().length > 0) {
+        setMessages((prev) => [...prev, { role: "assistant", content: output }])
+      } else {
+        setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
       }
       if (newRunId) {
         setCurrentRunId(newRunId)
         setTrace(null)
         startTransition(async () => {
           try {
-            const data = await fetchTrace(newRunId!)
+            const data = await fetchTrace(newRunId)
             setTrace(data)
             setTraceError(null)
           } catch (err) {
@@ -200,9 +118,10 @@ export default function ChatClient({
       }
     } catch (err) {
       console.error("Run failed", err)
+      const message = err instanceof Error ? err.message : "Unknown error"
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Sorry, something went wrong running your request." },
+        { role: "assistant", content: `Sorry, something went wrong: ${message}` },
       ])
     }
   }
