@@ -137,7 +137,7 @@ export async function startRun(input: string): Promise<{ runId: string }> {
 }
 
 // Start a run and wait for completion (simple, reliable path)
-export async function startRunWait(input: string): Promise<{ runId: string; state: any | null }> {
+export async function startRunWait(input: string): Promise<{ runId: string; state: unknown | null }> {
   const tid = await createThread();
   const payload = {
     input: {

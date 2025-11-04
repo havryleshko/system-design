@@ -78,7 +78,7 @@ export default function ChatClient({
               try {
                 const evt = JSON.parse(payload)
                 handleStreamEvent(evt)
-              } catch (e) {
+              } catch {
                 // try NDJSON fallback
                 try { handleStreamEvent(JSON.parse(block.trim())) } catch {}
               }
@@ -96,13 +96,27 @@ export default function ChatClient({
     }
   }
 
-  function handleStreamEvent(evt: any) {
+  function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
+    if (typeof input !== "object" || input === null) return null
+    const rec = input as Record<string, unknown>
+    const values = rec.values
+    if (typeof values === "object" && values !== null) return values as Record<string, unknown>
+    return null
+  }
+
+  function handleStreamEvent(evt: unknown) {
     // Update architecture when values arrive
-    const values = evt?.values || evt?.state?.values || null
+    let values: Record<string, unknown> | null = null
+    if (typeof evt === "object" && evt !== null) {
+      const rec = evt as Record<string, unknown>
+      values = (rec.values as Record<string, unknown> | undefined) ||
+        (rec.state ? getValuesFromStateLike(rec.state) : null)
+    }
     if (values) {
-      const arch = values.architecture_json || values.design_json || null
-      if (arch) setArchitecture(arch)
-      const output = typeof values.output === "string" ? values.output : null
+      const arch = (values["architecture_json"] || values["design_json"]) as unknown
+      if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
+      const outVal = values["output"]
+      const output = typeof outVal === "string" ? outVal : null
       if (output && output.trim()) {
         setMessages(prev => [...prev, { role: "assistant", content: output }])
       }
@@ -161,10 +175,11 @@ export default function ChatClient({
       } catch (e) {
         const r = await startRunWait(trimmed)
         newRunId = r.runId
-        const values = (r.state && (r.state as any).values) || null
-        const arch = values?.architecture_json || values?.design_json || null
-        if (arch) setArchitecture(arch)
-        const output = typeof values?.output === "string" ? values.output : null
+        const values = getValuesFromStateLike(r.state)
+        const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
+        if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
+        const outVal = values?.["output"]
+        const output = typeof outVal === "string" ? outVal : null
         if (output && output.trim().length > 0) {
           setMessages((prev) => [...prev, { role: "assistant", content: output }])
         } else if (newRunId) {
