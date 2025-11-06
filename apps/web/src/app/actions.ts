@@ -141,8 +141,71 @@ function buildRunFailure(status: number | undefined, text: string | undefined, f
   };
 }
 
-async function executeRun({ input, wait }: { input: string; wait: boolean }): Promise<RunResult> {
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForState(threadId: string, runId: string, timeoutMs = 120_000, pollIntervalMs = 1_000): Promise<RunResult> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    const res = await authFetch(`${BASE}/threads/${threadId}/state`, { cache: "no-store" });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return buildRunFailure(res.status, text, "Failed to fetch thread state");
+    }
+    const state = await res.json();
+    const stateRunId: string | null = state?.metadata?.run_id || state?.values?.run_id || null;
+
+    if (stateRunId === runId) {
+      return { ok: true, runId, state };
+    }
+
+    await delay(pollIntervalMs);
+  }
+
+  return {
+    ok: false,
+    error: "Timed out waiting for run to complete",
+    status: 504,
+  };
+}
+
+async function invokeRun(threadId: string, body: Record<string, unknown>, wait: boolean): Promise<RunResult> {
   const payload = {
+    assistant_id: ASSISTANT_ID,
+    ...body,
+  };
+
+  const res = await authFetch(`${BASE}/threads/${threadId}/runs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return buildRunFailure(res.status, text, "Failed to start run");
+  }
+
+  const data = await res.json().catch(() => ({}));
+  const runId: string | null = data?.run_id || data?.id || null;
+  if (!runId) {
+    return {
+      ok: false,
+      error: "Run created but no run ID was returned",
+    };
+  }
+
+  if (!wait) {
+    return { ok: true, runId };
+  }
+
+  return await waitForState(threadId, runId);
+}
+
+async function executeRun({ input, wait }: { input: string; wait: boolean }): Promise<RunResult> {
+  const body = {
     input: {
       messages: [{ role: "user", content: input }],
     },
@@ -152,29 +215,18 @@ async function executeRun({ input, wait }: { input: string; wait: boolean }): Pr
 
   while (true) {
     const tid = forced ? await forceCreateThread() : await createThread({ force: false });
-    const suffix = wait ? "/wait" : "";
-    const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}${suffix}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const result = await invokeRun(tid, body, wait);
 
-    if (res.ok) {
-      const json = await res.json();
-      const runId: string = json?.id || json?.run_id || null;
-      const state = json?.state ?? null;
-      return { ok: true, runId, state };
+    if (result.ok || forced) {
+      return result;
     }
 
-    const text = await res.text().catch(() => "");
-
-    if (res.status === 404 && !forced) {
-      // Thread may have expired (in-memory store). Force-create a new one and retry once.
+    if (result.status === 404 && !forced) {
       forced = true;
       continue;
     }
 
-    return buildRunFailure(res.status, text, "Failed to start run");
+    return result;
   }
 }
 
@@ -205,18 +257,16 @@ export async function submitClarifier(formData: FormData) {
   const answers = Object.fromEntries(formData.entries());
 
   // Send answers as a user message; backend nodes normalize dicts/strings
-  const body = {
+  const payload = {
     input: {
       messages: [{ role: "user", content: JSON.stringify(answers) }],
     },
   };
 
-  const res = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  }); // POST runs.wait
-  if (!res.ok) throw new Error(`Failed to resume run: ${res.status}`);
+  const result = await invokeRun(tid, payload, true);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
 }
 
 // Backtrack one checkpoint and resume
@@ -254,12 +304,11 @@ export async function backtrackLast() {
   const newCfg = await updRes.json();
 
   // 3) Resume from the new checkpoint id
-  const runRes = await authFetch(`${BASE}/threads/${tid}/runs/${ASSISTANT_ID}/wait`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input: null, checkpoint_id: newCfg.checkpoint_id }),
-  }); // POST runs.wait from checkpoint
-  if (!runRes.ok) throw new Error(`Failed to resume from checkpoint: ${runRes.status}`);
+  const resumePayload = { input: null, checkpoint_id: newCfg.checkpoint_id } as Record<string, unknown>;
+  const resumeResult = await invokeRun(tid, resumePayload, true);
+  if (!resumeResult.ok) {
+    throw new Error(resumeResult.error);
+  }
 
   revalidatePath("/clarifier");
   revalidatePath("/result");
