@@ -620,6 +620,7 @@ def clarifier(state: State) -> Dict[str, any]:
         state["metadata"].setdefault("cached_clarifier", question)
         return {
             "messages": [AIMessage(content=question)],
+            "clarifier_question": question,
             "iterations": it + 1
         }
     return {}

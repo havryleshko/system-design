@@ -99,7 +99,11 @@ export async function getState(threadId?: string, options: GetStateOptions = {})
 export async function fetchTrace(runId: string) {
   const res = await authFetch(`${BASE}/runs/${runId}/trace`, { cache: "no-store" });
   if (!res.ok) {
-    const text = await res.text();
+    const text = await res.text().catch(() => "");
+    // Handle 404 gracefully - trace might not exist yet
+    if (res.status === 404) {
+      return { id: runId, events: [], timeline: [], branch_path: [] };
+    }
     throw new Error(`Failed to fetch trace: ${res.status} ${text}`);
   }
   return res.json();

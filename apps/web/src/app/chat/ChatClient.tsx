@@ -104,12 +104,35 @@ export default function ChatClient({
       const values = getValuesFromStateLike(state)
       const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
       if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-      const outVal = values?.["output"]
-      const output = typeof outVal === "string" ? outVal : null
-      if (output && output.trim().length > 0) {
-        setMessages((prev) => [...prev, { role: "assistant", content: output }])
+      
+      // Check for clarifier question first
+      const clarifierQuestion = typeof values?.["clarifier_question"] === "string" ? values["clarifier_question"] : null
+      const missingFields = Array.isArray(values?.["missing_fields"]) ? values["missing_fields"] : []
+      
+      if (clarifierQuestion && missingFields.length > 0) {
+        // Show the clarifier question in chat
+        setMessages((prev) => [...prev, { role: "assistant", content: clarifierQuestion }])
       } else {
-        setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
+        // Check for final output
+        const outVal = values?.["output"]
+        const output = typeof outVal === "string" ? outVal : null
+        if (output && output.trim().length > 0) {
+          setMessages((prev) => [...prev, { role: "assistant", content: output }])
+        } else {
+          // Check if there are messages from the assistant (fallback)
+          const messages = Array.isArray(state?.values?.messages) ? state.values.messages : []
+          const lastMessage = messages[messages.length - 1]
+          if (lastMessage && (lastMessage.role === "assistant" || lastMessage.role === "ai")) {
+            const content = typeof lastMessage.content === "string" ? lastMessage.content : String(lastMessage.content || "")
+            if (content.trim()) {
+              setMessages((prev) => [...prev, { role: "assistant", content }])
+            } else {
+              setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
+            }
+          } else {
+            setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
+          }
+        }
       }
       if (newRunId) {
         setCurrentRunId(newRunId)
