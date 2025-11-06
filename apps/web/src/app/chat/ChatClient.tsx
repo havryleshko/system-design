@@ -50,6 +50,25 @@ export default function ChatClient({
     return null
   }
 
+  function getAssistantMessageContent(message: unknown): string | null {
+    if (typeof message === "string") {
+      const text = message.trim()
+      return text.length > 0 ? text : null
+    }
+    if (!message || typeof message !== "object") return null
+    const candidate = message as { role?: unknown; content?: unknown }
+    const role = typeof candidate.role === "string" ? candidate.role.toLowerCase() : ""
+    if (role !== "assistant" && role !== "ai") return null
+    const content = candidate.content
+    if (typeof content === "string") {
+      const text = content.trim()
+      return text.length > 0 ? text : null
+    }
+    if (content === null || content === undefined) return null
+    const text = String(content).trim()
+    return text.length > 0 ? text : null
+  }
+
   const loadTrace = () => {
     if (!currentRunId) {
       setTraceError("Run ID not available yet")
@@ -119,16 +138,11 @@ export default function ChatClient({
         if (output && output.trim().length > 0) {
           setMessages((prev) => [...prev, { role: "assistant", content: output }])
         } else {
-          // Check if there are messages from the assistant (fallback)
-          const messages = Array.isArray(state?.values?.messages) ? state.values.messages : []
-          const lastMessage = messages[messages.length - 1]
-          if (lastMessage && (lastMessage.role === "assistant" || lastMessage.role === "ai")) {
-            const content = typeof lastMessage.content === "string" ? lastMessage.content : String(lastMessage.content || "")
-            if (content.trim()) {
-              setMessages((prev) => [...prev, { role: "assistant", content }])
-            } else {
-              setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
-            }
+          const rawMessages = values?.["messages"]
+          const messagesArray = Array.isArray(rawMessages) ? rawMessages : []
+          const fallbackContent = getAssistantMessageContent(messagesArray[messagesArray.length - 1])
+          if (fallbackContent) {
+            setMessages((prev) => [...prev, { role: "assistant", content: fallbackContent }])
           } else {
             setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
           }
