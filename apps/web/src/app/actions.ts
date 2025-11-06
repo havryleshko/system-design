@@ -148,7 +148,8 @@ function delay(ms: number): Promise<void> {
 type ThreadState = { metadata?: Record<string, unknown> | null; values?: Record<string, unknown> | null } | null;
 
 function isTerminal(state: ThreadState, expectedRunId: string | null): boolean {
-  const sRunId: string | null = state?.metadata?.run_id || state?.values?.run_id || null;
+  const rawRunId = state?.metadata?.run_id ?? state?.values?.run_id ?? null;
+  const sRunId: string | null = typeof rawRunId === "string" ? rawRunId : null;
   if (expectedRunId && sRunId && expectedRunId !== sRunId) return false;
   const values = (state?.values || {}) as Record<string, unknown>;
   return Boolean(
@@ -224,7 +225,7 @@ async function executeRun({ input, wait }: { input: string; wait: boolean }): Pr
   let forced = false;
 
   while (true) {
-    const tid = forced ? await forceCreateThread() : await createThread({ force: false });
+    const tid = await createThread({ force: forced });
     const result = await invokeRun(tid, body, wait);
 
     if (result.ok || forced) {
