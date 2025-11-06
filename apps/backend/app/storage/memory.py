@@ -26,7 +26,10 @@ def add_event(run_id: str, event: RunEvent) -> None:
     _EVENTS[run_id].append(event)
 
 def get_trace(run_id: str) -> Optional[RunTrace]:
-    if run_id not in _RUNS:
+    # In the new LangGraph flow, we may receive a run_id originating from
+    # the LangGraph runtime (not from our create_run helper). We still want
+    # to serve any events we've captured for that run_id via add_event.
+    if run_id not in _RUNS and run_id not in _EVENTS:
         return None
     return RunTrace(id=run_id, events=_EVENTS.get(run_id, []))
 

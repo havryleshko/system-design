@@ -145,6 +145,20 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type ThreadState = { metadata?: Record<string, unknown> | null; values?: Record<string, unknown> | null } | null;
+
+function isTerminal(state: ThreadState, expectedRunId: string | null): boolean {
+  const sRunId: string | null = state?.metadata?.run_id || state?.values?.run_id || null;
+  if (expectedRunId && sRunId && expectedRunId !== sRunId) return false;
+  const values = (state?.values || {}) as Record<string, unknown>;
+  return Boolean(
+    (typeof values.output === "string" && values.output) ||
+      values.architecture_json ||
+      values.design_json ||
+      (typeof values.clarifier_question === "string" && values.clarifier_question)
+  );
+}
+
 async function waitForState(threadId: string, runId: string, timeoutMs = 120_000, pollIntervalMs = 1_000): Promise<RunResult> {
   const deadline = Date.now() + timeoutMs;
 
@@ -155,11 +169,7 @@ async function waitForState(threadId: string, runId: string, timeoutMs = 120_000
       return buildRunFailure(res.status, text, "Failed to fetch thread state");
     }
     const state = await res.json();
-    const stateRunId: string | null = state?.metadata?.run_id || state?.values?.run_id || null;
-
-    if (stateRunId === runId) {
-      return { ok: true, runId, state };
-    }
+    if (isTerminal(state, runId)) return { ok: true, runId, state };
 
     await delay(pollIntervalMs);
   }
