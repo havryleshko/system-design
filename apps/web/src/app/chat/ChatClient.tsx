@@ -44,7 +44,6 @@ export default function ChatClient({
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
   const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
-  const [threadId, setThreadId] = useState<string | null>(null)
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const streamHandleRef = useRef<{ close: () => void } | null>(null)
@@ -57,25 +56,6 @@ export default function ChatClient({
     const values = rec.values
     if (typeof values === "object" && values !== null) return values as Record<string, unknown>
     return null
-  }
-
-  function getAssistantMessageContent(message: unknown): string | null {
-    if (typeof message === "string") {
-      const text = message.trim()
-      return text.length > 0 ? text : null
-    }
-    if (!message || typeof message !== "object") return null
-    const candidate = message as { role?: unknown; content?: unknown }
-    const role = typeof candidate.role === "string" ? candidate.role.toLowerCase() : ""
-    if (role !== "assistant" && role !== "ai") return null
-    const content = candidate.content
-    if (typeof content === "string") {
-      const text = content.trim()
-      return text.length > 0 ? text : null
-    }
-    if (content === null || content === undefined) return null
-    const text = String(content).trim()
-    return text.length > 0 ? text : null
   }
 
   const loadTrace = () => {
@@ -136,7 +116,6 @@ export default function ChatClient({
         return
       }
       const { runId: newRunId } = result
-      setThreadId(result.threadId)
       setCurrentRunId(newRunId)
       setStreamingContent("")
       setIsStreaming(true)
@@ -183,8 +162,9 @@ export default function ChatClient({
             if (values) {
               const arch = (values["architecture_json"] || values["design_json"]) as unknown
               if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-              const question = typeof (values as any)?.["clarifier_question"] === "string" ? (values as any)["clarifier_question"] : null
-              const missing = Array.isArray((values as any)?.["missing_fields"]) ? (values as any)["missing_fields"] : []
+              const question = typeof values["clarifier_question"] === "string" ? values["clarifier_question"] : null
+              const missingFields = values["missing_fields"]
+              const missing = Array.isArray(missingFields) ? missingFields : []
               if (question && missing.length > 0) {
                 setClarifier({ question, fields: missing as string[] })
                 setIsStreaming(false)

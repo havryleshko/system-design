@@ -50,8 +50,9 @@ export function openRunStream({ threadId, runId, mode, onEvent, maxRetries = 3, 
     const data = parseJson(e.data)
     // Normalize a few common event shapes
     if (name === 'messages.delta') {
-      const text = typeof data === 'string' ? data : (typeof (data as any)?.text === 'string' ? (data as any).text : '')
-      if (text) onEvent({ type: 'message-delta', text })
+      const dataObj = typeof data === 'object' && data !== null ? data as Record<string, unknown> : null
+      const text = typeof data === 'string' ? data : (typeof dataObj?.text === 'string' ? dataObj.text : '')
+      if (text) onEvent({ type: 'message-delta', text: String(text) })
       else onEvent({ type: 'raw', event: name, data })
       return
     }
@@ -60,20 +61,23 @@ export function openRunStream({ threadId, runId, mode, onEvent, maxRetries = 3, 
       return
     }
     if (name === 'node.started') {
-      const node = (data as any)?.node || (data as any)?.name || ''
+      const dataObj = typeof data === 'object' && data !== null ? data as Record<string, unknown> : null
+      const node = typeof dataObj?.node === 'string' ? dataObj.node : (typeof dataObj?.name === 'string' ? dataObj.name : '')
       if (node) onEvent({ type: 'node-started', node })
       else onEvent({ type: 'raw', event: name, data })
       return
     }
     if (name === 'node.completed') {
-      const node = (data as any)?.node || (data as any)?.name || ''
-      const tokens = (data as any)?.total_tokens
+      const dataObj = typeof data === 'object' && data !== null ? data as Record<string, unknown> : null
+      const node = typeof dataObj?.node === 'string' ? dataObj.node : (typeof dataObj?.name === 'string' ? dataObj.name : '')
+      const tokens = typeof dataObj?.total_tokens === 'number' ? dataObj.total_tokens : undefined
       if (node) onEvent({ type: 'node-completed', node, tokens })
       else onEvent({ type: 'raw', event: name, data })
       return
     }
     if (name === 'values.updated') {
-      const values = (data as any)?.values ?? (typeof data === 'object' ? (data as Record<string, unknown>) : {})
+      const dataObj = typeof data === 'object' && data !== null ? data as Record<string, unknown> : null
+      const values = dataObj?.values ?? (typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {})
       onEvent({ type: 'values-updated', values: (values as Record<string, unknown>) || {} })
       return
     }
