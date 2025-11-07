@@ -266,6 +266,37 @@ export async function startRunWait(input: string): Promise<RunResult> {
   }
 }
 
+// Start a run for streaming and return both thread and run IDs
+export type StartStreamSuccess = {
+  ok: true;
+  threadId: string;
+  runId: string;
+};
+
+export type StartStreamResult = StartStreamSuccess | RunFailure;
+
+export async function startRunStream(input: string): Promise<StartStreamResult> {
+  try {
+    const body = {
+      input: {
+        messages: [{ role: "user", content: input }],
+      },
+    };
+
+    const threadId = await createThread();
+    const result = await invokeRun(threadId, body, false);
+    if (!result.ok || !result.runId) {
+      return result.ok
+        ? { ok: false, error: "Run created but no run ID was returned" }
+        : result;
+    }
+    return { ok: true, threadId, runId: result.runId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { ok: false, error: message };
+  }
+}
+
 // Submit clarifier answers to resume the graph
 export async function submitClarifier(formData: FormData) {
   const tid = await createThread();

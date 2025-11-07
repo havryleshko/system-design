@@ -1,9 +1,12 @@
 "use client"
 
-import { useState, useTransition } from "react"
-import { fetchTrace, startRunWait } from "../actions"
+import { useRef, useState, useTransition } from "react"
+import { fetchTrace, startRunStream } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
+import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
+import ClarifierCard from "./ClarifierCard"
+import NodeStatusRibbon from "./NodeStatusRibbon"
 
 type TraceEvent = {
     ts_ms: number
@@ -41,6 +44,12 @@ export default function ChatClient({
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
   const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
+  const [threadId, setThreadId] = useState<string | null>(null)
+  const [streamingContent, setStreamingContent] = useState("")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const streamHandleRef = useRef<{ close: () => void } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; fields: string[] } | null>(null)
+  const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
 
   function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
     if (typeof input !== "object" || input === null) return null
@@ -110,7 +119,7 @@ export default function ChatClient({
     setInput("")
 
     try {
-      const result = await startRunWait(trimmed)
+      const result = await startRunStream(trimmed)
       if (!result.ok) {
         const errorMessage = result.error || 'Run failed'
         setMessages((prev) => [
@@ -119,49 +128,91 @@ export default function ChatClient({
         ])
         return
       }
-      const { runId: newRunId, state } = result
-      const values = getValuesFromStateLike(state)
-      const arch = (values?.["architecture_json"] || values?.["design_json"]) as unknown
-      if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-      
-      // Check for clarifier question first
-      const clarifierQuestion = typeof values?.["clarifier_question"] === "string" ? values["clarifier_question"] : null
-      const missingFields = Array.isArray(values?.["missing_fields"]) ? values["missing_fields"] : []
-      
-      if (clarifierQuestion && missingFields.length > 0) {
-        // Show the clarifier question in chat
-        setMessages((prev) => [...prev, { role: "assistant", content: clarifierQuestion }])
-      } else {
-        // Check for final output
-        const outVal = values?.["output"]
-        const output = typeof outVal === "string" ? outVal : null
-        if (output && output.trim().length > 0) {
-          setMessages((prev) => [...prev, { role: "assistant", content: output }])
-        } else {
-          const rawMessages = values?.["messages"]
-          const messagesArray = Array.isArray(rawMessages) ? rawMessages : []
-          const fallbackContent = getAssistantMessageContent(messagesArray[messagesArray.length - 1])
-          if (fallbackContent) {
-            setMessages((prev) => [...prev, { role: "assistant", content: fallbackContent }])
-          } else {
-            setMessages((prev) => [...prev, { role: "assistant", content: "Run completed." }])
-          }
-        }
+      if (!result.runId) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: 'Run created but no run ID was returned' },
+        ])
+        return
       }
-      if (newRunId) {
-        setCurrentRunId(newRunId)
-        setTrace(null)
-        startTransition(async () => {
-          try {
-            const data = await fetchTrace(newRunId)
-            setTrace(data)
-            setTraceError(null)
-          } catch (err) {
-            setTrace(null)
-            setTraceError(err instanceof Error ? err.message : "Failed to load trace")
-          }
-        })
+      const { runId: newRunId } = result
+      setThreadId(result.threadId)
+      setCurrentRunId(newRunId)
+      setStreamingContent("")
+      setIsStreaming(true)
+      setClarifier(null)
+      setNodeStatuses([])
+
+      if (streamHandleRef.current) {
+        try { streamHandleRef.current.close() } catch {}
+        streamHandleRef.current = null
       }
+
+      const handle = openRunStream({
+        threadId: result.threadId,
+        runId: newRunId,
+        onEvent: (evt: NormalizedStreamEvent) => {
+          if (evt.type === 'message-delta') {
+            setStreamingContent((prev) => prev + evt.text)
+            return
+          }
+          if (evt.type === 'message-completed') {
+            const content = streamingContentRef.current
+            if (content && content.trim().length > 0) {
+              setMessages((prev) => [...prev, { role: 'assistant', content }])
+            }
+            setStreamingContent("")
+            return
+          }
+          if (evt.type === 'node-started') {
+            const node = evt.node
+            setNodeStatuses((prev) => {
+              const existing = prev.find((p) => p.name === node)
+              if (existing) return prev.map((p) => (p.name === node ? { ...p, status: 'running' } : p))
+              return [...prev, { name: node, status: 'running' }]
+            })
+            return
+          }
+          if (evt.type === 'node-completed') {
+            const node = evt.node
+            setNodeStatuses((prev) => prev.map((p) => (p.name === node ? { ...p, status: 'done' } : p)))
+            return
+          }
+          if (evt.type === 'values-updated') {
+            const values = getValuesFromStateLike(evt.values)
+            if (values) {
+              const arch = (values["architecture_json"] || values["design_json"]) as unknown
+              if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
+              const question = typeof (values as any)?.["clarifier_question"] === "string" ? (values as any)["clarifier_question"] : null
+              const missing = Array.isArray((values as any)?.["missing_fields"]) ? (values as any)["missing_fields"] : []
+              if (question && missing.length > 0) {
+                setClarifier({ question, fields: missing as string[] })
+                setIsStreaming(false)
+              }
+            }
+            return
+          }
+          if (evt.type === 'run-completed') {
+            setIsStreaming(false)
+            setClarifier(null)
+            startTransition(async () => {
+              try {
+                const data = await fetchTrace(newRunId)
+                setTrace(data)
+                setTraceError(null)
+              } catch (err) {
+                setTrace(null)
+                setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+              }
+            })
+            return
+          }
+          if (evt.type === 'error') {
+            setIsStreaming(false)
+          }
+        },
+      })
+      streamHandleRef.current = handle
     } catch (err) {
       console.error("Run failed", err)
       const message = err instanceof Error ? err.message : "Unknown error"
@@ -172,12 +223,16 @@ export default function ChatClient({
     }
   }
 
+  // track latest streaming content for completion
+  const streamingContentRef = useRef(streamingContent)
+  if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
+
   return (
     <div className="h-screen bg-black text-white">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-6 py-3">
         <div>
-          <h2 className="text-base font-semibold tracking-wide">System Design Assistant</h2>
+          <h2 className="text-base font-semibold tracking-wide">System Design Agent</h2>
           <p className="text-[11px] uppercase text-white/40">Three-panel workspace</p>
         </div>
         <div className="flex items-center gap-3">
@@ -211,6 +266,7 @@ export default function ChatClient({
         <div className="col-span-6 flex min-w-0 flex-col">
           <div className="flex-1 overflow-hidden">
             <div className="flex h-full flex-col gap-3 overflow-y-auto p-5">
+              <NodeStatusRibbon nodes={nodeStatuses} />
               {messages.length === 0 ? (
                 <p className="text-sm text-white/40">
                   No messages yet. Ask the assistant anything about system design.
@@ -218,10 +274,19 @@ export default function ChatClient({
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
-                    <div className="text-xs uppercase tracking-wide text-white/40">{m.role}</div>
+                    <div className="text-xs uppercase tracking-wide text-white/40">{m.role === 'assistant' ? 'agent' : m.role}</div>
                     <div className="text-sm leading-relaxed text-white">{m.content}</div>
                   </div>
                 ))
+              )}
+              {isStreaming && (
+                <div className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
+                  <div className="text-xs uppercase tracking-wide text-white/40">agent</div>
+                  <div className="text-sm leading-relaxed text-white whitespace-pre-wrap">{streamingContent || '█'}</div>
+                </div>
+              )}
+              {clarifier && (
+                <ClarifierCard question={clarifier.question} fields={clarifier.fields} />
               )}
             </div>
           </div>
