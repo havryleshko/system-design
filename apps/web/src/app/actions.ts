@@ -99,7 +99,11 @@ export async function getState(threadId?: string, options: GetStateOptions = {})
 export async function fetchTrace(runId: string) {
   const res = await authFetch(`${BASE}/runs/${runId}/trace`, { cache: "no-store" });
   if (!res.ok) {
-    const text = await res.text();
+    const text = await res.text().catch(() => "");
+    // Handle 404 gracefully - trace might not exist yet
+    if (res.status === 404) {
+      return { id: runId, events: [], timeline: [], branch_path: [] };
+    }
     throw new Error(`Failed to fetch trace: ${res.status} ${text}`);
   }
   return res.json();
@@ -145,6 +149,21 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type ThreadState = { metadata?: Record<string, unknown> | null; values?: Record<string, unknown> | null } | null;
+
+function isTerminal(state: ThreadState, expectedRunId: string | null): boolean {
+  const rawRunId = state?.metadata?.run_id ?? state?.values?.run_id ?? null;
+  const sRunId: string | null = typeof rawRunId === "string" ? rawRunId : null;
+  if (expectedRunId && sRunId && expectedRunId !== sRunId) return false;
+  const values = (state?.values || {}) as Record<string, unknown>;
+  return Boolean(
+    (typeof values.output === "string" && values.output) ||
+      values.architecture_json ||
+      values.design_json ||
+      (typeof values.clarifier_question === "string" && values.clarifier_question)
+  );
+}
+
 async function waitForState(threadId: string, runId: string, timeoutMs = 120_000, pollIntervalMs = 1_000): Promise<RunResult> {
   const deadline = Date.now() + timeoutMs;
 
@@ -155,11 +174,7 @@ async function waitForState(threadId: string, runId: string, timeoutMs = 120_000
       return buildRunFailure(res.status, text, "Failed to fetch thread state");
     }
     const state = await res.json();
-    const stateRunId: string | null = state?.metadata?.run_id || state?.values?.run_id || null;
-
-    if (stateRunId === runId) {
-      return { ok: true, runId, state };
-    }
+    if (isTerminal(state, runId)) return { ok: true, runId, state };
 
     await delay(pollIntervalMs);
   }
@@ -214,7 +229,7 @@ async function executeRun({ input, wait }: { input: string; wait: boolean }): Pr
   let forced = false;
 
   while (true) {
-    const tid = forced ? await forceCreateThread() : await createThread({ force: false });
+    const tid = await createThread({ force: forced });
     const result = await invokeRun(tid, body, wait);
 
     if (result.ok || forced) {
@@ -245,6 +260,37 @@ export async function startRun(input: string): Promise<RunResult> {
 export async function startRunWait(input: string): Promise<RunResult> {
   try {
     return await executeRun({ input, wait: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { ok: false, error: message };
+  }
+}
+
+// Start a run for streaming and return both thread and run IDs
+export type StartStreamSuccess = {
+  ok: true;
+  threadId: string;
+  runId: string;
+};
+
+export type StartStreamResult = StartStreamSuccess | RunFailure;
+
+export async function startRunStream(input: string): Promise<StartStreamResult> {
+  try {
+    const body = {
+      input: {
+        messages: [{ role: "user", content: input }],
+      },
+    };
+
+    const threadId = await createThread();
+    const result = await invokeRun(threadId, body, false);
+    if (!result.ok || !result.runId) {
+      return result.ok
+        ? { ok: false, error: "Run created but no run ID was returned" }
+        : result;
+    }
+    return { ok: true, threadId, runId: result.runId };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return { ok: false, error: message };

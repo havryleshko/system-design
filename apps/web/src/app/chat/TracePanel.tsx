@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type TraceEvent = {
     ts_ms: number
@@ -70,6 +70,15 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
         const date = new Date(ts)
         return date.toLocaleTimeString()
     }
+
+    // Fallback refresh: if there are active nodes, poll every 3s
+    useEffect(() => {
+        const hasActive = timeline.some((t) => !t.finished_ts_ms)
+        if (!hasActive) return
+        const id = setInterval(() => onRefresh(), 3000)
+        return () => clearInterval(id)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [JSON.stringify(timeline)])
 
     return (
         <div className="flex h-screen flex-col border-l border-white/15 bg-black">
