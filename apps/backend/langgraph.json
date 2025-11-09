@@ -12,10 +12,10 @@
     "httpx"
   ],
   "graphs": {
-    "system_design_agent": "app.agent.system_design.graph:graph"
+    "system_design_agent": "apps.backend.app.agent.system_design.graph:graph"
   },
   "env": "./.env",
   "http": {
-    "app": "app.main:app"
+    "app": "apps.backend.app.main:app"
   }
 }
