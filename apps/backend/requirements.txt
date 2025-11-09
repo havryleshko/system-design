@@ -7,3 +7,5 @@ langgraph
 langgraph-cli
 langgraph-api
 jsonschema
+pyjwt>=2.8.0
+httpx>=0.24.0
