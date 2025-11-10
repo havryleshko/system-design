@@ -11,6 +11,24 @@ from langgraph_sdk import Auth
 auth = Auth()
 
 
+def _normalise_https_url(value: str | None) -> str:
+    """
+    Ensure the provided URL is absolute and uses https://.
+    Supabase dashboard values occasionally omit the scheme; LangGraph
+    runtime needs a fully-qualified URL to reach the JWKS endpoint.
+    """
+    if not value:
+        return ""
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith(("http://", "https://")):
+        return cleaned
+    if cleaned.startswith("//"):
+        cleaned = cleaned[2:]
+    return f"https://{cleaned.lstrip('/')}"
+
+
 def _compute_jwks_url() -> str:
     """
     Resolve the Supabase JWKS URL from environment.
@@ -18,11 +36,13 @@ def _compute_jwks_url() -> str:
       1) SUPABASE_JWKS_URL (explicit)
       2) SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL + '/auth/v1/jwks'
     """
-    jwks_url = os.getenv("SUPABASE_JWKS_URL")
+    jwks_url = _normalise_https_url(os.getenv("SUPABASE_JWKS_URL"))
     if jwks_url:
         return jwks_url
     # Fall back to deriving from Supabase URL if provided
-    base_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    base_url = _normalise_https_url(
+        os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    )
     if base_url:
         return base_url.rstrip("/") + "/auth/v1/jwks"
     # Keep a clear message to aid debugging if all fallbacks are missing
