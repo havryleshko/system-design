@@ -82,15 +82,31 @@ type GetStateOptions = {
 
 export async function getState(threadId?: string, options: GetStateOptions = {}) {
   const redirectTo = options.redirectTo ?? "/";
-  const tid = threadId ?? (await getThreadCookie());
+  let tid = threadId ?? (await getThreadCookie());
   if (!tid) {
-    redirect(buildEnsureThreadUrl(redirectTo));
+    // No thread yet — create one and continue
+    tid = await forceCreateThread();
   }
-  const res = await authFetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" }, redirectTo);
-  if (res.status === 404) {
-    redirect(buildEnsureThreadUrl(redirectTo, true));
+
+  // Try once
+  let res = await authFetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" }, redirectTo);
+
+  // If the thread was evicted/unknown (404) or backend errored (500), force-create and retry once
+  if (res.status === 404 || res.status === 500) {
+    tid = await forceCreateThread();
+    res = await authFetch(`${BASE}/threads/${tid}/state`, { cache: "no-store" }, redirectTo);
   }
-  if (!res.ok) throw new Error(`Failed to fetch state: ${res.status}`);
+
+  // If we lost auth, bounce to login
+  if (res.status === 401) {
+    redirect("/login");
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch state: ${res.status} ${text}`);
+  }
+
   const state = await res.json();
   const runId = state?.values?.run_id ?? null;
   return { threadId: tid, state, runId };
