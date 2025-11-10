@@ -5,7 +5,6 @@ import os
 from functools import lru_cache
 from typing import Any, Dict
 
-import httpx
 import jwt
 from langgraph_sdk import Auth
 
@@ -82,7 +81,7 @@ async def authenticate(authorization: str | None) -> str:
 
 
 @auth.on
-async def authorize_default(params: Auth.on.value) -> bool:
+async def authorize_default(ctx: Auth.types.AuthContext, value: dict[str, Any]) -> bool:
     """
     Default authorization: allow all authenticated users.
     
