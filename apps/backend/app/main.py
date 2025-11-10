@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes.runs import runs_router, threads_router
+from app.routes.runs import runs_router
 
 app = FastAPI()
 
@@ -8,4 +8,4 @@ def health():
     return {"status": "ok"}
 
 app.include_router(runs_router)
-app.include_router(threads_router)
+# Removed threads_router - LangGraph API handles thread management via its built-in routes
