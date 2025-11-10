@@ -67,17 +67,27 @@ async def authenticate(authorization: str | None) -> str:
     
     token = authorization.split(" ", 1)[1].strip()
     
-    # Decode and validate token
-    claims = decode_token(token)
-    
-    # Extract user ID from token
-    user_id = claims.get("sub")
-    if not user_id:
+    try:
+        # Decode and validate token
+        claims = decode_token(token)
+        
+        # Extract user ID from token
+        user_id = claims.get("sub")
+        if not user_id:
+            raise Auth.exceptions.HTTPException(
+                status_code=401, detail="Token missing subject"
+            )
+        
+        return str(user_id)
+    except Auth.exceptions.HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as exc:
+        # Catch any other exceptions (like RuntimeError from missing JWKS_URL)
+        # and convert to 500 error with details
         raise Auth.exceptions.HTTPException(
-            status_code=401, detail="Token missing subject"
-        )
-    
-    return str(user_id)
+            status_code=500, detail=f"Authentication error: {str(exc)}"
+        ) from exc
 
 
 @auth.on
