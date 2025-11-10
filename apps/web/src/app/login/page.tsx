@@ -6,8 +6,6 @@ import Link from "next/link";
 
 import { getBrowserSupabase } from "@/utils/supabase/browser";
 
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
-
 function LoginContent() {
   const supabase = getBrowserSupabase();
   const searchParams = useSearchParams();
@@ -16,10 +14,34 @@ function LoginContent() {
   const [message, setMessage] = useState<string | null>(null);
 
   const redirectTo = searchParams.get("redirect") || "/chat";
-  const callbackUrl = useMemo(
-    () => `${APP_URL}?redirect=${encodeURIComponent(redirectTo)}`,
-    [redirectTo]
-  );
+  const callbackUrl = useMemo(() => {
+    // Dynamically detect the current origin when running in browser
+    // This ensures localhost works correctly even if NEXT_PUBLIC_APP_URL is set
+    const baseUrl =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    
+    // Build callback URL with redirect param and localhost origin param (if running locally)
+    const params = new URLSearchParams({
+      redirect: redirectTo,
+    });
+    
+    // If running locally, add localhost_origin param to help detect production redirects
+    if (typeof window !== "undefined" && (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1"))) {
+      params.set("localhost_origin", baseUrl);
+    }
+    
+    const url = `${baseUrl.replace(/\/$/, "")}?${params.toString()}`;
+    
+    // Debug logging to help diagnose redirect issues
+    if (typeof window !== "undefined") {
+      console.log("[Login] Callback URL:", url);
+      console.log("[Login] Current origin:", window.location.origin);
+      console.log("[Login] Redirect target:", redirectTo);
+    }
+    return url;
+  }, [redirectTo]);
 
   async function handleMagicLink(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

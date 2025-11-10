@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Literal
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
 from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
 
@@ -98,4 +99,8 @@ builder.add_conditional_edges(
 
 builder.add_edge("finaliser", END)
 
-graph = builder.compile()
+# Configure checkpointer for thread persistence
+# MemorySaver is used by default; LangSmith deployments may override this
+checkpointer = MemorySaver()
+
+graph = builder.compile(checkpointer=checkpointer)

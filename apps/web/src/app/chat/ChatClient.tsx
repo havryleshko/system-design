@@ -1,7 +1,12 @@
-'use client'
+"use client"
 
-import { useState, useTransition } from 'react'
-import { fetchTrace } from '../actions'
+import { useRef, useState, useTransition } from "react"
+import { fetchTrace, startRunStream } from "../actions"
+import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
+import TracePanel from "./TracePanel"
+import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
+import ClarifierCard from "./ClarifierCard"
+import NodeStatusRibbon from "./NodeStatusRibbon"
 
 type TraceEvent = {
     ts_ms: number
@@ -21,205 +26,278 @@ type ChatMessage = {
 }
 
 type ChatClientProps = {
-    initialMessages: ChatMessage[]
-    runId: string | null
-    userId?: string | null
+  initialMessages: ChatMessage[]
+  runId: string | null
+  userId?: string | null
+  designJson?: DesignJson | null
 }
 
 export default function ChatClient({
-    initialMessages,
-    runId
+  initialMessages,
+  runId,
+  designJson,
 }: ChatClientProps) {
-    const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
-    const [input, setInput] = useState('')
-    const [traceOpen, setTraceOpen] = useState(false)
-    const [trace, setTrace] = useState<RunTrace | null>(null)
-    const [traceError, setTraceError] = useState<string | null>(null)
-    const [isPending, startTransition] = useTransition()
-    const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
+  const [input, setInput] = useState("")
+  const [trace, setTrace] = useState<RunTrace | null>(null)
+  const [traceError, setTraceError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
+  const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
+  const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
+  const [streamingContent, setStreamingContent] = useState("")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const streamHandleRef = useRef<{ close: () => void } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; fields: string[] } | null>(null)
+  const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
 
-    const loadTrace = () => {
-        if (!currentRunId) {
-            setTraceError('Run ID not available yet')
-            setTraceOpen(true)
+  function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
+    if (typeof input !== "object" || input === null) return null
+    const rec = input as Record<string, unknown>
+    const values = rec.values
+    if (typeof values === "object" && values !== null) return values as Record<string, unknown>
+    return null
+  }
+
+  const loadTrace = () => {
+    if (!currentRunId) {
+      setTraceError("Run ID not available yet")
+      return
+    }
+    if (trace || isPending) return
+    startTransition(async () => {
+      try {
+        const data = await fetchTrace(currentRunId)
+        setTrace(data)
+        setTraceError(null)
+      } catch (err) {
+        setTrace(null)
+        setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+      }
+    })
+  }
+
+  const refreshTrace = () => {
+    if (!currentRunId) return
+    startTransition(async () => {
+      try {
+        const data = await fetchTrace(currentRunId)
+        setTrace(data)
+        setTraceError(null)
+      } catch (err) {
+        setTrace(null)
+        setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+      }
+    })
+  }
+
+  async function send() {
+    const trimmed = input.trim()
+    if (!trimmed) return
+
+    const userMessage: ChatMessage = { role: "user", content: trimmed }
+    setMessages((prev) => [...prev, userMessage])
+    setInput("")
+
+    try {
+      const result = await startRunStream(trimmed)
+      if (!result.ok) {
+        const errorMessage = result.error || 'Run failed'
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
+        ])
+        return
+      }
+      if (!result.runId) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: 'Run created but no run ID was returned' },
+        ])
+        return
+      }
+      const { runId: newRunId } = result
+      setCurrentRunId(newRunId)
+      setStreamingContent("")
+      setIsStreaming(true)
+      setClarifier(null)
+      setNodeStatuses([])
+
+      if (streamHandleRef.current) {
+        try { streamHandleRef.current.close() } catch {}
+        streamHandleRef.current = null
+      }
+
+      const handle = openRunStream({
+        threadId: result.threadId,
+        runId: newRunId,
+        onEvent: (evt: NormalizedStreamEvent) => {
+          if (evt.type === 'message-delta') {
+            setStreamingContent((prev) => prev + evt.text)
             return
-        }
-        setTraceOpen(true)
-        if (trace || isPending) return
-        startTransition(async () => {
-            try {
-                const data = await fetchTrace(currentRunId)
+          }
+          if (evt.type === 'message-completed') {
+            const content = streamingContentRef.current
+            if (content && content.trim().length > 0) {
+              setMessages((prev) => [...prev, { role: 'assistant', content }])
+            }
+            setStreamingContent("")
+            return
+          }
+          if (evt.type === 'node-started') {
+            const node = evt.node
+            setNodeStatuses((prev) => {
+              const existing = prev.find((p) => p.name === node)
+              if (existing) return prev.map((p) => (p.name === node ? { ...p, status: 'running' } : p))
+              return [...prev, { name: node, status: 'running' }]
+            })
+            return
+          }
+          if (evt.type === 'node-completed') {
+            const node = evt.node
+            setNodeStatuses((prev) => prev.map((p) => (p.name === node ? { ...p, status: 'done' } : p)))
+            return
+          }
+          if (evt.type === 'values-updated') {
+            const values = getValuesFromStateLike(evt.values)
+            if (values) {
+              const arch = (values["architecture_json"] || values["design_json"]) as unknown
+              if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
+              const question = typeof values["clarifier_question"] === "string" ? values["clarifier_question"] : null
+              const missingFields = values["missing_fields"]
+              const missing = Array.isArray(missingFields) ? missingFields : []
+              if (question && missing.length > 0) {
+                setClarifier({ question, fields: missing as string[] })
+                setIsStreaming(false)
+              }
+            }
+            return
+          }
+          if (evt.type === 'run-completed') {
+            setIsStreaming(false)
+            setClarifier(null)
+            startTransition(async () => {
+              try {
+                const data = await fetchTrace(newRunId)
                 setTrace(data)
                 setTraceError(null)
-            } catch (err) {
+              } catch (err) {
                 setTrace(null)
-                setTraceError(err instanceof Error ? err.message : 'Failed to load trace')
-            }
-        })
-    }
-
-    const refreshTrace = () => {
-        if (!currentRunId) return
-        startTransition(async () => {
-            try {
-                const data = await fetchTrace(currentRunId)
-                setTrace(data)
-                setTraceError(null)
-            } catch (err) {
-                setTrace(null)
-                setTraceError(err instanceof Error ? err.message : 'Failed to load trace')
-            }
-        })
-    }
-
-    async function send() {
-        const trimmed = input.trim()
-        if (!trimmed) return
-
-        const userMessage: ChatMessage = { role: 'user', content: trimmed }
-        setMessages((prev) => [...prev, userMessage])
-        setInput('')
-
-        const res = await fetch('/api/messages', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: trimmed })
-        })
-        if (!res.ok) {
-            console.error('Request failed', res.status)
-            setMessages((prev) => [
-                ...prev,
-                { role: 'assistant', content: 'Sorry, something went wrong starting that run.' }
-            ])
+                setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+              }
+            })
             return
-        }
-        const data = await res.json()
-        const newRunId = typeof data?.id === 'string' ? data.id : null
-        if (newRunId) {
-            setCurrentRunId(newRunId)
-            setTrace(null)
-        }
-
-        const reply = data?.reply
-        if (reply && typeof reply === 'object' && typeof reply.content === 'string') {
-            const replyRole = reply.role === 'user' || reply.role === 'assistant' || reply.role === 'system' ? reply.role : 'assistant'
-            setMessages((prev) => [...prev, { role: replyRole, content: reply.content }])
-            return
-        }
-
-        if (newRunId) {
-            const status = typeof data?.status === 'string' ? data.status : 'created'
-            setMessages((prev) => [
-                ...prev,
-                { role: 'assistant', content: `Run ${status} (${newRunId})` }
-            ])
-        }
+          }
+          if (evt.type === 'error') {
+            setIsStreaming(false)
+          }
+        },
+      })
+      streamHandleRef.current = handle
+    } catch (err) {
+      console.error("Run failed", err)
+      const message = err instanceof Error ? err.message : "Unknown error"
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Sorry, something went wrong: ${message}` },
+      ])
     }
+  }
 
-    return (
-        <div className="min-h-screen bg-black text-white">
-            <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
-                <div className="flex items-center justify-between gap-3">
-                    <div>
-                        <h2 className="text-xl font-semibold tracking-wide">Chat</h2>
-                        <p className="text-xs uppercase text-white/40">system design assistant</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <button
-                            className="rounded border border-white px-3 py-2 text-xs uppercase tracking-wide text-white transition hover:bg-white hover:text-black"
-                            onClick={async () => {
-                                const res = await fetch('/api/stripe/checkout', { method: 'POST' })
-                                if (!res.ok) {
-                                    console.error('Checkout failed', res.status)
-                                    return
-                                }
-                                const data = await res.json()
-                                if (data?.url) {
-                                    window.location.href = data.url as string
-                                }
-                            }}
-                        >
-                            Upgrade to Pro
-                        </button>
-                        <button className="text-sm text-white/70 underline-offset-4 hover:text-white" onClick={loadTrace}>
-                            Show trace
-                        </button>
-                    </div>
-                </div>
+  // track latest streaming content for completion
+  const streamingContentRef = useRef(streamingContent)
+  if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
 
-                <div className="flex-1 overflow-hidden">
-                    <div className="flex h-[32rem] flex-col gap-3 overflow-y-auto border border-white/15 bg-black/40 p-5">
-                        {messages.length === 0 ? (
-                            <p className="text-sm text-white/40">No messages yet. Ask the assistant anything about system design.</p>
-                        ) : (
-                            messages.map((m, i) => (
-                                <div key={i} className="space-y-1 border border-white/20 px-4 py-3">
-                                    <div className="text-xs uppercase tracking-wide text-white/40">{m.role}</div>
-                                    <div className="text-sm leading-relaxed text-white">{m.content}</div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-3 border border-white/15 bg-black/60 px-4 py-3">
-                    <input
-                        className="flex-1 bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
-                        placeholder="Type your message"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                    />
-                    <button
-                        className="border border-white px-4 py-2 text-sm uppercase tracking-wide text-white transition hover:bg-white hover:text-black"
-                        onClick={send}
-                    >
-                        Send
-                    </button>
-                </div>
-            </div>
-
-            {traceOpen && <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setTraceOpen(false)} />}
-            {traceOpen && (
-                <div className="fixed top-0 right-0 z-50 flex h-full w-full max-w-md flex-col border-l border-white/10 bg-black text-white shadow-[0_0_30px_rgba(0,0,0,0.6)]">
-                    <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-                        <h3 className="text-sm font-semibold uppercase tracking-wide">Trace</h3>
-                        <div className="flex items-center gap-3 text-xs uppercase tracking-wide">
-                            <button
-                                className="text-white/70 hover:text-white disabled:text-white/30"
-                                onClick={refreshTrace}
-                                disabled={isPending || !currentRunId}
-                            >
-                                {isPending ? 'Refreshing…' : 'Refresh'}
-                            </button>
-                            <button className="text-white/70 hover:text-white" onClick={() => setTraceOpen(false)}>
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                    <div className="flex-1 space-y-4 overflow-auto px-5 py-4">
-                        {!runId && <p className="text-xs uppercase text-white/40">Run has not started yet.</p>}
-                        {traceError && <p className="text-xs uppercase text-red-400">{traceError}</p>}
-                        {isPending && !trace && <p className="text-xs uppercase text-white/40">Loading trace…</p>}
-                        {trace && trace.events.length === 0 && <p className="text-xs uppercase text-white/40">No trace events yet.</p>}
-                        {trace?.events.map((event, idx) => (
-                            <div key={idx} className="border border-white/15 px-4 py-3">
-                                <div className="flex justify-between text-[10px] uppercase tracking-wide text-white/40">
-                                    <span>{new Date(event.ts_ms).toLocaleString()}</span>
-                                    <span>{event.level}</span>
-                                </div>
-                                <p className="mt-2 text-sm leading-relaxed text-white">{event.message}</p>
-                                {event.data ? (
-                                    <pre className="mt-3 max-h-40 overflow-auto border border-white/10 bg-black/60 p-3 text-[11px] leading-snug text-white">
-                                        {JSON.stringify(event.data, null, 2)}
-                                    </pre>
-                                ) : null}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+  return (
+    <div className="h-screen bg-black text-white">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 px-6 py-3">
+        <div>
+          <h2 className="text-base font-semibold tracking-wide">System Design Agent</h2>
+          <p className="text-[11px] uppercase text-white/40">Three-panel workspace</p>
         </div>
-    )
+        <div className="flex items-center gap-3">
+          <button
+            className="rounded border border-white px-3 py-1.5 text-[11px] uppercase tracking-wide text-white transition hover:bg-white hover:text-black"
+            onClick={async () => {
+              const res = await fetch("/api/stripe/checkout", { method: "POST" })
+              if (!res.ok) {
+                console.error("Checkout failed", res.status)
+                return
+              }
+              const data = await res.json()
+              if (data?.url) {
+                window.location.href = data.url as string
+              }
+            }}
+          >
+            Upgrade to Pro
+          </button>
+        </div>
+      </div>
+
+      {/* 3-panel layout */}
+      <div className="grid h-[calc(100vh-49px)] grid-cols-12">
+        {/* Left: Architecture */}
+        <div className="col-span-3 min-w-0 border-r border-white/10">
+          <ArchitecturePanel designJson={architecture ?? null} />
+        </div>
+
+        {/* Center: Chat */}
+        <div className="col-span-6 flex min-w-0 flex-col">
+          <div className="flex-1 overflow-hidden">
+            <div className="flex h-full flex-col gap-3 overflow-y-auto p-5">
+              <NodeStatusRibbon nodes={nodeStatuses} />
+              {messages.length === 0 ? (
+                <p className="text-sm text-white/40">
+                  No messages yet. Ask the assistant anything about system design.
+                </p>
+              ) : (
+                messages.map((m, i) => (
+                  <div key={i} className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
+                    <div className="text-xs uppercase tracking-wide text-white/40">{m.role === 'assistant' ? 'agent' : m.role}</div>
+                    <div className="text-sm leading-relaxed text-white">{m.content}</div>
+                  </div>
+                ))
+              )}
+              {isStreaming && (
+                <div className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
+                  <div className="text-xs uppercase tracking-wide text-white/40">agent</div>
+                  <div className="text-sm leading-relaxed text-white whitespace-pre-wrap">{streamingContent || '█'}</div>
+                </div>
+              )}
+              {clarifier && (
+                <ClarifierCard question={clarifier.question} fields={clarifier.fields} />
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 border-t border-white/10 bg-black/60 px-4 py-3">
+            <input
+              className="flex-1 bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
+              placeholder="Type your message"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+            />
+            <button
+              className="border border-white px-4 py-2 text-sm uppercase tracking-wide text-white transition hover:bg-white hover:text-black"
+              onClick={send}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+
+        {/* Right: Trace */}
+        <div className="col-span-3 min-w-0 border-l border-white/10">
+          <TracePanel
+            trace={trace}
+            isLoading={isPending && !trace}
+            error={traceError}
+            onRefresh={() => (trace ? refreshTrace() : loadTrace())}
+          />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 
