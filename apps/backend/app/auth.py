@@ -11,12 +11,28 @@ from langgraph_sdk import Auth
 auth = Auth()
 
 
+def _compute_jwks_url() -> str:
+    """
+    Resolve the Supabase JWKS URL from environment.
+    Priority:
+      1) SUPABASE_JWKS_URL (explicit)
+      2) SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL + '/auth/v1/jwks'
+    """
+    jwks_url = os.getenv("SUPABASE_JWKS_URL")
+    if jwks_url:
+        return jwks_url
+    # Fall back to deriving from Supabase URL if provided
+    base_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    if base_url:
+        return base_url.rstrip("/") + "/auth/v1/jwks"
+    # Keep a clear message to aid debugging if all fallbacks are missing
+    raise RuntimeError("SUPABASE_JWKS_URL not configured (and SUPABASE_URL missing)")
+
+
 @lru_cache(maxsize=1)
 def get_jwks_client():
     """Get JWKS client for Supabase token validation."""
-    jwks_url = os.getenv("SUPABASE_JWKS_URL")
-    if not jwks_url:
-        raise RuntimeError("SUPABASE_JWKS_URL not configured")
+    jwks_url = _compute_jwks_url()
     return jwt.PyJWKClient(jwks_url, cache_keys=True)
 
 
@@ -83,11 +99,15 @@ async def authenticate(authorization: str | None) -> str:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as exc:
-        # Catch any other exceptions (like RuntimeError from missing JWKS_URL)
-        # and convert to 500 error with details
-        raise Auth.exceptions.HTTPException(
-            status_code=500, detail=f"Authentication error: {str(exc)}"
-        ) from exc
+        # If configuration is missing, surface as 401 to the client so the UI
+        # can handle it gracefully instead of a generic 500.
+        message = str(exc)
+        if "JWKS" in message or "SUPABASE" in message:
+            raise Auth.exceptions.HTTPException(
+                status_code=401, detail="Authentication not configured"
+            ) from exc
+        # Unexpected errors remain 500s
+        raise Auth.exceptions.HTTPException(status_code=500, detail="Authentication error") from exc
 
 
 @auth.on
