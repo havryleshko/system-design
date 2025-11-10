@@ -271,10 +271,14 @@ def normalise_architecture(raw: Any, *, goal: str, design_brief: str) -> Dict[st
 
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
+    """
+    Lazily construct the OpenAI chat client.
+    Using an lru_cache avoids paying the construction cost more than once,
+    while preventing import-time failures (e.g. missing OPENAI_API_KEY)
+    from breaking service startup and /threads creation.
+    """
     model_name = model or os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
     return ChatOpenAI(model=model_name)
-
-BRAIN = make_brain()
 
 def to_message(x: any) -> BaseMessage:
     if isinstance(x, BaseMessage):
@@ -321,7 +325,8 @@ def json_only(text: str) -> Optional[dict]:
 
 def call_brain(messages: list[any], *, run_id: str | None = None, node: str | None = None) -> str:
     ms = normalise(messages)
-    r = BRAIN.invoke(ms)
+    brain = make_brain()
+    r = brain.invoke(ms)
     if run_id and node:
         log_token_usage(run_id, node, r)
     return getattr(r, "content", "") or ""
