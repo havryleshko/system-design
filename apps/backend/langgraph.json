@@ -1,18 +1,11 @@
 {
-  "dependencies": [
-    "langgraph",
-    "langchain",
-    "langchain-openai",
-    "openai",
-    "fastapi",
-    "uvicorn",
-    "pydantic",
-    "pydantic-settings",
-    "python-dotenv",
-    "httpx"
-  ],
+  "python_version": "3.12",
+  "dependencies": ["."],
   "graphs": {
     "system_design_agent": "app.agent.system_design.graph:graph"
   },
-  "env": "./.env"
+  "env": "env",
+  "auth": {
+    "path": "app.auth:auth"
+  }
 }
