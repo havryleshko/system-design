@@ -5,7 +5,7 @@
     "system_design_agent": "app.agent.system_design.graph:graph"
   },
   "env": "env",
-  "http": {
-    "app": "app.main:app"
+  "auth": {
+    "path": "app.auth:auth"
   }
 }

@@ -53,12 +53,12 @@ ARCHITECTURE_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
                     "kind": {"type": "string", "enum": ARCHITECTURE_NODE_KINDS},
                     "label": {"type": "string", "minLength": 1, "maxLength": 80},
                     "description": {"type": "string", "maxLength": 280},
                     "technology": {"type": "string", "maxLength": 80},
-                    "parent": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "parent": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
                     "tags": {
                         "type": "array",
                         "maxItems": 6,
@@ -76,8 +76,8 @@ ARCHITECTURE_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "source": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
-                    "target": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "source": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+                    "target": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
                     "label": {"type": "string", "minLength": 1, "maxLength": 120},
                     "technology": {"type": "string", "maxLength": 80},
                     "direction": {"type": "string", "enum": ["->", "<-", "<->"]},
@@ -92,7 +92,7 @@ ARCHITECTURE_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
                     "kind": {"type": "string", "enum": ARCHITECTURE_GROUP_KINDS},
                     "label": {"type": "string", "minLength": 1, "maxLength": 80},
                     "technology": {"type": "string", "maxLength": 80},
@@ -100,7 +100,7 @@ ARCHITECTURE_SCHEMA = {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 32,
-                        "items": {"type": "string", "pattern": "^[A-Za-z0-9_\-]+$"},
+                        "items": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
                     },
                 },
                 "required": ["id", "kind", "label", "children"],
