@@ -142,10 +142,12 @@ async def authenticate(authorization: str | None) -> str:
         # can handle it gracefully instead of a generic 500.
         message = str(exc)
         if "JWKS" in message or "SUPABASE" in message:
+            print("[auth] configuration error:", repr(exc))
             raise Auth.exceptions.HTTPException(
                 status_code=401, detail="Authentication not configured"
             ) from exc
         # Unexpected errors remain 500s
+        print("[auth] unexpected authentication error:", repr(exc))
         raise Auth.exceptions.HTTPException(status_code=500, detail="Authentication error") from exc
 
 
