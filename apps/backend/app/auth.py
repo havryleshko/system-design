@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Any, Dict
 
 import jwt
+from jwt import exceptions as jwt_exceptions
 from langgraph_sdk import Auth
 
 auth = Auth()
@@ -53,7 +54,25 @@ def _compute_jwks_url() -> str:
 def get_jwks_client():
     """Get JWKS client for Supabase token validation."""
     jwks_url = _compute_jwks_url()
-    return jwt.PyJWKClient(jwks_url, cache_keys=True)
+    anon_key = (
+        os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        or ""
+    )
+    if not anon_key:
+        raise RuntimeError("SUPABASE_ANON_KEY not configured; cannot fetch Supabase JWKS")
+
+    try:
+        client = jwt.PyJWKClient(
+            jwks_url,
+            cache_keys=True,
+            headers={"apikey": anon_key},
+        )
+        # Trigger an initial fetch so configuration issues are surfaced early.
+        client.get_jwk_set()
+        return client
+    except jwt_exceptions.PyJWKClientConnectionError as exc:
+        raise RuntimeError(f"Failed to fetch Supabase JWKS: {exc}") from exc
 
 
 def decode_token(token: str) -> Dict[str, Any]:
