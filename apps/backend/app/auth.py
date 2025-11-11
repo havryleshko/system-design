@@ -77,18 +77,41 @@ def get_jwks_client():
 
 def decode_token(token: str) -> Dict[str, Any]:
     """Decode and validate Supabase JWT token."""
-    jwks_client = get_jwks_client()
-    signing_key = jwks_client.get_signing_key_from_jwt(token)
     options = {"verify_aud": False}
+    jwks_error: Exception | None = None
+
     try:
-        decoded = jwt.decode(
+        jwks_client = get_jwks_client()
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        return jwt.decode(
             token,
             signing_key.key,
             algorithms=[signing_key.algorithm],
             audience=None,
             options=options,
         )
-        return decoded
+    except (RuntimeError, jwt_exceptions.PyJWKClientError) as exc:
+        jwks_error = exc
+    except jwt.PyJWTError as exc:
+        raise Auth.exceptions.HTTPException(
+            status_code=401, detail=f"Invalid token: {exc}"
+        ) from exc
+
+    # Fallback to verifying with the Supabase JWT secret if JWKS lookup fails.
+    secret = os.getenv("SUPABASE_JWT_SECRET")
+    if not secret:
+        raise Auth.exceptions.HTTPException(
+            status_code=401, detail="Authentication not configured"
+        ) from jwks_error
+
+    try:
+        return jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            audience=None,
+            options=options,
+        )
     except jwt.PyJWTError as exc:
         raise Auth.exceptions.HTTPException(
             status_code=401, detail=f"Invalid token: {exc}"

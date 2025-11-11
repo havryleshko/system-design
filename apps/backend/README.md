@@ -6,6 +6,8 @@ requests. Two environment variables must be present in every deployment:
 - `SUPABASE_JWKS_URL` &mdash; set to the Supabase project's JWKS endpoint,
   e.g. `https://<project-ref>.supabase.co/auth/v1/certs`.
 - `SUPABASE_ANON_KEY` &mdash; the project's anonymous API key.
+- `SUPABASE_JWT_SECRET` &mdash; fallback HMAC secret used if JWKS fetching is
+  unavailable (copy it from Supabase Settings → API → JWT secret).
 
 The backend sends the anon key as the `apikey` header when fetching the JWKS
 document. If either variable is missing or incorrect, authentication fails
