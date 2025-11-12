@@ -41,6 +41,12 @@ export async function GET(
     signal: req.signal,
   });
 
+  console.log("[stream] proxy upstream", {
+    threadId,
+    upstreamStatus: upstream.status,
+    ok: upstream.ok,
+  });
+
   if (!upstream.ok || !upstream.body) {
     const text = await upstream.text().catch(() => "");
     return new Response(`Upstream error ${upstream.status}: ${text}`, {
