@@ -131,6 +131,7 @@ export default function ChatClient({
         threadId: result.threadId,
         runId: newRunId,
         onEvent: (evt: NormalizedStreamEvent) => {
+          console.log("[chat] stream event", evt);
           if (evt.type === 'message-delta') {
             setStreamingContent((prev) => prev + evt.text)
             return
