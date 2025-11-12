@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 
 import ChatClient from "./ChatClient";
 import ChatGuard from "./Guard";
-import { buildEnsureThreadUrl, getState } from "../actions";
+import { buildEnsureThreadUrl } from "@/shared/thread";
+import { getState } from "../actions";
 import type { DesignJson } from "./ArchitecturePanel";
 
 export default async function Page() {
