@@ -70,7 +70,7 @@ export async function createThread(options: CreateThreadOptions = {}): Promise<s
   return id;
 }
 
-function buildEnsureThreadUrl(redirectTo: string, force = false) {
+export function buildEnsureThreadUrl(redirectTo: string, force = false) {
   const params = new URLSearchParams({ redirect: redirectTo });
   if (force) params.set("force", "1");
   return `/api/thread/ensure?${params.toString()}`;

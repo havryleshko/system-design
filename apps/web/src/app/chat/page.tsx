@@ -1,6 +1,8 @@
+import { redirect } from "next/navigation";
+
 import ChatClient from "./ChatClient";
 import ChatGuard from "./Guard";
-import { createThread, getState } from "../actions";
+import { buildEnsureThreadUrl, getState } from "../actions";
 import type { DesignJson } from "./ArchitecturePanel";
 
 export default async function Page() {
@@ -15,10 +17,7 @@ export default async function Page() {
       (state?.values?.design_json as DesignJson) ||
       null;
   } catch {
-    // Ensure a valid thread cookie exists so the UI can start a new run
-    await createThread({ force: true });
-    runId = null;
-    designJson = null;
+    redirect(buildEnsureThreadUrl("/chat", true));
   }
   const initialMessages: { role: "user" | "assistant" | "system"; content: string }[] = [];
   const userId = null;
