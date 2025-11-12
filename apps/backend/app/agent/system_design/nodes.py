@@ -919,4 +919,8 @@ def finaliser(state: State) -> Dict[str, any]:
         if ref_lines:
             output_md = output_md.rstrip() + "\n\nReferences\n" + "\n".join(ref_lines)
 
-    return {"output": output_md, "architecture_json": architecture_json}
+    return {
+        "messages": [AIMessage(content=output_md)],
+        "output": output_md,
+        "architecture_json": architecture_json
+    }
