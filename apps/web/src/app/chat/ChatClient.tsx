@@ -32,6 +32,67 @@ type ChatClientProps = {
   designJson?: DesignJson | null
 }
 
+const ROLE_TYPE_MAP: Record<string, ChatMessage["role"]> = {
+  ai: "assistant",
+  human: "user",
+  system: "system",
+};
+
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part && typeof (part as Record<string, unknown>).text === "string") {
+          return (part as { text: string }).text;
+        }
+        if (part && typeof part === "object" && "content" in part) {
+          return extractText((part as Record<string, unknown>).content);
+        }
+        return "";
+      })
+      .filter(Boolean);
+    return parts.join("\n");
+  }
+  if (content && typeof content === "object") {
+    if ("text" in content && typeof (content as Record<string, unknown>).text === "string") {
+      return (content as { text: string }).text;
+    }
+    if ("content" in content) {
+      return extractText((content as Record<string, unknown>).content);
+    }
+  }
+  return "";
+}
+
+function normaliseMessages(raw: unknown): ChatMessage[] | null {
+  if (!Array.isArray(raw)) return null;
+  const result: ChatMessage[] = [];
+  for (const entry of raw) {
+    if (!entry) continue;
+    if (typeof entry === "string") {
+      result.push({ role: "assistant", content: entry });
+      continue;
+    }
+    if (typeof entry === "object") {
+      const record = entry as Record<string, unknown>;
+      const content = extractText(record.content);
+      const rawRole = typeof record.role === "string" ? record.role.toLowerCase() : undefined;
+      const rawType = typeof record.type === "string" ? record.type.toLowerCase() : undefined;
+      const role = (
+        (rawRole === "assistant" || rawRole === "user" || rawRole === "system")
+          ? (rawRole as ChatMessage["role"])
+          : rawType && ROLE_TYPE_MAP[rawType]
+      ) || "assistant";
+      if (content && content.trim().length > 0) {
+        result.push({ role, content: content.trim() });
+      }
+    }
+  }
+  return result;
+}
+
 export default function ChatClient({
   initialMessages,
   runId,
@@ -170,6 +231,17 @@ export default function ChatClient({
                 setClarifier({ question, fields: missing as string[] })
                 setIsStreaming(false)
               }
+              const normalized = normaliseMessages(values["messages"])
+              if (normalized) {
+                setMessages((prev) => {
+                  if (prev.length === normalized.length && prev.every((msg, idx) => msg.role === normalized[idx].role && msg.content === normalized[idx].content)) {
+                    return prev
+                  }
+                  return normalized
+                })
+                setStreamingContent("")
+                setIsStreaming(false)
+              }
             }
             return
           }
@@ -256,7 +328,7 @@ export default function ChatClient({
                 messages.map((m, i) => (
                   <div key={i} className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
                     <div className="text-xs uppercase tracking-wide text-white/40">{m.role === 'assistant' ? 'agent' : m.role}</div>
-                    <div className="text-sm leading-relaxed text-white">{m.content}</div>
+                    <div className="text-sm leading-relaxed text-white whitespace-pre-wrap">{m.content}</div>
                   </div>
                 ))
               )}
