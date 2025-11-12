@@ -173,21 +173,28 @@ export default function ChatClient({
               // Extract assistant messages from state (for nodes that add messages synchronously)
               const messages = values["messages"]
               if (Array.isArray(messages)) {
-                const lastMessage = messages[messages.length - 1]
-                if (lastMessage && typeof lastMessage === "object") {
-                  const msgObj = lastMessage as Record<string, unknown>
-                  const content = typeof msgObj.content === "string" ? msgObj.content : ""
-                  const role = typeof msgObj.role === "string" ? msgObj.role : typeof msgObj.type === "string" && msgObj.type === "ai" ? "assistant" : null
-                  // If this is an assistant message and we don't already have it displayed
-                  if (role === "assistant" && content && content.trim().length > 0) {
-                    // Add to messages if we don't already have this exact content
-                    setMessages((prev) => {
-                      const exists = prev.some(m => m.role === "assistant" && m.content === content)
-                      return exists ? prev : [...prev, { role: "assistant", content }]
-                    })
-                    // Clear any streaming content since we have the full message
-                    setStreamingContent("")
-                    setIsStreaming(false)
+                // Check all messages to find any new assistant messages
+                for (const msg of messages) {
+                  if (msg && typeof msg === "object") {
+                    const msgObj = msg as Record<string, unknown>
+                    const content = typeof msgObj.content === "string" ? msgObj.content : ""
+                    const role = typeof msgObj.role === "string" ? msgObj.role : typeof msgObj.type === "string" && msgObj.type === "ai" ? "assistant" : null
+                    // If this is an assistant message with content
+                    if (role === "assistant" && content && content.trim().length > 0) {
+                      console.log("[chat] found assistant message in values", { content: content.substring(0, 100) + "..." })
+                      // Add to messages if we don't already have this exact content
+                      setMessages((prev) => {
+                        const exists = prev.some(m => m.role === "assistant" && m.content === content)
+                        if (!exists) {
+                          console.log("[chat] adding assistant message to UI")
+                          return [...prev, { role: "assistant", content }]
+                        }
+                        return prev
+                      })
+                      // Clear any streaming content since we have the full message
+                      setStreamingContent("")
+                      setIsStreaming(false)
+                    }
                   }
                 }
               }
