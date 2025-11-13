@@ -176,9 +176,9 @@ export default function ChatClient({
               const output = typeof values["output"] === "string" ? values["output"].trim() : ""
               if (output && output !== lastAssistantMessageRef.current) {
                 lastAssistantMessageRef.current = output
-                setMessages((prev) => [...prev, { role: "assistant", content: output }])
-                setStreamingContent("")
                 setIsStreaming(false)
+                setStreamingContent("")
+                setMessages((prev) => [...prev, { role: "assistant", content: output }])
               }
             }
             return
