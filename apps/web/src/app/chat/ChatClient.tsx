@@ -163,6 +163,7 @@ export default function ChatClient({
       const { runId: newRunId } = result
       setCurrentRunId(newRunId)
       setStreamingContent("")
+      streamingContentRef.current = ""
       setIsStreaming(true)
       setClarifier(null)
       setNodeStatuses([])
@@ -178,15 +179,20 @@ export default function ChatClient({
         onEvent: (evt: NormalizedStreamEvent) => {
           console.log("[chat] stream event", evt);
           if (evt.type === 'message-delta') {
-            setStreamingContent((prev) => prev + evt.text)
+            setStreamingContent((prev) => {
+              const next = prev + evt.text
+              streamingContentRef.current = next
+              return next
+            })
             return
           }
           if (evt.type === 'message-completed') {
-            const content = streamingContent
-            if (content && content.trim().length > 0) {
+            const content = streamingContentRef.current?.trim() ?? ''
+            if (content.length > 0) {
               setMessages((prev) => [...prev, { role: 'assistant', content }])
             }
             setStreamingContent("")
+            streamingContentRef.current = ""
             setIsStreaming(false)
             return
           }
@@ -223,11 +229,13 @@ export default function ChatClient({
                 setMessages(normalized)
                 setIsStreaming(false)
                 setStreamingContent("")
+                streamingContentRef.current = ""
               }
               const output = typeof values["output"] === "string" ? values["output"].trim() : ""
               if (output) {
                 setIsStreaming(false)
                 setStreamingContent("")
+                streamingContentRef.current = ""
               }
             }
             return
