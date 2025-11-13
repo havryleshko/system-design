@@ -9,8 +9,9 @@ def overwrite(_: Any, updated: Any) -> Any:
 class State(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
     goal: str
-    missing_fields: Annotated[list[str], operator.add]
-    iterations: int
+    missing_fields: Annotated[list[str], overwrite]
+    iterations: Annotated[int, overwrite]
+    awaiting_clarifier: Annotated[bool, overwrite]
     clarifier_question: Annotated[str, overwrite]
     plan: str
     design: str

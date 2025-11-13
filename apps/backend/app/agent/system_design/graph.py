@@ -29,14 +29,17 @@ builder.add_conditional_edges(
     {"clarifier": "clarifier", "planner": "planner"},
 )
 
-def route_from_clarifier(state: State) -> Literal["clarifier", "planner"]:
+def route_from_clarifier(state: State) -> Literal["clarifier", "planner", "await"]:
+    if state.get("awaiting_clarifier"):
+        return "await"
     it = int(state.get("iterations", 0) or 0 )
-    return "clarifier" if state.get("missing_fields") and it < MAX_ITERATIONS else "planner"
+    missing = state.get("missing_fields") or []
+    return "clarifier" if missing and it < MAX_ITERATIONS else "planner"
 
 builder.add_conditional_edges(
     "clarifier",
     route_from_clarifier,
-    {"clarifier": "clarifier", "planner": "planner"}
+    {"clarifier": "clarifier", "planner": "planner", "await": END}
 )
 
 

@@ -602,17 +602,29 @@ def intent(state: State) -> Dict[str, any]:
     data = json_only(raw) or {}
     goal = str(data.get("goal") or user_text).strip()
     required = ['use_case', 'constraints']
-    missing = [m for m in (data.get('missing_fields') or []) if str(m).lower() in required]
+    missing = []
+    for m in (data.get('missing_fields') or []):
+        text = str(m).strip()
+        if text.lower() in required and text not in missing:
+            missing.append(text)
     if not missing:
         lowered = goal.lower()
-        if 'use_case' not in lowered:
+        if 'use_case' not in lowered and 'use_case' not in missing:
             missing.append('use_case')
-        if 'constraints' not in lowered:
+        if 'constraints' not in lowered and 'constraints' not in missing:
             missing.append('constraints')
-    return {"goal": goal, "missing_fields": missing}
+    updates: Dict[str, any] = {"goal": goal, "missing_fields": missing, "awaiting_clarifier": False}
+    if not missing:
+        updates["iterations"] = 0
+    return updates
 
 def clarifier(state: State) -> Dict[str, any]:
-    missing = state.get('missing_fields', []) or []
+    raw_missing = state.get('missing_fields', []) or []
+    missing = []
+    for item in raw_missing:
+        text = str(item).strip()
+        if text and text not in missing:
+            missing.append(text)
     it = int(state.get("iterations", 0) or 0)
     if missing and it < MAX_ITERATIONS:
         need = ", ".join(str(x) for x in missing)
@@ -626,9 +638,13 @@ def clarifier(state: State) -> Dict[str, any]:
         return {
             "messages": [AIMessage(content=question)],
             "clarifier_question": question,
-            "iterations": it + 1
+            "iterations": it + 1,
+            "awaiting_clarifier": True,
         }
-    return {}
+    updates: Dict[str, any] = {"awaiting_clarifier": False}
+    if not missing:
+        updates["iterations"] = 0
+    return updates
 
 def planner(state: State) -> Dict[str, any]:
     goal = state.get("goal", "") or ""
