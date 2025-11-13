@@ -144,6 +144,7 @@ export default function ChatClient({
               setMessages((prev) => [...prev, { role: 'assistant', content }])
             }
             setStreamingContent("")
+            setIsStreaming(false)
             return
           }
           if (evt.type === 'node-started') {
