@@ -93,8 +93,6 @@ export default function ChatClient({
     return normalized
   }
 
-  const lastAssistantMessageRef = useRef<string>("")
-
   function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
     if (typeof input !== "object" || input === null) return null
     const rec = input as Record<string, unknown>
@@ -182,7 +180,7 @@ export default function ChatClient({
             return
           }
           if (evt.type === 'message-completed') {
-            const content = streamingContentRef.current
+            const content = streamingContent
             if (content && content.trim().length > 0) {
               setMessages((prev) => [...prev, { role: 'assistant', content }])
             }
