@@ -219,6 +219,7 @@ export default function ChatClient({
 
               const normalized = normalizeMessages(values["messages"])
               if (normalized && normalized.length > 0) {
+                console.log('[chat] normalized messages', normalized.length)
                 setMessages(normalized)
                 setIsStreaming(false)
                 setStreamingContent("")
