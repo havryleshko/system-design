@@ -50,6 +50,49 @@ export default function ChatClient({
   const [clarifier, setClarifier] = useState<{ question: string; fields: string[] } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
 
+  const extractContent = (value: unknown): string => {
+    if (!value) return ""
+    if (typeof value === "string") return value
+    if (Array.isArray(value)) {
+      return value
+        .map((part) => {
+          if (typeof part === "string") return part
+          if (part && typeof part === "object") {
+            const segment = part as Record<string, unknown>
+            if (typeof segment.text === "string") return segment.text
+            if (typeof segment.content === "string") return segment.content
+          }
+          return ""
+        })
+        .filter(Boolean)
+        .join("\n")
+    }
+    if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>
+      if (typeof record.text === "string") return record.text
+      if (typeof record.content === "string") return record.content
+    }
+    return ""
+  }
+
+  const normalizeMessages = (raw: unknown): ChatMessage[] | null => {
+    if (!Array.isArray(raw)) return null
+    const normalized: ChatMessage[] = []
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue
+      const record = entry as Record<string, unknown>
+      const rawRole = typeof record.role === "string" ? record.role.toLowerCase() : undefined
+      const rawType = typeof record.type === "string" ? record.type.toLowerCase() : undefined
+      let role: ChatMessage["role"] = "assistant"
+      if (rawRole === "assistant" || rawRole === "user" || rawRole === "system") role = rawRole
+      else if (rawType === "ai") role = "assistant"
+      else if (rawType === "human") role = "user"
+      const content = extractContent(record.content).trim()
+      if (content) normalized.push({ role, content })
+    }
+    return normalized
+  }
+
   const lastAssistantMessageRef = useRef<string>("")
 
   function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
@@ -174,11 +217,16 @@ export default function ChatClient({
                 setIsStreaming(false)
               }
 
+              const normalized = normalizeMessages(values["messages"])
+              if (normalized && normalized.length > 0) {
+                setMessages(normalized)
+                setIsStreaming(false)
+                setStreamingContent("")
+              }
               const output = typeof values["output"] === "string" ? values["output"].trim() : ""
               if (output) {
                 setIsStreaming(false)
                 setStreamingContent("")
-                setMessages((prev) => [...prev, { role: "assistant", content: output }])
               }
             }
             return
