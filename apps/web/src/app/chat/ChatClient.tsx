@@ -50,6 +50,8 @@ export default function ChatClient({
   const [clarifier, setClarifier] = useState<{ question: string; fields: string[] } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
 
+  console.log('[chat] render', messages.length)
+
   const extractContent = (value: unknown): string => {
     if (!value) return ""
     if (typeof value === "string") return value
