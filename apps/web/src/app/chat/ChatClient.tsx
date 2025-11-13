@@ -50,7 +50,7 @@ export default function ChatClient({
   const [clarifier, setClarifier] = useState<{ question: string; fields: string[] } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
 
-  const lastOutputRef = useRef<string>("")
+  const lastAssistantMessageRef = useRef<string>("")
 
   function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
     if (typeof input !== "object" || input === null) return null
@@ -174,12 +174,9 @@ export default function ChatClient({
               }
 
               const output = typeof values["output"] === "string" ? values["output"].trim() : ""
-              if (output && output !== lastOutputRef.current) {
-                lastOutputRef.current = output
-                setMessages((prev) => {
-                  const exists = prev.some((msg) => msg.role === "assistant" && msg.content === output)
-                  return exists ? prev : [...prev, { role: "assistant", content: output }]
-                })
+              if (output && output !== lastAssistantMessageRef.current) {
+                lastAssistantMessageRef.current = output
+                setMessages((prev) => [...prev, { role: "assistant", content: output }])
                 setStreamingContent("")
                 setIsStreaming(false)
               }
