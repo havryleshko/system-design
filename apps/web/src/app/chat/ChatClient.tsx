@@ -175,6 +175,7 @@ export default function ChatClient({
 
               const output = typeof values["output"] === "string" ? values["output"].trim() : ""
               if (output && output !== lastAssistantMessageRef.current) {
+                console.log('[chat] appending assistant output', output.substring(0, 80))
                 lastAssistantMessageRef.current = output
                 setIsStreaming(false)
                 setStreamingContent("")
