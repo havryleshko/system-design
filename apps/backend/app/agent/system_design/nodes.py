@@ -645,10 +645,10 @@ def clarifier(state: State) -> Dict[str, any]:
                 recent.insert(0, msg)
                 break
         stream_payload = recent + [AIMessage(content=question)]
-        state["stream_messages"] = stream_payload
 
         return {
             "messages": [AIMessage(content=question)],
+            "stream_messages": stream_payload,
             "clarifier_question": question,
             "iterations": it + 1,
         }
