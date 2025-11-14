@@ -635,12 +635,14 @@ def clarifier(state: State) -> Dict[str, any]:
         question = call_brain([sys, human]).strip() or f"Please provide {need}"
         state.setdefault("metadata", {})
         state["metadata"].setdefault("cached_clarifier", question)
+        state["awaiting_clarifier"] = True
         return {
             "messages": [AIMessage(content=question)],
             "clarifier_question": question,
             "iterations": it + 1,
             "awaiting_clarifier": True,
         }
+    state["awaiting_clarifier"] = False
     updates: Dict[str, any] = {"awaiting_clarifier": False}
     if not missing:
         updates["iterations"] = 0
