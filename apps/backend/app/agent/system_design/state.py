@@ -8,6 +8,7 @@ def overwrite(_: Any, updated: Any) -> Any:
 
 class State(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
+    stream_messages: Annotated[list[BaseMessage], overwrite]
     goal: str
     missing_fields: Annotated[list[str], overwrite]
     iterations: Annotated[int, overwrite]
