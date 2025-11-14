@@ -33,8 +33,8 @@ builder.add_conditional_edges(
     {"clarifier": "clarifier", "planner": "planner"},
 )
 
-# Clarifier pauses the run; the graph resumes from START when the user responds.
-builder.add_edge("clarifier", END)
+# Clarifier funnels back into the main chain once the user has supplied enough context.
+builder.add_edge("clarifier", "planner")
 
 
 from .nodes import last_human_text

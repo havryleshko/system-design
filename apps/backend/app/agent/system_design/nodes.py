@@ -650,11 +650,15 @@ def clarifier(state: State) -> Dict[str, any]:
             "messages": [AIMessage(content=question)],
             "stream_messages": stream_payload,
             "clarifier_question": question,
+            "missing_fields": missing,
             "iterations": it + 1,
         }
-    updates: Dict[str, any] = {}
+    updates: Dict[str, any] = {
+        "missing_fields": missing,
+    }
     if not missing:
         updates["iterations"] = 0
+        updates["clarifier_question"] = None
     return updates
 
 def planner(state: State) -> Dict[str, any]:
