@@ -613,7 +613,7 @@ def intent(state: State) -> Dict[str, any]:
             missing.append('use_case')
         if 'constraints' not in lowered and 'constraints' not in missing:
             missing.append('constraints')
-    updates: Dict[str, any] = {"goal": goal, "missing_fields": missing, "awaiting_clarifier": False}
+    updates: Dict[str, any] = {"goal": goal, "missing_fields": missing}
     if not missing:
         updates["iterations"] = 0
     return updates
@@ -635,15 +635,12 @@ def clarifier(state: State) -> Dict[str, any]:
         question = call_brain([sys, human]).strip() or f"Please provide {need}"
         state.setdefault("metadata", {})
         state["metadata"].setdefault("cached_clarifier", question)
-        state["awaiting_clarifier"] = True
         return {
             "messages": [AIMessage(content=question)],
             "clarifier_question": question,
             "iterations": it + 1,
-            "awaiting_clarifier": True,
         }
-    state["awaiting_clarifier"] = False
-    updates: Dict[str, any] = {"awaiting_clarifier": False}
+    updates: Dict[str, any] = {}
     if not missing:
         updates["iterations"] = 0
     return updates

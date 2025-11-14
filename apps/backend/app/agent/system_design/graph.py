@@ -21,7 +21,11 @@ builder.add_node("finaliser", finaliser)
 builder.add_edge(START, "intent")
 
 def route_from_intent(state: State) -> Literal["clarifier", "planner"]:
-    return "clarifier" if state.get("missing_fields") else "planner"
+    missing = state.get("missing_fields") or []
+    it = int(state.get("iterations", 0) or 0)
+    if missing and it < MAX_ITERATIONS:
+        return "clarifier"
+    return "planner"
 
 builder.add_conditional_edges(
     "intent", 
@@ -29,18 +33,8 @@ builder.add_conditional_edges(
     {"clarifier": "clarifier", "planner": "planner"},
 )
 
-def route_from_clarifier(state: State) -> Literal["clarifier", "planner", "await"]:
-    if state.get("awaiting_clarifier"):
-        return "await"
-    it = int(state.get("iterations", 0) or 0 )
-    missing = state.get("missing_fields") or []
-    return "clarifier" if missing and it < MAX_ITERATIONS else "planner"
-
-builder.add_conditional_edges(
-    "clarifier",
-    route_from_clarifier,
-    {"clarifier": "clarifier", "planner": "planner", "await": END}
-)
+# Clarifier pauses the run; the graph resumes from START when the user responds.
+builder.add_edge("clarifier", END)
 
 
 from .nodes import last_human_text

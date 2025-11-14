@@ -11,7 +11,6 @@ class State(TypedDict, total=False):
     goal: str
     missing_fields: Annotated[list[str], overwrite]
     iterations: Annotated[int, overwrite]
-    awaiting_clarifier: Annotated[bool, overwrite]
     clarifier_question: Annotated[str, overwrite]
     plan: str
     design: str
