@@ -635,6 +635,17 @@ def clarifier(state: State) -> Dict[str, any]:
         question = call_brain([sys, human]).strip() or f"Please provide {need}"
         state.setdefault("metadata", {})
         state["metadata"].setdefault("cached_clarifier", question)
+
+        # Trim conversation history to just the latest user prompt before appending the question,
+        # so the frontend doesn't receive dozens of previous assistant responses in the SSE stream.
+        recent: list[BaseMessage] = []
+        normalized_messages = normalise(state.get("messages", []))
+        for msg in reversed(normalized_messages):
+            if isinstance(msg, HumanMessage):
+                recent.insert(0, msg)
+                break
+        state["messages"] = recent
+
         return {
             "messages": [AIMessage(content=question)],
             "clarifier_question": question,
