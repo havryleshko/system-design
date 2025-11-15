@@ -310,18 +310,35 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
 // Submit clarifier answers to resume the graph
 export async function submitClarifier(formData: FormData) {
   const tid = await createThread();
-  const answers = Object.fromEntries(formData.entries());
+  const runIdRaw = formData.get("run_id");
+  const interruptIdRaw = formData.get("interrupt_id");
+  if (typeof runIdRaw !== "string" || !runIdRaw) {
+    throw new Error("Run ID missing while resuming clarifier");
+  }
 
-  // Send answers as a user message; backend nodes normalize dicts/strings
-  const payload = {
-    input: {
-      messages: [{ role: "user", content: JSON.stringify(answers) }],
-    },
-  };
+  const answers: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (key === "run_id" || key === "interrupt_id") continue;
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    answers[key] = trimmed;
+  }
 
-  const result = await invokeRun(tid, payload, true);
-  if (!result.ok) {
-    throw new Error(result.error);
+  const resumeValue: Record<string, unknown> = Object.keys(answers).length > 0 ? answers : {};
+  const resumeBody =
+    typeof interruptIdRaw === "string" && interruptIdRaw
+      ? { resume: { [interruptIdRaw]: resumeValue } }
+      : { resume: resumeValue };
+
+  const res = await authFetch(`${BASE}/threads/${tid}/runs/${runIdRaw}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(resumeBody),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Failed to resume run (${res.status})`);
   }
 }
 
@@ -340,8 +357,7 @@ export async function backtrackLast() {
 
   const latestValues = latest?.state?.values;
   const missing = Array.isArray(latestValues?.missing_fields) ? latestValues.missing_fields : [];
-  const hasClarifierQuestion = typeof latestValues?.clarifier_question === "string" && latestValues.clarifier_question.trim().length > 0;
-  const canBacktrack = missing.length > 0 && hasClarifierQuestion;
+  const canBacktrack = missing.length > 0;
 
   if (!canBacktrack) {
     throw new Error("Backtracking is only available immediately after a clarifier turn.");

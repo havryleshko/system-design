@@ -47,7 +47,7 @@ export default function ChatClient({
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const streamHandleRef = useRef<{ close: () => void } | null>(null)
-  const [clarifier, setClarifier] = useState<{ question: string; fields: string[] } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string; runId: string | null } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
 
   console.log('[chat] render', messages.length)
@@ -210,19 +210,33 @@ export default function ChatClient({
             setNodeStatuses((prev) => prev.map((p) => (p.name === node ? { ...p, status: 'done' } : p)))
             return
           }
+          if (evt.type === 'interrupt') {
+            const first = evt.interrupts[0]
+            if (first) {
+              const payload = (first.value ?? {}) as Record<string, unknown>
+              const question =
+                typeof payload?.question === 'string'
+                  ? payload.question
+                  : 'The agent needs a bit more context before proceeding.'
+              const rawFields = Array.isArray(payload?.missing_fields) ? payload.missing_fields : []
+              const fields = rawFields
+                .map((field) => (typeof field === 'string' ? field.trim() : ''))
+                .filter((field): field is string => Boolean(field))
+              setClarifier({
+                question,
+                fields,
+                interruptId: first.id,
+                runId: newRunId,
+              })
+              setIsStreaming(false)
+            }
+            return
+          }
           if (evt.type === 'values-updated') {
             const values = getValuesFromStateLike(evt.values)
             if (values) {
               const arch = (values["architecture_json"] || values["design_json"]) as unknown
               if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-              const question = typeof values["clarifier_question"] === "string" ? values["clarifier_question"] : null
-              const missingFields = values["missing_fields"]
-              const missing = Array.isArray(missingFields) ? missingFields : []
-              if (question && missing.length > 0) {
-                setClarifier({ question, fields: missing as string[] })
-                setIsStreaming(false)
-              }
-
               const normalized = normalizeMessages(values["messages"])
               if (normalized && normalized.length > 0) {
                 console.log('[chat] normalized messages', normalized.length)
@@ -334,7 +348,13 @@ export default function ChatClient({
                 </div>
               )}
               {clarifier && (
-                <ClarifierCard question={clarifier.question} fields={clarifier.fields} />
+                <ClarifierCard
+                  question={clarifier.question}
+                  fields={clarifier.fields}
+                  runId={clarifier.runId}
+                  interruptId={clarifier.interruptId}
+                  onSubmit={() => setClarifier(null)}
+                />
               )}
             </div>
           </div>
