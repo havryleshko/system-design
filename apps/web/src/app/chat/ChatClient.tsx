@@ -384,9 +384,8 @@ export default function ChatClient({
         </div>
 
         {/* Center: Chat */}
-        <div className="col-span-6 flex min-w-0 flex-col">
-          <div className="flex-1 overflow-hidden">
-            <div className="flex h-full flex-col overflow-y-auto p-6" style={{ gap: 'var(--spacing-lg)' }}>
+        <div className="col-span-6 flex min-w-0 flex-col h-full">
+          <div className="flex-1 overflow-y-auto p-6" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
               <NodeStatusRibbon nodes={nodeStatuses} />
               {streamError && (
                 <div className="glass-panel rounded px-4 py-2 text-xs" style={{ borderColor: 'rgba(255, 100, 100, 0.4)', color: '#ffaaaa' }}>
@@ -429,8 +428,7 @@ export default function ChatClient({
                 />
               )}
             </div>
-          </div>
-          <div className="flex items-center px-4 py-2.5" style={{ gap: 'var(--spacing-sm)', borderTop: '1px solid rgba(198, 180, 255, 0.15)', background: 'rgba(17, 19, 25, 0.6)', backdropFilter: 'blur(12px)' }}>
+          <div className="flex items-center px-4 py-2.5 shrink-0" style={{ gap: 'var(--spacing-sm)', borderTop: '1px solid rgba(198, 180, 255, 0.15)' }}>
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
               style={{ color: '#ededed', caretColor: '#C6B4FF' }}
