@@ -430,7 +430,7 @@ export default function ChatClient({
               )}
             </div>
           </div>
-          <div className="flex items-center px-5 py-4" style={{ gap: 'var(--spacing-md)', borderTop: '1px solid rgba(198, 180, 255, 0.15)', background: 'rgba(17, 19, 25, 0.6)', backdropFilter: 'blur(12px)' }}>
+          <div className="flex items-center px-4 py-2.5" style={{ gap: 'var(--spacing-sm)', borderTop: '1px solid rgba(198, 180, 255, 0.15)', background: 'rgba(17, 19, 25, 0.6)', backdropFilter: 'blur(12px)' }}>
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
               style={{ color: '#ededed', caretColor: '#C6B4FF' }}
@@ -445,7 +445,7 @@ export default function ChatClient({
               }}
             />
             <button
-              className="border px-5 py-2 text-xs font-medium uppercase tracking-wider transition-all duration-200"
+              className="border px-4 py-1.5 text-xs font-medium uppercase tracking-wider transition-all duration-200"
               style={{ 
                 borderColor: 'rgba(198, 180, 255, 0.4)',
                 background: 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))',
