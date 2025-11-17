@@ -384,8 +384,8 @@ export default function ChatClient({
         </div>
 
         {/* Center: Chat */}
-        <div className="col-span-6 flex min-w-0 flex-col">
-          <div className="flex-1 overflow-y-auto p-6" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
+        <div className="col-span-6 flex min-w-0 flex-col min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
               <NodeStatusRibbon nodes={nodeStatuses} />
               {streamError && (
                 <div className="glass-panel rounded px-4 py-2 text-xs" style={{ borderColor: 'rgba(255, 100, 100, 0.4)', color: '#ffaaaa' }}>
@@ -428,7 +428,15 @@ export default function ChatClient({
                 />
               )}
             </div>
-          <div className="flex items-center px-4 py-2.5 shrink-0" style={{ gap: 'var(--spacing-sm)', borderTop: '1px solid rgba(198, 180, 255, 0.15)', background: 'transparent' }}>
+          <div
+            className="flex items-center px-4 py-2.5 shrink-0"
+            style={{
+              gap: 'var(--spacing-sm)',
+              borderTop: '1px solid rgba(198, 180, 255, 0.15)',
+              background: 'linear-gradient(90deg, rgba(17, 19, 25, 0.85), rgba(62, 43, 115, 0.5), rgba(17, 19, 25, 0.85))',
+              boxShadow: '0 -20px 40px rgba(5, 5, 5, 0.35)',
+            }}
+          >
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
               style={{ color: '#ededed', caretColor: '#C6B4FF' }}
