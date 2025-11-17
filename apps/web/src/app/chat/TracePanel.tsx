@@ -81,16 +81,31 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
     }, [JSON.stringify(timeline)])
 
     return (
-        <div className="flex h-screen flex-col border-l border-white/15 bg-black">
-            <div className="flex items-center justify-between border-b border-white/15 px-5 py-4">
+        <div className="flex h-full min-h-0 flex-col" style={{ background: 'linear-gradient(180deg, rgba(6,7,12,0.9), rgba(17,19,25,0.95))' }}>
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(198, 180, 255, 0.15)' }}>
                 <div>
-                    <h2 className="text-sm font-semibold uppercase tracking-wide text-white">Trace</h2>
-                    <p className="mt-1 text-xs text-white/40">Agent execution flow</p>
+                    <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: '#ededed' }}>Trace</h2>
+                    <p className="mt-1 text-xs" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>Agent execution flow</p>
                 </div>
                 <button
                     onClick={onRefresh}
                     disabled={isLoading}
-                    className="rounded-sm border border-white/20 px-3 py-1.5 text-xs uppercase tracking-wide text-white/70 transition hover:bg-white/5 hover:text-white disabled:opacity-40"
+                    className="rounded border px-3 py-1.5 text-xs uppercase tracking-wider transition-all duration-200"
+                    style={{ 
+                        borderColor: 'rgba(198, 180, 255, 0.3)',
+                        background: 'rgba(198, 180, 255, 0.05)',
+                        color: 'rgba(198, 180, 255, 0.8)'
+                    }}
+                    onMouseEnter={(e) => {
+                        if (!isLoading) {
+                            e.currentTarget.style.background = 'rgba(198, 180, 255, 0.1)';
+                            e.currentTarget.style.color = '#E0D8FF';
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'rgba(198, 180, 255, 0.05)';
+                        e.currentTarget.style.color = 'rgba(198, 180, 255, 0.8)';
+                    }}
                 >
                     {isLoading ? 'Loading...' : 'Refresh'}
                 </button>
@@ -98,14 +113,14 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
 
             <div className="flex-1 overflow-y-auto px-5 py-5">
                 {error && (
-                    <div className="rounded-md border border-red-500/20 bg-red-500/5 px-4 py-3">
-                        <p className="text-xs text-red-400">{error}</p>
+                    <div className="glass-panel rounded px-4 py-3" style={{ borderColor: 'rgba(255, 100, 100, 0.4)' }}>
+                        <p className="text-xs" style={{ color: '#ffaaaa' }}>{error}</p>
                     </div>
                 )}
 
                 {!trace && !isLoading && !error && (
                     <div className="flex h-full items-center justify-center">
-                        <p className="text-center text-sm text-white/40">
+                        <p className="text-center text-sm" style={{ color: 'rgba(198, 180, 255, 0.5)', lineHeight: '1.6' }}>
                             No trace available yet.
                             <br />
                             Start a run to see details.
@@ -115,12 +130,12 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
 
                 {isLoading && !trace && (
                     <div className="flex h-full items-center justify-center">
-                        <p className="text-sm text-white/40">Loading trace...</p>
+                        <p className="text-sm" style={{ color: 'rgba(198, 180, 255, 0.5)' }}>Loading trace...</p>
                     </div>
                 )}
 
                 {timeline.length > 0 && (
-                    <div className="space-y-3">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
                         {timeline.map((entry, idx) => {
                             const isExpanded = expandedNodes.has(entry.node)
                             const isActive = !entry.finished_ts_ms
@@ -128,32 +143,32 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
                             const hasEvents = nodeEvents.length > 0
 
                             return (
-                                <div key={idx} className="rounded-md border border-white/15 bg-white/5">
+                                <div key={idx} className="glass-panel rounded">
                                     <button
                                         onClick={() => toggleNode(entry.node)}
                                         className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-white/5"
                                     >
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2">
-                                                <span className={`text-sm font-medium ${isActive ? 'text-white' : 'text-white/90'}`}>
+                                                <span className="text-sm font-medium" style={{ color: isActive ? '#ededed' : 'rgba(237, 237, 237, 0.9)' }}>
                                                     {entry.node}
                                                 </span>
                                                 {isActive && (
-                                                    <span className="rounded-sm bg-blue-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-blue-400">
+                                                    <span className="rounded px-2 py-0.5 text-[10px] uppercase tracking-wider" style={{ background: 'rgba(198, 180, 255, 0.2)', color: '#C6B4FF' }}>
                                                         Running
                                                     </span>
                                                 )}
                                                 {!isActive && (
-                                                    <span className="text-xs text-green-500">✓</span>
+                                                    <span className="text-xs" style={{ color: '#7FE87F' }}>✓</span>
                                                 )}
                                             </div>
-                                            <div className="mt-1 flex items-center gap-3 text-[10px] uppercase tracking-wide text-white/40">
+                                            <div className="mt-1 flex items-center gap-3 text-[10px] uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.5)' }}>
                                                 <span>{formatTime(entry.started_ts_ms)}</span>
                                                 {entry.duration_ms > 0 && <span>{formatDuration(entry.duration_ms)}</span>}
                                                 {entry.total_tokens > 0 && <span>{entry.total_tokens} tokens</span>}
                                             </div>
                                         </div>
-                                        <span className={`text-xs text-white/40 transition ${isExpanded ? 'rotate-180' : ''}`}>
+                                        <span className={`text-xs transition ${isExpanded ? 'rotate-180' : ''}`} style={{ color: 'rgba(198, 180, 255, 0.5)' }}>
                                             ▼
                                         </span>
                                     </button>

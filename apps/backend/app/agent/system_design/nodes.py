@@ -6,6 +6,7 @@ from functools import lru_cache
 import json, os, math, requests
 from jsonschema import validate as jsonschema_validate, ValidationError
 from datetime import datetime
+from langgraph.types import interrupt
 try:
     from app.storage.memory import add_event, record_node_tokens
 except ImportError:  # pragma: no cover - fallback for older deployments
@@ -139,6 +140,25 @@ def _coerce_str(value: Any, *, max_len: Optional[int] = None) -> Optional[str]:
     if max_len is not None and len(text) > max_len:
         text = text[:max_len].rstrip()
     return text or None
+
+
+def _clarifier_answer_to_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return "\n".join(_clarifier_answer_to_text(item) for item in value if item is not None).strip()
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+    coerced = _coerce_str(value)
+    return coerced or ""
 
 
 def _match_enum(value: Optional[str], options: Sequence[str], default: str) -> str:
@@ -601,18 +621,23 @@ def intent(state: State) -> Dict[str, any]:
     raw = call_brain([sys, human])
     data = json_only(raw) or {}
     goal = str(data.get("goal") or user_text).strip()
-    required = ['use_case', 'constraints']
-    missing = [m for m in (data.get('missing_fields') or []) if str(m).lower() in required]
+    missing: list[str] = []
+    for m in (data.get('missing_fields') or []):
+        text = str(m).strip()
+        if text and text not in missing:
+            missing.append(text)
+    updates: Dict[str, any] = {"goal": goal, "missing_fields": missing}
     if not missing:
-        lowered = goal.lower()
-        if 'use_case' not in lowered:
-            missing.append('use_case')
-        if 'constraints' not in lowered:
-            missing.append('constraints')
-    return {"goal": goal, "missing_fields": missing}
+        updates["iterations"] = 0
+    return updates
 
 def clarifier(state: State) -> Dict[str, any]:
-    missing = state.get('missing_fields', []) or []
+    raw_missing = state.get('missing_fields', []) or []
+    missing = []
+    for item in raw_missing:
+        text = str(item).strip()
+        if text and text not in missing:
+            missing.append(text)
     it = int(state.get("iterations", 0) or 0)
     if missing and it < MAX_ITERATIONS:
         need = ", ".join(str(x) for x in missing)
@@ -621,14 +646,28 @@ def clarifier(state: State) -> Dict[str, any]:
         ))
         human = HumanMessage(content=f"Ask for {need}. Keep short & specific")
         question = call_brain([sys, human]).strip() or f"Please provide {need}"
-        state.setdefault("metadata", {})
-        state["metadata"].setdefault("cached_clarifier", question)
-        return {
-            "messages": [AIMessage(content=question)],
-            "clarifier_question": question,
-            "iterations": it + 1
+        payload = {
+            "type": "clarifier",
+            "question": question,
+            "missing_fields": missing,
         }
-    return {}
+        answer = interrupt(payload)
+        answer_text = _clarifier_answer_to_text(answer)
+        updates: Dict[str, any] = {
+            "clarifier_question": question,
+            "missing_fields": [],
+            "iterations": it + 1,
+        }
+        if answer_text:
+            updates["messages"] = [HumanMessage(content=answer_text)]
+        return updates
+    updates: Dict[str, any] = {
+        "missing_fields": missing,
+    }
+    if not missing:
+        updates["iterations"] = 0
+        updates["clarifier_question"] = None
+    return updates
 
 def planner(state: State) -> Dict[str, any]:
     goal = state.get("goal", "") or ""

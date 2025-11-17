@@ -8,6 +8,7 @@ export type NormalizedStreamEvent =
   | { type: 'node-started'; node: string }
   | { type: 'node-completed'; node: string; tokens?: number }
   | { type: 'values-updated'; values: Record<string, unknown> }
+  | { type: 'interrupt'; interrupts: Array<{ id: string; value: unknown }> }
   | { type: 'run-completed' }
   | { type: 'error'; message: string }
   | { type: 'raw'; event: string; data: unknown }
@@ -75,10 +76,25 @@ export function openRunStream({ threadId, runId, mode, onEvent, maxRetries = 3, 
       else onEvent({ type: 'raw', event: name, data })
       return
     }
-    if (name === 'values.updated') {
-      const dataObj = typeof data === 'object' && data !== null ? data as Record<string, unknown> : null
+    if (name === 'values.updated' || name === 'values') {
+      const dataObj = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : null
       const values = dataObj?.values ?? (typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {})
-      onEvent({ type: 'values-updated', values: (values as Record<string, unknown>) || {} })
+      const record = (values as Record<string, unknown>) || {}
+      const interruptsRaw = Array.isArray((record as Record<string, unknown>)["__interrupt__"])
+        ? ((record as Record<string, unknown>)["__interrupt__"] as Array<Record<string, unknown>>)
+        : null
+      if (interruptsRaw && interruptsRaw.length > 0) {
+        const interrupts = interruptsRaw
+          .map((entry) => {
+            const id = typeof entry?.id === 'string' ? entry.id : typeof entry?.interrupt_id === 'string' ? entry.interrupt_id : ''
+            return id ? { id, value: entry?.value } : null
+          })
+          .filter((entry): entry is { id: string; value: unknown } => entry !== null)
+        if (interrupts.length > 0) {
+          onEvent({ type: 'interrupt', interrupts })
+        }
+      }
+      onEvent({ type: 'values-updated', values: record })
       return
     }
     if (name === 'run.completed') {
@@ -95,6 +111,7 @@ export function openRunStream({ threadId, runId, mode, onEvent, maxRetries = 3, 
     'node.started',
     'node.completed',
     'values.updated',
+    'values',
     'run.completed',
   ]
     names.forEach((n) => es!.addEventListener(n, forward(n)))

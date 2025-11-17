@@ -21,7 +21,11 @@ builder.add_node("finaliser", finaliser)
 builder.add_edge(START, "intent")
 
 def route_from_intent(state: State) -> Literal["clarifier", "planner"]:
-    return "clarifier" if state.get("missing_fields") else "planner"
+    missing = state.get("missing_fields") or []
+    it = int(state.get("iterations", 0) or 0)
+    if missing and it < MAX_ITERATIONS:
+        return "clarifier"
+    return "planner"
 
 builder.add_conditional_edges(
     "intent", 
@@ -29,15 +33,8 @@ builder.add_conditional_edges(
     {"clarifier": "clarifier", "planner": "planner"},
 )
 
-def route_from_clarifier(state: State) -> Literal["clarifier", "planner"]:
-    it = int(state.get("iterations", 0) or 0 )
-    return "clarifier" if state.get("missing_fields") and it < MAX_ITERATIONS else "planner"
-
-builder.add_conditional_edges(
-    "clarifier",
-    route_from_clarifier,
-    {"clarifier": "clarifier", "planner": "planner"}
-)
+# Clarifier funnels back into the main chain once the user has supplied enough context.
+builder.add_edge("clarifier", "planner")
 
 
 from .nodes import last_human_text
