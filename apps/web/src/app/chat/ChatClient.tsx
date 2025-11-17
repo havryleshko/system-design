@@ -47,8 +47,9 @@ export default function ChatClient({
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const streamHandleRef = useRef<{ close: () => void } | null>(null)
-  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string; runId: string | null } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string | null; runId: string | null } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
+  const [streamError, setStreamError] = useState<string | null>(null)
 
   console.log('[chat] render', messages.length)
 
@@ -142,11 +143,13 @@ export default function ChatClient({
     const userMessage: ChatMessage = { role: "user", content: trimmed }
     setMessages((prev) => [...prev, userMessage])
     setInput("")
+    setStreamError(null)
 
     try {
       const result = await startRunStream(trimmed)
       if (!result.ok) {
         const errorMessage = result.error || 'Run failed'
+        setStreamError(errorMessage)
         setMessages((prev) => [
           ...prev,
           { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
@@ -167,6 +170,7 @@ export default function ChatClient({
       setIsStreaming(true)
       setClarifier(null)
       setNodeStatuses([])
+      setStreamError(null)
 
       if (streamHandleRef.current) {
         try { streamHandleRef.current.close() } catch {}
@@ -179,6 +183,7 @@ export default function ChatClient({
         onEvent: (evt: NormalizedStreamEvent) => {
           console.log("[chat] stream event", evt);
           if (evt.type === 'message-delta') {
+            setStreamError(null)
             setStreamingContent((prev) => {
               const next = prev + evt.text
               streamingContentRef.current = next
@@ -187,6 +192,7 @@ export default function ChatClient({
             return
           }
           if (evt.type === 'message-completed') {
+            setStreamError(null)
             const content = streamingContentRef.current?.trim() ?? ''
             if (content.length > 0) {
               setMessages((prev) => [...prev, { role: 'assistant', content }])
@@ -197,6 +203,7 @@ export default function ChatClient({
             return
           }
           if (evt.type === 'node-started') {
+            setStreamError(null)
             const node = evt.node
             setNodeStatuses((prev) => {
               const existing = prev.find((p) => p.name === node)
@@ -206,11 +213,13 @@ export default function ChatClient({
             return
           }
           if (evt.type === 'node-completed') {
+            setStreamError(null)
             const node = evt.node
             setNodeStatuses((prev) => prev.map((p) => (p.name === node ? { ...p, status: 'done' } : p)))
             return
           }
           if (evt.type === 'interrupt') {
+            setStreamError(null)
             const first = evt.interrupts[0]
             if (first) {
               const payload = (first.value ?? {}) as Record<string, unknown>
@@ -233,6 +242,7 @@ export default function ChatClient({
             return
           }
           if (evt.type === 'values-updated') {
+            setStreamError(null)
             const values = getValuesFromStateLike(evt.values)
             if (values) {
               const arch = (values["architecture_json"] || values["design_json"]) as unknown
@@ -251,12 +261,37 @@ export default function ChatClient({
                 setStreamingContent("")
                 streamingContentRef.current = ""
               }
+              const missingRaw = Array.isArray(values["missing_fields"]) ? values["missing_fields"] : []
+              const missingFields = missingRaw
+                .map((field) => (typeof field === 'string' ? field.trim() : ''))
+                .filter((field): field is string => Boolean(field))
+              const question =
+                typeof values["clarifier_question"] === "string"
+                  ? values["clarifier_question"].trim()
+                  : ""
+              if (missingFields.length === 0 || !question) {
+                setClarifier((prev) => {
+                  if (!prev) return prev
+                  if (prev.runId && prev.runId !== newRunId) return prev
+                  return null
+                })
+              } else {
+                setClarifier((prev) => {
+                  if (!prev || (prev.runId && prev.runId !== newRunId)) return prev
+                  return {
+                    ...prev,
+                    question: question || prev.question,
+                    fields: missingFields,
+                  }
+                })
+              }
             }
             return
           }
           if (evt.type === 'run-completed') {
             setIsStreaming(false)
             setClarifier(null)
+            setStreamError(null)
             startTransition(async () => {
               try {
                 const data = await fetchTrace(newRunId)
@@ -271,6 +306,7 @@ export default function ChatClient({
           }
           if (evt.type === 'error') {
             setIsStreaming(false)
+            setStreamError(evt.message || 'Stream connection error')
           }
         },
       })
@@ -329,6 +365,11 @@ export default function ChatClient({
           <div className="flex-1 overflow-hidden">
             <div className="flex h-full flex-col gap-3 overflow-y-auto p-5">
               <NodeStatusRibbon nodes={nodeStatuses} />
+              {streamError && (
+                <div className="rounded border border-red-500/40 bg-red-500/5 px-4 py-2 text-xs text-red-200">
+                  {streamError} — attempting to reconnect…
+                </div>
+              )}
               {messages.length === 0 ? (
                 <p className="text-sm text-white/40">
                   No messages yet. Ask the assistant anything about system design.
@@ -353,7 +394,6 @@ export default function ChatClient({
                   fields={clarifier.fields}
                   runId={clarifier.runId}
                   interruptId={clarifier.interruptId}
-                  onSubmit={() => setClarifier(null)}
                 />
               )}
             </div>
