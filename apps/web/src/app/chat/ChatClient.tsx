@@ -384,7 +384,7 @@ export default function ChatClient({
         </div>
 
         {/* Center: Chat */}
-        <div className="col-span-6 flex min-w-0 flex-col h-full">
+        <div className="col-span-6 flex min-w-0 flex-col">
           <div className="flex-1 overflow-y-auto p-6" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
               <NodeStatusRibbon nodes={nodeStatuses} />
               {streamError && (
@@ -428,7 +428,7 @@ export default function ChatClient({
                 />
               )}
             </div>
-          <div className="flex items-center px-4 py-2.5 shrink-0" style={{ gap: 'var(--spacing-sm)', borderTop: '1px solid rgba(198, 180, 255, 0.15)' }}>
+          <div className="flex items-center px-4 py-2.5 shrink-0" style={{ gap: 'var(--spacing-sm)', borderTop: '1px solid rgba(198, 180, 255, 0.15)', background: 'transparent' }}>
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
               style={{ color: '#ededed', caretColor: '#C6B4FF' }}
