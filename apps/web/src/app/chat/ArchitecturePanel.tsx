@@ -44,7 +44,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
 
     if (!hasContent) {
         return (
-            <div className="flex h-screen flex-col">
+            <div className="flex h-full min-h-0 flex-col" style={{ background: 'linear-gradient(180deg, rgba(6,7,12,0.9), rgba(17,19,25,0.95))' }}>
                 <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(198, 180, 255, 0.15)' }}>
                     <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: '#ededed' }}>Architecture</h2>
                     <p className="mt-1 text-xs" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>System design output</p>
@@ -66,7 +66,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
     const notes = designJson.notes || ''
 
     return (
-        <div className="flex h-screen flex-col">
+        <div className="flex h-full min-h-0 flex-col" style={{ background: 'linear-gradient(180deg, rgba(6,7,12,0.9), rgba(17,19,25,0.95))' }}>
             <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(198, 180, 255, 0.15)' }}>
                 <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: '#ededed' }}>Architecture</h2>
                 <p className="mt-1 text-xs" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>

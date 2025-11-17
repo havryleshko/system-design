@@ -379,7 +379,7 @@ export default function ChatClient({
       {/* 3-panel layout */}
       <div className="relative z-10 grid h-[calc(100vh-49px)] grid-cols-12">
         {/* Left: Architecture */}
-        <div className="col-span-3 min-w-0 glass-panel" style={{ borderRight: '1px solid rgba(198, 180, 255, 0.15)' }}>
+        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderRight: '1px solid rgba(198, 180, 255, 0.15)', overflow: 'hidden' }}>
           <ArchitecturePanel designJson={architecture ?? null} />
         </div>
 
@@ -473,7 +473,7 @@ export default function ChatClient({
         </div>
 
         {/* Right: Trace */}
-        <div className="col-span-3 min-w-0 glass-panel" style={{ borderLeft: '1px solid rgba(198, 180, 255, 0.15)' }}>
+        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderLeft: '1px solid rgba(198, 180, 255, 0.15)', overflow: 'hidden' }}>
           <TracePanel
             trace={trace}
             isLoading={isPending && !trace}

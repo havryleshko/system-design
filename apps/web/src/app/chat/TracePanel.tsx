@@ -81,7 +81,7 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
     }, [JSON.stringify(timeline)])
 
     return (
-        <div className="flex h-screen flex-col">
+        <div className="flex h-full min-h-0 flex-col" style={{ background: 'linear-gradient(180deg, rgba(6,7,12,0.9), rgba(17,19,25,0.95))' }}>
             <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(198, 180, 255, 0.15)' }}>
                 <div>
                     <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: '#ededed' }}>Trace</h2>
