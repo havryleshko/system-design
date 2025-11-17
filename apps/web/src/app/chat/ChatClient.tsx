@@ -326,8 +326,8 @@ export default function ChatClient({
   const streamingContentRef = useRef(streamingContent)
   if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
 
-  return (
-    <div className="relative h-screen text-white" style={{ background: 'linear-gradient(135deg, #111319 0%, #3E2B73 50%, #C6B4FF 100%)' }}>
+return (
+    <div className="relative flex h-screen flex-col text-white" style={{ background: 'linear-gradient(135deg, #111319 0%, #3E2B73 50%, #C6B4FF 100%)', overflow: 'hidden' }}>
       {/* Particle background */}
       <div className="particle-background">
         <div className="particle" style={{ top: '10%', left: '15%' }}></div>
@@ -338,7 +338,7 @@ export default function ChatClient({
       </div>
 
       {/* Header */}
-      <div className="relative z-10 flex items-center justify-between border-b px-6 py-3" style={{ borderColor: 'rgba(198, 180, 255, 0.15)', background: 'rgba(17, 19, 25, 0.6)', backdropFilter: 'blur(12px)' }}>
+      <div className="relative z-10 flex items-center justify-between border-b px-6 py-3 shrink-0" style={{ borderColor: 'rgba(198, 180, 255, 0.2)', background: 'rgba(17, 19, 25, 0.75)', backdropFilter: 'blur(18px)' }}>
         <div>
           <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-space-grotesk)' }}>System Design Agent</h2>
           <p className="text-[11px] uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>Autonomous system architecture</p>
@@ -377,7 +377,7 @@ export default function ChatClient({
       </div>
 
       {/* 3-panel layout */}
-      <div className="relative z-10 grid h-[calc(100vh-49px)] grid-cols-12">
+      <div className="relative z-10 grid flex-1 min-h-0 grid-cols-12">
         {/* Left: Architecture */}
         <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderRight: '1px solid rgba(198, 180, 255, 0.15)', overflow: 'hidden' }}>
           <ArchitecturePanel designJson={architecture ?? null} />
@@ -433,8 +433,7 @@ export default function ChatClient({
             style={{
               gap: 'var(--spacing-sm)',
               borderTop: '1px solid rgba(198, 180, 255, 0.15)',
-              background: 'linear-gradient(90deg, rgba(17, 19, 25, 0.85), rgba(62, 43, 115, 0.5), rgba(17, 19, 25, 0.85))',
-              boxShadow: '0 -20px 40px rgba(5, 5, 5, 0.35)',
+              background: 'linear-gradient(90deg, rgba(17, 19, 25, 0.9), rgba(62, 43, 115, 0.55), rgba(17, 19, 25, 0.9))',
             }}
           >
             <input
