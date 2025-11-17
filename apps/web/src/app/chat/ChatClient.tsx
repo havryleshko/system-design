@@ -7,6 +7,7 @@ import TracePanel from "./TracePanel"
 import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
 import ClarifierCard from "./ClarifierCard"
 import NodeStatusRibbon from "./NodeStatusRibbon"
+import MolecularLoader from "./MolecularLoader"
 
 type TraceEvent = {
     ts_ms: number
@@ -326,16 +327,38 @@ export default function ChatClient({
   if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
 
   return (
-    <div className="h-screen bg-black text-white">
+    <div className="relative h-screen text-white" style={{ background: 'linear-gradient(135deg, #111319 0%, #3E2B73 50%, #C6B4FF 100%)' }}>
+      {/* Particle background */}
+      <div className="particle-background">
+        <div className="particle" style={{ top: '10%', left: '15%' }}></div>
+        <div className="particle"></div>
+        <div className="particle"></div>
+        <div className="particle"></div>
+        <div className="particle"></div>
+      </div>
+
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-white/10 px-6 py-3">
+      <div className="relative z-10 flex items-center justify-between border-b px-6 py-3" style={{ borderColor: 'rgba(198, 180, 255, 0.15)', background: 'rgba(17, 19, 25, 0.6)', backdropFilter: 'blur(12px)' }}>
         <div>
-          <h2 className="text-base font-semibold tracking-wide">System Design Agent</h2>
-          <p className="text-[11px] uppercase text-white/40">Three-panel workspace</p>
+          <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-space-grotesk)' }}>System Design Agent</h2>
+          <p className="text-[11px] uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>Autonomous system architecture</p>
         </div>
         <div className="flex items-center gap-3">
           <button
-            className="rounded border border-white px-3 py-1.5 text-[11px] uppercase tracking-wide text-white transition hover:bg-white hover:text-black"
+            className="border px-4 py-1.5 text-[11px] font-medium uppercase tracking-wider transition-all duration-200"
+            style={{ 
+              borderColor: 'rgba(198, 180, 255, 0.4)',
+              background: 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))',
+              color: '#E0D8FF'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.5), rgba(198, 180, 255, 0.2))';
+              e.currentTarget.style.boxShadow = '0 0 20px rgba(198, 180, 255, 0.3)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
             onClick={async () => {
               const res = await fetch("/api/stripe/checkout", { method: "POST" })
               if (!res.ok) {
@@ -354,38 +377,47 @@ export default function ChatClient({
       </div>
 
       {/* 3-panel layout */}
-      <div className="grid h-[calc(100vh-49px)] grid-cols-12">
+      <div className="relative z-10 grid h-[calc(100vh-49px)] grid-cols-12">
         {/* Left: Architecture */}
-        <div className="col-span-3 min-w-0 border-r border-white/10">
+        <div className="col-span-3 min-w-0 glass-panel" style={{ borderRight: '1px solid rgba(198, 180, 255, 0.15)' }}>
           <ArchitecturePanel designJson={architecture ?? null} />
         </div>
 
         {/* Center: Chat */}
         <div className="col-span-6 flex min-w-0 flex-col">
           <div className="flex-1 overflow-hidden">
-            <div className="flex h-full flex-col gap-3 overflow-y-auto p-5">
+            <div className="flex h-full flex-col overflow-y-auto p-6" style={{ gap: 'var(--spacing-lg)' }}>
               <NodeStatusRibbon nodes={nodeStatuses} />
               {streamError && (
-                <div className="rounded border border-red-500/40 bg-red-500/5 px-4 py-2 text-xs text-red-200">
+                <div className="glass-panel rounded px-4 py-2 text-xs" style={{ borderColor: 'rgba(255, 100, 100, 0.4)', color: '#ffaaaa' }}>
                   {streamError} — attempting to reconnect…
                 </div>
               )}
               {messages.length === 0 ? (
-                <p className="text-sm text-white/40">
+                <p className="text-sm" style={{ color: 'rgba(198, 180, 255, 0.5)', lineHeight: '1.6' }}>
                   No messages yet. Ask the assistant anything about system design.
                 </p>
               ) : (
                 messages.map((m, i) => (
-                  <div key={i} className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
-                    <div className="text-xs uppercase tracking-wide text-white/40">{m.role === 'assistant' ? 'agent' : m.role}</div>
-                    <div className="text-sm leading-relaxed text-white whitespace-pre-wrap">{m.content}</div>
+                  <div key={i} className="glass-panel rounded px-5 py-4" style={{ gap: 'var(--spacing-xs)' }}>
+                    <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.7)', fontFamily: 'var(--font-space-grotesk)' }}>
+                      {m.role === 'assistant' ? 'agent' : m.role}
+                    </div>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: '#ededed', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{m.content}</div>
                   </div>
                 ))
               )}
               {isStreaming && (
-                <div className="space-y-1 border border-white/15 bg-white/5 px-4 py-3">
-                  <div className="text-xs uppercase tracking-wide text-white/40">agent</div>
-                  <div className="text-sm leading-relaxed text-white whitespace-pre-wrap">{streamingContent || '█'}</div>
+                <div className="glass-panel rounded px-5 py-4">
+                  <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.7)', fontFamily: 'var(--font-space-grotesk)' }}>agent</div>
+                  {streamingContent ? (
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: '#ededed', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{streamingContent}</div>
+                  ) : (
+                    <div className="flex items-center" style={{ marginTop: 'var(--spacing-sm)' }}>
+                      <MolecularLoader />
+                      <span className="ml-3 text-xs" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>Analyzing request...</span>
+                    </div>
+                  )}
                 </div>
               )}
               {clarifier && (
@@ -398,15 +430,35 @@ export default function ChatClient({
               )}
             </div>
           </div>
-          <div className="flex items-center gap-3 border-t border-white/10 bg-black/60 px-4 py-3">
+          <div className="flex items-center px-5 py-4" style={{ gap: 'var(--spacing-md)', borderTop: '1px solid rgba(198, 180, 255, 0.15)', background: 'rgba(17, 19, 25, 0.6)', backdropFilter: 'blur(12px)' }}>
             <input
-              className="flex-1 bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
+              className="flex-1 bg-transparent text-sm focus:outline-none"
+              style={{ color: '#ededed', caretColor: '#C6B4FF' }}
               placeholder="Type your message"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
             />
             <button
-              className="border border-white px-4 py-2 text-sm uppercase tracking-wide text-white transition hover:bg-white hover:text-black"
+              className="border px-5 py-2 text-xs font-medium uppercase tracking-wider transition-all duration-200"
+              style={{ 
+                borderColor: 'rgba(198, 180, 255, 0.4)',
+                background: 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))',
+                color: '#E0D8FF'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.5), rgba(198, 180, 255, 0.2))';
+                e.currentTarget.style.boxShadow = '0 0 20px rgba(198, 180, 255, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
               onClick={send}
             >
               Send
@@ -415,7 +467,7 @@ export default function ChatClient({
         </div>
 
         {/* Right: Trace */}
-        <div className="col-span-3 min-w-0 border-l border-white/10">
+        <div className="col-span-3 min-w-0 glass-panel" style={{ borderLeft: '1px solid rgba(198, 180, 255, 0.15)' }}>
           <TracePanel
             trace={trace}
             isLoading={isPending && !trace}
