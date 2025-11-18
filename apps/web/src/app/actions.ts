@@ -231,7 +231,8 @@ function buildRunFailure(status: number | undefined, text: string | undefined, f
   const detail = text?.trim() || undefined;
   const message = status ? `${fallback} (${status})` : fallback;
   if (extra) {
-    logError(extra.scope ?? "run.failure", fallback, {
+    const scope = typeof extra.scope === "string" ? extra.scope : "run.failure";
+    logError(scope, fallback, {
       ...extra,
       status,
       detail,
