@@ -1,19 +1,46 @@
 
 "use server";
 
+import { randomUUID } from "crypto";
+
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { ASSISTANT_ID, BASE } from "@/utils/langgraph";
 import { createServerSupabase } from "@/utils/supabase/server";
 
-async function ensureSession(redirectTo: string): Promise<string> {
+type LogContext = {
+  requestId?: string;
+  scope?: string;
+  target?: string;
+};
+
+function makeRequestId(prefix: string): string {
+  if (typeof randomUUID === "function") return randomUUID();
+  const rand = Math.random().toString(16).slice(2);
+  return `${prefix}-${Date.now()}-${rand}`;
+}
+
+function logWarn(scope: string, message: string, extra?: Record<string, unknown>) {
+  console.warn(`[${scope}] ${message}`, extra);
+}
+
+function logError(scope: string, message: string, extra?: Record<string, unknown>) {
+  console.error(`[${scope}] ${message}`, extra);
+}
+
+async function ensureSession(redirectTo: string, context?: LogContext): Promise<string> {
+  const requestId = context?.requestId ?? makeRequestId("ensureSession");
   const supabase = await createServerSupabase();
   const {
     data: { session },
   } = await supabase.auth.getSession();
   const token = session?.access_token ?? null;
   if (!token) {
+    logWarn("auth.ensureSession", "Missing Supabase session", {
+      requestId,
+      redirectTo,
+    });
     const params = new URLSearchParams();
     if (redirectTo && redirectTo !== '/') {
       params.set('redirect', redirectTo);
@@ -24,11 +51,35 @@ async function ensureSession(redirectTo: string): Promise<string> {
   return token;
 }
 
-async function authFetch(input: string, init: RequestInit = {}, redirectTo = "/chat") {
-  const token = await ensureSession(redirectTo);
+async function authFetch(input: string, init: RequestInit = {}, redirectTo = "/chat", context?: LogContext) {
+  const requestId = context?.requestId ?? makeRequestId("authFetch");
+  const scope = context?.scope ?? "auth.fetch";
+  const target = context?.target ?? input;
+  const token = await ensureSession(redirectTo, { requestId, scope });
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  try {
+    const res = await fetch(input, { ...init, headers });
+    if (!res.ok) {
+      let body = "";
+      try {
+        body = await res.clone().text();
+      } catch {
+        body = "[unreadable body]";
+      }
+      logWarn(scope, "authFetch received non-OK response", {
+        requestId,
+        target,
+        status: res.status,
+        body: body?.slice(0, 1024) || null,
+      });
+    }
+    return res;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(scope, "authFetch threw", { requestId, target, error: message });
+    throw err;
+  }
 }
 
 async function getThreadCookie(): Promise<string | null> {
@@ -41,33 +92,65 @@ export async function setThreadCookie(id: string): Promise<void> {
   store.set("thread_id", id, { path: "/", httpOnly: true });
 }
 
-export async function forceCreateThread(): Promise<string> {
-  const res = await authFetch(`${BASE}/threads`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ metadata: {} }),
-  });
-  if (!res.ok) throw new Error(`Failed to create thread: ${res.status}`);
-  const data = await res.json();
-  const id: string = data.thread_id || data.id;
-  await setThreadCookie(id);
-  return id;
+export async function forceCreateThread(context?: LogContext): Promise<string> {
+  const requestId = context?.requestId ?? makeRequestId("thread-force");
+  const scope = "thread.forceCreate";
+  const url = `${BASE}/threads`;
+  try {
+    const res = await authFetch(
+      url,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ metadata: {} }),
+      },
+      "/chat",
+      { requestId, scope, target: url }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const message = text?.slice(0, 1024) || "";
+      logError(scope, "Failed to create thread", {
+        requestId,
+        status: res.status,
+        body: message,
+      });
+      throw new Error(`Failed to create thread: ${res.status}`);
+    }
+    const data = await res.json();
+    const id: string = data.thread_id || data.id;
+    await setThreadCookie(id);
+    return id;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(scope, "forceCreateThread threw", { requestId, error: message });
+    throw err;
+  }
 }
 
 type CreateThreadOptions = {
   force?: boolean;
+  requestId?: string;
 };
 
 export async function createThread(options: CreateThreadOptions = {}): Promise<string> {
-  if (!options.force) {
-    const existing = await getThreadCookie();
-    if (existing) return existing;
+  const requestId = options.requestId ?? makeRequestId("thread");
+  const scope = "thread.create";
+  try {
+    if (!options.force) {
+      const existing = await getThreadCookie();
+      if (existing) return existing;
+    }
+    const id = await forceCreateThread({ requestId, scope });
+    revalidatePath("/clarifier");
+    revalidatePath("/result");
+    revalidatePath("/chat");
+    return id;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(scope, "createThread failed", { requestId, error: message, force: Boolean(options.force) });
+    throw err;
   }
-  const id = await forceCreateThread();
-  revalidatePath("/clarifier");
-  revalidatePath("/result");
-  revalidatePath("/chat");
-  return id;
 }
 
 type GetStateOptions = {
@@ -144,9 +227,16 @@ type RunFailure = {
 
 type RunResult = RunSuccess | RunFailure;
 
-function buildRunFailure(status: number | undefined, text: string | undefined, fallback: string): RunFailure {
+function buildRunFailure(status: number | undefined, text: string | undefined, fallback: string, extra?: Record<string, unknown>): RunFailure {
   const detail = text?.trim() || undefined;
   const message = status ? `${fallback} (${status})` : fallback;
+  if (extra) {
+    logError(extra.scope ?? "run.failure", fallback, {
+      ...extra,
+      status,
+      detail,
+    });
+  }
   return {
     ok: false,
     error: detail ? `${message}: ${detail}` : message,
@@ -196,40 +286,56 @@ async function waitForState(threadId: string, runId: string, timeoutMs = 120_000
   };
 }
 
-async function invokeRun(threadId: string, body: Record<string, unknown>, wait: boolean): Promise<RunResult> {
+async function invokeRun(threadId: string, body: Record<string, unknown>, wait: boolean, context?: LogContext): Promise<RunResult> {
+  const requestId = context?.requestId ?? makeRequestId("invokeRun");
+  const scope = context?.scope ?? "run.invoke";
+  const target = `${BASE}/threads/${threadId}/runs`;
   const payload = {
     assistant_id: ASSISTANT_ID,
     ...body,
   };
 
-  const res = await authFetch(`${BASE}/threads/${threadId}/runs`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const res = await authFetch(
+      target,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      "/chat",
+      { requestId, scope, target }
+    );
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    return buildRunFailure(res.status, text, "Failed to start run");
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return buildRunFailure(res.status, text, "Failed to start run", { requestId, scope, target, threadId });
+    }
+
+    const data = await res.json().catch(() => ({}));
+    const runId: string | null = data?.run_id || data?.id || null;
+    if (!runId) {
+      logError(scope, "Run response missing run_id", { requestId, threadId });
+      return {
+        ok: false,
+        error: "Run created but no run ID was returned",
+      };
+    }
+
+    if (!wait) {
+      return { ok: true, runId };
+    }
+
+    return await waitForState(threadId, runId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(scope, "invokeRun threw", { requestId, threadId, error: message });
+    throw err;
   }
-
-  const data = await res.json().catch(() => ({}));
-  const runId: string | null = data?.run_id || data?.id || null;
-  if (!runId) {
-    return {
-      ok: false,
-      error: "Run created but no run ID was returned",
-    };
-  }
-
-  if (!wait) {
-    return { ok: true, runId };
-  }
-
-  return await waitForState(threadId, runId);
 }
 
 async function executeRun({ input, wait }: { input: string; wait: boolean }): Promise<RunResult> {
+  const requestId = makeRequestId(wait ? "run-wait" : "run-stream");
   const body = {
     input: {
       messages: [{ role: "user", content: input }],
@@ -239,8 +345,28 @@ async function executeRun({ input, wait }: { input: string; wait: boolean }): Pr
   let forced = false;
 
   while (true) {
-    const tid = await createThread({ force: forced });
-    const result = await invokeRun(tid, body, wait);
+    let tid: string;
+    try {
+      tid = await createThread({ force: forced, requestId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError("run.execute", "Failed to create thread", { requestId, forced, error: message });
+      return {
+        ok: false,
+        error: `Unable to create thread: ${message}`,
+      };
+    }
+    let result: RunResult;
+    try {
+      result = await invokeRun(tid, body, wait, { requestId, scope: "run.invoke", target: `${BASE}/threads/${tid}/runs` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError("run.execute", "invokeRun threw", { requestId, threadId: tid, error: message });
+      return {
+        ok: false,
+        error: `Unable to start run: ${message}`,
+      };
+    }
 
     if (result.ok || forced) {
       return result;
@@ -286,6 +412,8 @@ export type StartStreamSuccess = {
 export type StartStreamResult = StartStreamSuccess | RunFailure;
 
 export async function startRunStream(input: string): Promise<StartStreamResult> {
+  const requestId = makeRequestId("run-stream");
+  const scope = "run.stream";
   try {
     const body = {
       input: {
@@ -293,16 +421,36 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
       },
     };
 
-    const threadId = await createThread();
-    const result = await invokeRun(threadId, body, false);
+    let threadId: string;
+    try {
+      threadId = await createThread({ requestId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      logError(scope, "createThread failed", { requestId, error: message });
+      return { ok: false, error: `Unable to prepare thread: ${message}` };
+    }
+
+    let result: RunResult;
+    try {
+      result = await invokeRun(threadId, body, false, { requestId, scope, target: `${BASE}/threads/${threadId}/runs` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      logError(scope, "invokeRun threw", { requestId, threadId, error: message });
+      return { ok: false, error: `Unable to start run: ${message}` };
+    }
+
     if (!result.ok || !result.runId) {
-      return result.ok
-        ? { ok: false, error: "Run created but no run ID was returned" }
-        : result;
+      if (result.ok) {
+        logError(scope, "invokeRun reported success without runId", { requestId, threadId });
+        return { ok: false, error: "Run created but no run ID was returned" };
+      }
+      logWarn(scope, "invokeRun returned failure", { requestId, threadId, status: result.status, detail: result.detail });
+      return result;
     }
     return { ok: true, threadId, runId: result.runId };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
+    logError(scope, "startRunStream threw", { requestId, error: message });
     return { ok: false, error: message };
   }
 }

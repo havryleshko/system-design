@@ -1,7 +1,9 @@
 "use client"
 
 import { useRef, useState, useTransition } from "react"
-import { fetchTrace, startRunStream } from "../actions"
+import { useRouter } from "next/navigation"
+
+import { fetchTrace, startRunStream, type StartStreamResult } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
@@ -33,11 +35,28 @@ type ChatClientProps = {
   designJson?: DesignJson | null
 }
 
+type StreamFailure = Extract<StartStreamResult, { ok: false }>
+
+function formatStreamFailure(failure: StreamFailure): string {
+  const detail = typeof failure.detail === "string" && failure.detail.trim() ? failure.detail.trim() : null
+  const hints: string[] = []
+  if (failure.status === 404) {
+    hints.push("We couldn't find the existing thread. Please try again to create a fresh session.")
+  } else if (typeof failure.status === "number" && failure.status >= 500) {
+    hints.push("The backend is temporarily unavailable. Please retry in a moment.")
+  }
+  const segments = [failure.error]
+  if (detail && detail !== failure.error) segments.push(detail)
+  if (hints.length > 0) segments.push(hints.join(" "))
+  return segments.filter(Boolean).join(" — ")
+}
+
 export default function ChatClient({
   initialMessages,
   runId,
   designJson,
 }: ChatClientProps) {
+  const router = useRouter()
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [input, setInput] = useState("")
   const [trace, setTrace] = useState<RunTrace | null>(null)
@@ -149,7 +168,12 @@ export default function ChatClient({
     try {
       const result = await startRunStream(trimmed)
       if (!result.ok) {
-        const errorMessage = result.error || 'Run failed'
+        if (result.status === 401) {
+          setStreamError("Your session expired. Redirecting to login…")
+          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
+          return
+        }
+        const errorMessage = formatStreamFailure(result)
         setStreamError(errorMessage)
         setMessages((prev) => [
           ...prev,
