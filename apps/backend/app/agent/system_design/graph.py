@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Literal
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+import os
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
 from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
 
@@ -97,7 +99,10 @@ builder.add_conditional_edges(
 builder.add_edge("finaliser", END)
 
 # Configure checkpointer for thread persistence
-# MemorySaver is used by default; LangSmith deployments may override this
-checkpointer = MemorySaver()
+pg_url = os.getenv("LANGGRAPH_PG_URL")
+if pg_url:
+    checkpointer = PostgresSaver.from_conn_string(pg_url)
+else:
+    checkpointer = MemorySaver()
 
 graph = builder.compile(checkpointer=checkpointer)
