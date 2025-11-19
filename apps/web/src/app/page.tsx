@@ -8,7 +8,6 @@ import type { Session } from "@supabase/supabase-js";
 // Live Architecture Visualization Component
 function LiveArchitectureViz() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [statusText, setStatusText] = useState("INITIALIZING");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -32,11 +31,11 @@ function LiveArchitectureViz() {
 
     // Architecture nodes that build over time
     const nodes = [
-      { x: 0.2, y: 0.3, label: "API_GATEWAY", delay: 0, radius: 0 },
-      { x: 0.5, y: 0.2, label: "CACHE_LAYER", delay: 800, radius: 0 },
-      { x: 0.8, y: 0.3, label: "PRIMARY_DB", delay: 1600, radius: 0 },
-      { x: 0.35, y: 0.6, label: "MSG_QUEUE", delay: 2400, radius: 0 },
-      { x: 0.65, y: 0.6, label: "WORKER_POOL", delay: 3200, radius: 0 },
+      { x: 0.2, y: 0.3, label: "API", delay: 0, radius: 0 },
+      { x: 0.5, y: 0.2, label: "Cache", delay: 800, radius: 0 },
+      { x: 0.8, y: 0.3, label: "DB", delay: 1600, radius: 0 },
+      { x: 0.35, y: 0.6, label: "Queue", delay: 2400, radius: 0 },
+      { x: 0.65, y: 0.6, label: "Worker", delay: 3200, radius: 0 },
     ];
 
     const connections = [
@@ -48,7 +47,7 @@ function LiveArchitectureViz() {
     ];
 
     let startTime = Date.now();
-    const maxRadius = 6;
+    const maxRadius = 20;
 
     function animate() {
       if (!canvas || !ctx) return;
@@ -57,16 +56,6 @@ function LiveArchitectureViz() {
 
       ctx.clearRect(0, 0, rect.width, rect.height);
 
-      // Update status based on elapsed time
-      if (elapsed < 800) setStatusText("PLANNING_TOPOLOGY");
-      else if (elapsed < 2400) setStatusText("OPTIMIZING_DATA_FLOW");
-      else if (elapsed < 4000) setStatusText("SCALING_WORKERS");
-      else if (elapsed < 5000) setStatusText("VALIDATING_ARCH");
-
-      // Draw grid overlay
-      ctx.strokeStyle = "rgba(198, 180, 255, 0.05)";
-      ctx.lineWidth = 1;
-      
       // Draw connections
       connections.forEach((conn) => {
         if (elapsed > conn.delay) {
@@ -85,27 +74,12 @@ function LiveArchitectureViz() {
             const currentX = fromX + (toX - fromX) * conn.progress;
             const currentY = fromY + (toY - fromY) * conn.progress;
 
-            // Connection line
-            ctx.strokeStyle = `rgba(198, 180, 255, ${0.4 * conn.progress})`;
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = `rgba(198, 180, 255, ${0.3 * conn.progress})`;
+            ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(fromX, fromY);
             ctx.lineTo(currentX, currentY);
             ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Moving packet
-            if (conn.progress === 1) {
-                const packetProgress = (Date.now() / 1000) % 1;
-                const packetX = fromX + (toX - fromX) * packetProgress;
-                const packetY = fromY + (toY - fromY) * packetProgress;
-                
-                ctx.fillStyle = "#E0D8FF";
-                ctx.beginPath();
-                ctx.arc(packetX, packetY, 2, 0, Math.PI * 2);
-                ctx.fill();
-            }
           }
         }
       });
@@ -119,37 +93,22 @@ function LiveArchitectureViz() {
           const x = node.x * rect.width;
           const y = node.y * rect.height;
 
-          // Node marker
-          ctx.fillStyle = "#111319";
-          ctx.strokeStyle = "#C6B4FF";
-          ctx.lineWidth = 1;
+          // Node circle
+          ctx.fillStyle = "rgba(62, 43, 115, 0.6)";
+          ctx.strokeStyle = "rgba(198, 180, 255, 0.8)";
+          ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.rect(x - node.radius, y - node.radius, node.radius * 2, node.radius * 2);
+          ctx.arc(x, y, node.radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
 
-          // Tech decoration
+          // Node label
           if (node.radius >= maxRadius * 0.8) {
-             // Crosshair
-             ctx.strokeStyle = "rgba(198, 180, 255, 0.5)";
-             ctx.beginPath();
-             ctx.moveTo(x - 10, y);
-             ctx.lineTo(x + 10, y);
-             ctx.moveTo(x, y - 10);
-             ctx.lineTo(x, y + 10);
-             ctx.stroke();
-
-             // Label
-            ctx.fillStyle = "rgba(224, 216, 255, 0.8)";
-            ctx.font = "10px 'Space Mono', monospace";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "bottom";
-            ctx.fillText(node.label, x + 12, y - 4);
-            
-            // Coordinates
-            ctx.fillStyle = "rgba(198, 180, 255, 0.4)";
-            ctx.font = "9px 'Space Mono', monospace";
-            ctx.fillText(`[${Math.round(x)},${Math.round(y)}]`, x + 12, y + 8);
+            ctx.fillStyle = "#E0D8FF";
+            ctx.font = "11px var(--font-space-grotesk)";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(node.label, x, y);
           }
         }
       });
@@ -176,129 +135,52 @@ function LiveArchitectureViz() {
   }, []);
 
   return (
-    <div className="relative w-full h-full rounded border border-white/10 bg-black/20 overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full grid-background opacity-50 pointer-events-none" />
-        <div className="absolute top-4 left-4 font-mono text-[10px] text-[#C6B4FF] tracking-wider">
-            <span className="opacity-50">SYS.STATUS // </span>
-            <span className="text-[#E0D8FF]">{statusText}</span>
-        </div>
-        <div className="absolute top-4 right-4 font-mono text-[10px] text-white/30">
-            V.2.0.4
-        </div>
-        <div className="scanner-line" />
-        <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-        style={{ mixBlendMode: "screen" }}
-        />
-    </div>
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full opacity-40"
+      style={{ mixBlendMode: "screen" }}
+    />
   );
-}
-
-// Interactive Blueprint Component
-function InteractiveBlueprint({ title, components }: { title: string; components: Array<{ name: string; sub: string[] }> }) {
-    const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-
-    return (
-        <div className="glass-panel corner-bracket p-6 h-full group transition-colors duration-500 hover:border-[#C6B4FF]/40">
-            <div className="flex justify-between items-start mb-6 border-b border-white/5 pb-4">
-                <h4 className="text-lg font-bold tracking-tight" style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}>
-                    {title}
-                </h4>
-                <div className="font-mono text-[10px] text-[#C6B4FF]/50 border border-[#C6B4FF]/20 px-2 py-0.5 rounded">
-                    ARCH.REF_0{Math.floor(Math.random() * 9) + 1}
-                </div>
-            </div>
-            
-            <div className="space-y-4">
-                {components.map((comp, idx) => (
-                    <div 
-                        key={idx}
-                        className={`relative pl-4 border-l transition-all duration-300 ${
-                            hoveredIndex === idx 
-                                ? "border-[#C6B4FF] bg-white/5" 
-                                : "border-white/10 hover:border-white/30"
-                        }`}
-                        onMouseEnter={() => setHoveredIndex(idx)}
-                        onMouseLeave={() => setHoveredIndex(null)}
-                    >
-                        <div className={`text-xs font-mono mb-1 transition-colors ${
-                            hoveredIndex === idx ? "text-[#E0D8FF]" : "text-[#C6B4FF]"
-                        }`}>
-                            0{idx + 1} {"//"} {comp.name}
-                        </div>
-                        <div className={`text-[11px] transition-colors ${
-                            hoveredIndex === idx ? "text-white/80" : "text-white/40"
-                        }`}>
-                            {comp.sub.join(" + ")}
-                        </div>
-                    </div>
-                ))}
-            </div>
-            
-            {/* Technical decorations */}
-            <div className="absolute bottom-2 right-2 w-2 h-2 border-b border-r border-[#C6B4FF]/30" />
-            <div className="absolute bottom-2 left-2 font-mono text-[9px] text-white/20">
-                SECURE_HASH: {Math.random().toString(36).substring(7).toUpperCase()}
-            </div>
-        </div>
-    )
 }
 
 // Feature Card Component
 function FeatureCard({
-  index,
   title,
   description,
   icon,
 }: {
-  index: string;
   title: string;
   description: string;
   icon: string;
 }) {
   return (
     <div
-      className="glass-panel corner-bracket rounded-sm p-8 transition-all duration-300 hover:-translate-y-1 group"
+      className="glass-panel rounded-lg p-8 transition-all duration-300 hover:scale-105 hover:shadow-2xl"
+      style={{
+        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow =
+          "0 8px 40px rgba(198, 180, 255, 0.3)";
+        e.currentTarget.style.borderColor = "rgba(198, 180, 255, 0.4)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = "0 4px 20px rgba(0, 0, 0, 0.3)";
+        e.currentTarget.style.borderColor = "rgba(198, 180, 255, 0.15)";
+      }}
     >
-      <div className="flex justify-between items-start mb-6">
-          <div className="text-4xl opacity-80 group-hover:opacity-100 transition-opacity group-hover:scale-110 duration-300 transform origin-left">{icon}</div>
-          <div className="font-mono text-xs text-[#C6B4FF]/40">
-              {index}
-          </div>
-      </div>
-      
+      <div className="text-4xl mb-4">{icon}</div>
       <h3
-        className="text-xl font-bold mb-3 tracking-tight"
+        className="text-xl font-semibold mb-3"
         style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
       >
         {title}
       </h3>
-      <p className="text-sm leading-relaxed text-[#C6B4FF]/80 font-light">
+      <p className="text-sm leading-relaxed" style={{ color: "#C6B4FF" }}>
         {description}
       </p>
     </div>
   );
-}
-
-// Typing text hook
-function useTypewriter(text: string, speed = 30) {
-    const [displayedText, setDisplayText] = useState("");
-    
-    useEffect(() => {
-        let i = 0;
-        const timer = setInterval(() => {
-            if (i < text.length) {
-                setDisplayText(text.substring(0, i + 1));
-                i++;
-            } else {
-                clearInterval(timer);
-            }
-        }, speed);
-        return () => clearInterval(timer);
-    }, [text, speed]);
-    
-    return displayedText;
 }
 
 export default function Home() {
@@ -310,8 +192,6 @@ export default function Home() {
     howItWorks: false,
     examples: false,
   });
-  
-  const subheadline = useTypewriter("Multi-agent system for researching and architecting systems", 20);
 
   useEffect(() => {
     const supabase = getBrowserSupabase();
@@ -365,14 +245,12 @@ export default function Home() {
 
   return (
     <div
-      className="relative min-h-screen text-white overflow-x-hidden selection:bg-[#3E2B73] selection:text-[#E0D8FF]"
+      className="relative min-h-screen text-white overflow-x-hidden"
       style={{
         background:
-          "linear-gradient(135deg, #111319 0%, #1A1D26 100%)",
+          "linear-gradient(135deg, #111319 0%, #3E2B73 50%, #C6B4FF 100%)",
       }}
     >
-      <div className="absolute inset-0 grid-background opacity-30 pointer-events-none fixed" />
-      
       {/* Particle Background */}
       <div className="particle-background">
         <div className="particle" style={{ top: "10%", left: "15%" }}></div>
@@ -384,58 +262,60 @@ export default function Home() {
 
       {/* Hero Section */}
       <section className="relative min-h-screen flex items-center justify-center px-6 py-20">
-        <div className="max-w-6xl mx-auto text-center relative z-10 w-full">
-          
-          {/* Top label */}
-          <div className="inline-block mb-6 border border-[#C6B4FF]/20 bg-[#C6B4FF]/5 px-3 py-1 rounded-full backdrop-blur-sm">
-              <span className="font-mono text-[10px] tracking-widest text-[#C6B4FF] uppercase">
-                  AI-Powered Architecture • V1.0
-              </span>
-          </div>
-
+        <div className="max-w-6xl mx-auto text-center relative z-10">
           {/* Live Architecture Visualization */}
-          <div className="relative w-full max-w-3xl mx-auto mb-16 h-64 hidden md:block shadow-2xl shadow-purple-900/10">
+          <div className="relative w-full max-w-2xl mx-auto mb-12 h-64 hidden md:block">
             <LiveArchitectureViz />
           </div>
 
           <h1
-            className="text-5xl md:text-7xl font-bold mb-8 leading-tight tracking-tight"
+            className="text-5xl md:text-7xl font-bold mb-6 leading-tight"
             style={{
               fontFamily: "var(--font-space-grotesk)",
+              background:
+                "linear-gradient(135deg, #E0D8FF 0%, #C6B4FF 50%, #E0D8FF 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
             }}
           >
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#E0D8FF] via-[#C6B4FF] to-[#E0D8FF]">
-                System Design Agent
-            </span>
+            System Design Agent
             <br />
-            <span className="text-3xl md:text-4xl text-[#C6B4FF]/60 font-light block mt-4">
-                for autonomous AI architectures
-            </span>
+            for building AI architectures
           </h1>
 
-          <div className="h-8 mb-12">
-            <p
-                className="text-sm font-mono max-w-3xl mx-auto typing-cursor"
-                style={{ color: "#C6B4FF" }}
-            >
-                {subheadline}
-            </p>
-          </div>
+          <p
+            className="text-xl md:text-2xl mb-12 max-w-3xl mx-auto leading-relaxed"
+            style={{ color: "rgba(198, 180, 255, 0.8)" }}
+          >
+            Multi-agent system for researching and architecting systems
+          </p>
 
           <button
             onClick={handleCTA}
             disabled={isLoading}
-            className="group relative px-8 py-4 text-sm font-mono font-bold uppercase tracking-widest transition-all duration-300 overflow-hidden"
+            className="px-10 py-4 text-lg font-semibold uppercase tracking-wider transition-all duration-300 rounded-lg"
             style={{
-              background: "rgba(62, 43, 115, 0.4)",
-              border: "1px solid rgba(198, 180, 255, 0.3)",
+              background:
+                "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
+              border: "2px solid rgba(198, 180, 255, 0.5)",
               color: "#E0D8FF",
             }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background =
+                "linear-gradient(135deg, rgba(62, 43, 115, 1), rgba(198, 180, 255, 0.5))";
+              e.currentTarget.style.boxShadow =
+                "0 0 30px rgba(198, 180, 255, 0.5)";
+              e.currentTarget.style.transform = "translateY(-2px)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background =
+                "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))";
+              e.currentTarget.style.boxShadow = "none";
+              e.currentTarget.style.transform = "translateY(0)";
+            }}
           >
-            <div className="absolute inset-0 w-full h-full bg-[#C6B4FF]/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
-            <span className="relative z-10">
-                {isLoading ? "Loading..." : session ? "Initialize Session" : "Start Research"}
-            </span>
+            {isLoading ? "Loading..." : session ? "Go to Chat" : "Get Started"}
           </button>
         </div>
       </section>
@@ -443,41 +323,39 @@ export default function Home() {
       {/* Features Section */}
       <section
         id="features"
-        className={`relative py-32 px-6 transition-all duration-1000 ${
+        className={`relative py-24 px-6 transition-all duration-1000 ${
           sectionsVisible.features
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-10"
         }`}
+        style={{
+          background: "rgba(17, 19, 25, 0.6)",
+          backdropFilter: "blur(20px)",
+        }}
       >
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-end gap-4 mb-16 border-b border-white/5 pb-4">
-              <span className="font-mono text-4xl font-light text-[#C6B4FF]/20">01</span>
-              <h2
-                className="text-2xl font-bold tracking-tight mb-1"
-                style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
-              >
-                Core Capabilities
-              </h2>
-          </div>
+          <h2
+            className="text-3xl md:text-5xl font-bold text-center mb-16"
+            style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+          >
+            How it works
+          </h2>
 
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-3 gap-8">
             <FeatureCard
-              index="MOD.01"
               icon="🎯"
               title="Autonomous Planning"
-              description="Agent intelligently breaks down your requirements and determines the optimal research and design strategy based on current best practices."
+              description="Agent intelligently breaks down your requirements and determines the optimal research and design strategy."
             />
             <FeatureCard
-              index="MOD.02"
               icon="🔍"
-              title="Deep Research"
-              description="Automatically researches architectural patterns, performs competitive analysis, and validates decisions against real-world constraints."
+              title="Knowledge & Web Search"
+              description="Automatically researches best practices, architectural patterns, and current technologies from knowledge bases and the web."
             />
             <FeatureCard
-              index="MOD.03"
               icon="🔄"
-              title="Iterative Logic"
-              description="Built-in critic feedback loop validates and improves designs through multiple generations until quality metrics are satisfied."
+              title="Iterative Refinement"
+              description="Built-in critic validates and improves designs through multiple iterations until quality targets are met."
             />
           </div>
         </div>
@@ -486,60 +364,109 @@ export default function Home() {
       {/* How It Works Flow */}
       <section
         id="howItWorks"
-        className={`relative py-32 px-6 bg-white/[0.02] transition-all duration-1000 ${
+        className={`relative py-24 px-6 transition-all duration-1000 ${
           sectionsVisible.howItWorks
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-10"
         }`}
       >
         <div className="max-w-5xl mx-auto">
-          <div className="flex items-end justify-center gap-4 mb-20">
-              <span className="font-mono text-xs text-[#C6B4FF]/40 tracking-[0.2em]">WORKFLOW_SEQUENCE</span>
-          </div>
+          <h2
+            className="text-3xl md:text-5xl font-bold text-center mb-20"
+            style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+          >
+            Simple workflow
+          </h2>
 
-          <div className="flex flex-col md:flex-row items-start justify-between gap-12 relative">
-            {/* Connection Line */}
-            <div className="absolute top-8 left-0 w-full h-px bg-gradient-to-r from-transparent via-[#C6B4FF]/20 to-transparent hidden md:block" />
-
+          <div className="flex flex-col md:flex-row items-center justify-between gap-8">
             {/* Step 1 */}
-            <div className="flex-1 relative z-10 group">
+            <div className="flex-1 text-center">
               <div
-                className="w-16 h-16 bg-[#111319] border border-[#C6B4FF]/30 mx-auto mb-8 flex items-center justify-center font-mono text-xl transition-colors group-hover:border-[#C6B4FF]"
-                style={{ color: "#E0D8FF" }}
+                className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-2xl font-bold"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
+                  border: "2px solid rgba(198, 180, 255, 0.5)",
+                  color: "#E0D8FF",
+                }}
               >
-                01
+                1
               </div>
-              <h3 className="text-lg font-bold text-center mb-2 text-[#E0D8FF]">Input Parameters</h3>
-              <p className="text-xs text-center font-mono text-[#C6B4FF]/60 uppercase tracking-wide">
-                Define Constraints
+              <h3
+                className="text-xl font-semibold mb-3"
+                style={{
+                  fontFamily: "var(--font-space-grotesk)",
+                  color: "#E0D8FF",
+                }}
+              >
+                Describe
+              </h3>
+              <p className="text-sm" style={{ color: "rgba(198, 180, 255, 0.7)" }}>
+                Share your system requirements and constraints
               </p>
+            </div>
+
+            {/* Arrow */}
+            <div className="hidden md:block text-4xl" style={{ color: "#C6B4FF" }}>
+              →
             </div>
 
             {/* Step 2 */}
-            <div className="flex-1 relative z-10 group">
+            <div className="flex-1 text-center">
               <div
-                className="w-16 h-16 bg-[#111319] border border-[#C6B4FF]/30 mx-auto mb-8 flex items-center justify-center font-mono text-xl transition-colors group-hover:border-[#C6B4FF]"
-                style={{ color: "#E0D8FF" }}
+                className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-2xl font-bold"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
+                  border: "2px solid rgba(198, 180, 255, 0.5)",
+                  color: "#E0D8FF",
+                }}
               >
-                02
+                2
               </div>
-              <h3 className="text-lg font-bold text-center mb-2 text-[#E0D8FF]">Processing</h3>
-              <p className="text-xs text-center font-mono text-[#C6B4FF]/60 uppercase tracking-wide">
-                Analysis & Design
+              <h3
+                className="text-xl font-semibold mb-3"
+                style={{
+                  fontFamily: "var(--font-space-grotesk)",
+                  color: "#E0D8FF",
+                }}
+              >
+                Agent Works
+              </h3>
+              <p className="text-sm" style={{ color: "rgba(198, 180, 255, 0.7)" }}>
+                AI plans, researches, and designs your architecture
               </p>
             </div>
 
+            {/* Arrow */}
+            <div className="hidden md:block text-4xl" style={{ color: "#C6B4FF" }}>
+              →
+            </div>
+
             {/* Step 3 */}
-            <div className="flex-1 relative z-10 group">
+            <div className="flex-1 text-center">
               <div
-                className="w-16 h-16 bg-[#111319] border border-[#C6B4FF]/30 mx-auto mb-8 flex items-center justify-center font-mono text-xl transition-colors group-hover:border-[#C6B4FF]"
-                style={{ color: "#E0D8FF" }}
+                className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-2xl font-bold"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
+                  border: "2px solid rgba(198, 180, 255, 0.5)",
+                  color: "#E0D8FF",
+                }}
               >
-                03
+                3
               </div>
-              <h3 className="text-lg font-bold text-center mb-2 text-[#E0D8FF]">Output</h3>
-              <p className="text-xs text-center font-mono text-[#C6B4FF]/60 uppercase tracking-wide">
-                Architecture JSON
+              <h3
+                className="text-xl font-semibold mb-3"
+                style={{
+                  fontFamily: "var(--font-space-grotesk)",
+                  color: "#E0D8FF",
+                }}
+              >
+                Review
+              </h3>
+              <p className="text-sm" style={{ color: "rgba(198, 180, 255, 0.7)" }}>
+                Get detailed architecture with explanations
               </p>
             </div>
           </div>
@@ -549,70 +476,127 @@ export default function Home() {
       {/* Example Outputs */}
       <section
         id="examples"
-        className={`relative py-32 px-6 transition-all duration-1000 ${
+        className={`relative py-24 px-6 transition-all duration-1000 ${
           sectionsVisible.examples
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-10"
         }`}
+        style={{
+          background: "rgba(17, 19, 25, 0.6)",
+          backdropFilter: "blur(20px)",
+        }}
       >
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-end gap-4 mb-16 border-b border-white/5 pb-4">
-              <span className="font-mono text-4xl font-light text-[#C6B4FF]/20">02</span>
-              <h2
-                className="text-2xl font-bold tracking-tight mb-1"
-                style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
-              >
-                Generated Architectures
-              </h2>
-          </div>
+          <h2
+            className="text-3xl md:text-5xl font-bold text-center mb-16"
+            style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+          >
+            Example architectures
+          </h2>
 
-          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto h-96">
+          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
             {/* Example 1 */}
-            <InteractiveBlueprint 
-                title="Real-time Chat System" 
-                components={[
-                    { name: "Edge Layer", sub: ["Global CDN", "WAF", "DDoS Protection"] },
-                    { name: "Access Gateway", sub: ["WebSocket Clusters", "Auth Service", "Rate Limiter"] },
-                    { name: "Message Broker", sub: ["Redis Pub/Sub", "Kafka Streams"] },
-                    { name: "Persistence", sub: ["ScyllaDB (Messages)", "PostgreSQL (Users)"] }
-                ]}
-            />
+            <div className="glass-panel rounded-lg p-6">
+              <h4
+                className="text-lg font-semibold mb-4"
+                style={{
+                  fontFamily: "var(--font-space-grotesk)",
+                  color: "#E0D8FF",
+                }}
+              >
+                Real-time Chat Application
+              </h4>
+              <div
+                className="bg-black/30 rounded p-4 text-xs font-mono"
+                style={{ color: "#C6B4FF" }}
+              >
+                <div className="mb-2">→ WebSocket Gateway</div>
+                <div className="mb-2 ml-4">→ Redis Pub/Sub</div>
+                <div className="mb-2 ml-4">→ Message Queue</div>
+                <div className="mb-2 ml-8">→ PostgreSQL</div>
+                <div className="ml-8">→ S3 Media Storage</div>
+              </div>
+            </div>
 
             {/* Example 2 */}
-            <InteractiveBlueprint 
-                title="ML Inference Platform" 
-                components={[
-                    { name: "Ingestion", sub: ["API Gateway", "Request Validator"] },
-                    { name: "Orchestration", sub: ["Kubernetes Control Plane", "Job Queue"] },
-                    { name: "Compute Layer", sub: ["GPU Nodes", "Model Registry"] },
-                    { name: "Vector Store", sub: ["Pinecone / Weaviate", "Embeddings Cache"] }
-                ]}
-            />
+            <div className="glass-panel rounded-lg p-6">
+              <h4
+                className="text-lg font-semibold mb-4"
+                style={{
+                  fontFamily: "var(--font-space-grotesk)",
+                  color: "#E0D8FF",
+                }}
+              >
+                AI Model Serving Platform
+              </h4>
+              <div
+                className="bg-black/30 rounded p-4 text-xs font-mono"
+                style={{ color: "#C6B4FF" }}
+              >
+                <div className="mb-2">→ API Gateway + Load Balancer</div>
+                <div className="mb-2 ml-4">→ Model Registry</div>
+                <div className="mb-2 ml-4">→ Inference Workers</div>
+                <div className="mb-2 ml-8">→ GPU Cluster</div>
+                <div className="ml-8">→ Vector Database</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="relative py-12 px-6 border-t border-white/5 bg-[#111319]">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
-            <div className="flex flex-col gap-2">
-                <div className="font-mono text-xs text-[#C6B4FF] tracking-widest">SYSTESIGN.AI</div>
-                <div className="text-[10px] text-white/30">
-                    © 2025 • SYSTEM DESIGN AGENT
-                </div>
+      <footer className="relative py-12 px-6 text-center border-t" style={{ borderColor: "rgba(198, 180, 255, 0.15)" }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <span
+                className="text-xs px-3 py-1 rounded-full"
+                style={{
+                  background: "rgba(198, 180, 255, 0.2)",
+                  border: "1px solid rgba(198, 180, 255, 0.3)",
+                  color: "#C6B4FF",
+                }}
+              >
+                Beta
+              </span>
+              <span className="text-sm" style={{ color: "rgba(198, 180, 255, 0.6)" }}>
+                In Development
+              </span>
             </div>
 
-            <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 rounded-full">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    <span className="font-mono text-[10px] text-white/60 uppercase">Systems Operational</span>
-                </div>
+            <div className="flex gap-6">
+              <button
+                onClick={() => router.push("/login")}
+                className="text-sm transition-colors duration-200"
+                style={{ color: "rgba(198, 180, 255, 0.8)" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#E0D8FF";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "rgba(198, 180, 255, 0.8)";
+                }}
+              >
+                Login
+              </button>
+              <button
+                onClick={() => router.push("/login")}
+                className="text-sm transition-colors duration-200"
+                style={{ color: "rgba(198, 180, 255, 0.8)" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#E0D8FF";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "rgba(198, 180, 255, 0.8)";
+                }}
+              >
+                Sign Up
+              </button>
             </div>
-            
-            <div className="flex gap-8 text-xs font-mono text-[#C6B4FF]/60">
-                <button onClick={() => router.push("/login")} className="hover:text-[#E0D8FF] transition-colors">ACCESS_TERMINAL</button>
-                <button onClick={() => router.push("/login")} className="hover:text-[#E0D8FF] transition-colors">INIT_ACCOUNT</button>
-            </div>
+          </div>
+
+          <div className="mt-8 text-xs" style={{ color: "rgba(198, 180, 255, 0.4)" }}>
+            © 2025 Systesign. All rights reserved.
+          </div>
         </div>
       </footer>
     </div>
