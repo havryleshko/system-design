@@ -16,19 +16,14 @@ LangSmith (and any other runtime) whenever you rotate Supabase credentials.
 
 ## LangGraph Checkpointer (Clarifier Resume)
 
-Persistent checkpoints are required and **`LANGGRAPH_PG_URL` is mandatory**.
-The app now raises at import time if this variable is missing, so production
-deployments must supply a working Postgres URL.
+When this graph runs inside LangGraph Server/LangSmith, a managed Postgres
+checkpointer is injected automatically. No extra environment variables are
+required—the `graph = builder.compile()` call is enough to enable durable
+clarifier resumes and backtracking.
 
-1. Provision a Postgres instance (Supabase works fine) and copy the full
-   connection string, e.g. `postgresql://user:pass@host:5432/db`.
-2. Set `LANGGRAPH_PG_URL` in every runtime (Render, LangSmith, `langgraph dev`,
-   etc.). The backend invokes `langgraph-checkpoint-postgres`'s `.setup()`
-   automatically on startup, so there is no manual migration step.
-3. (Optional) If several environments share the same database, use separate
-   schemas or distinct DBs. A missing/invalid `LANGGRAPH_PG_URL` will now stop
-   the process immediately, preventing the clarifier from ever running without
-   persistence.
-4. After deploying, open `/chat`, trigger a clarifier question, submit the form,
-   and ensure `POST /threads/{id}/runs/{run_id}/resume` returns `200`.
+For local development you can still point LangGraph at your own Postgres by
+setting `LANGGRAPH_PG_URL` before launching `langgraph dev`, but production
+deployments are expected to rely on the built-in storage.
 
+After each deploy, open `/chat`, trigger a clarifier question, submit the
+answers, and verify the `POST /threads/{id}/runs/{run_id}/resume` call succeeds.

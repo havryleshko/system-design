@@ -1,17 +1,8 @@
 from __future__ import annotations
 from typing import Literal
-import atexit
-import os
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.postgres import PostgresSaver
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
 from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
-from langgraph.store.memory import InMemoryStore
-
-in_memory_store = InMemoryStore()
-
-
-
 # defining a graph with shared state
 builder = StateGraph(State)
 
@@ -103,13 +94,4 @@ builder.add_conditional_edges(
 
 builder.add_edge("finaliser", END)
 
-pg_url = (os.getenv("LANGGRAPH_PG_URL") or "").strip()
-if not pg_url:
-    raise RuntimeError("LANGGRAPH_PG_URL is required for LangGraph checkpoints")
-
-_pg_ctx = PostgresSaver.from_conn_string(pg_url)
-checkpointer = _pg_ctx.__enter__()
-atexit.register(_pg_ctx.__exit__, None, None, None)
-checkpointer.setup()
-
-graph = builder.compile(checkpointer=checkpointer)
+graph = builder.compile()
