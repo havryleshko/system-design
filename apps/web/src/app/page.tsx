@@ -169,7 +169,7 @@ function FeatureCard({
         e.currentTarget.style.borderColor = "rgba(198, 180, 255, 0.15)";
       }}
     >
-      <div className="text-4xl mb-4">{icon}</div>
+      {icon && <div className="text-4xl mb-4">{icon}</div>}
       <h3
         className="text-xl font-semibold mb-3"
         style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
@@ -343,17 +343,17 @@ export default function Home() {
 
           <div className="grid md:grid-cols-3 gap-8">
             <FeatureCard
-              icon="🎯"
+              icon=""
               title="Autonomous Planning"
               description="Agent intelligently breaks down your requirements and determines the optimal research and design strategy."
             />
             <FeatureCard
-              icon="🔍"
+              icon=""
               title="Knowledge & Web Search"
               description="Automatically researches best practices, architectural patterns, and current technologies from knowledge bases and the web."
             />
             <FeatureCard
-              icon="🔄"
+              icon=""
               title="Iterative Refinement"
               description="Built-in critic validates and improves designs through multiple iterations until quality targets are met."
             />
