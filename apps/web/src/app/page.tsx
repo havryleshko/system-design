@@ -225,7 +225,7 @@ function InteractiveBlueprint({ title, components }: { title: string; components
                         <div className={`text-xs font-mono mb-1 transition-colors ${
                             hoveredIndex === idx ? "text-[#E0D8FF]" : "text-[#C6B4FF]"
                         }`}>
-                            0{idx + 1} // {comp.name}
+                            0{idx + 1} {"//"} {comp.name}
                         </div>
                         <div className={`text-[11px] transition-colors ${
                             hoveredIndex === idx ? "text-white/80" : "text-white/40"
