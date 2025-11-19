@@ -47,7 +47,7 @@ function LiveArchitectureViz() {
       { from: 4, to: 2, progress: 0, delay: 4200 },
     ];
 
-    const startTime = Date.now();
+    let startTime = Date.now();
     const maxRadius = 6;
 
     function animate() {
