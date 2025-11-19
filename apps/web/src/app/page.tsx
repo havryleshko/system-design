@@ -66,7 +66,6 @@ function LiveArchitectureViz() {
       // Draw grid overlay
       ctx.strokeStyle = "rgba(198, 180, 255, 0.05)";
       ctx.lineWidth = 1;
-      const gridSize = 40;
       
       // Draw connections
       connections.forEach((conn) => {
