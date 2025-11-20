@@ -1,16 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  /* Celestial Lab Palette */
-  --color-graphite: #111319;
-  --color-dusk-purple: #3E2B73;
-  --color-lavender: #C6B4FF;
-  --color-lavender-light: #E0D8FF;
-  --color-graphite-light: #1A1D26;
-  
-  /* Background & Foreground */
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Edison Scientific Palette */
+  --background: #1b1d26;
+  --surface: #23252f;
+  --foreground: #d7d7d7;
+  --foreground-muted: #8c8c8c;
+  --accent: #9ab6c2;
+  --border: #333746;
   
   /* Spacing scale (Edison-inspired) */
   --spacing-xs: 0.5rem;   /* 8px */
@@ -23,15 +20,19 @@
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
   --font-sans: var(--font-inter);
   --font-mono: var(--font-space-grotesk);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: var(--color-graphite);
-    --foreground: #ededed;
+    --background: #1b1d26;
+    --foreground: #d7d7d7;
   }
 }
 
@@ -66,7 +67,7 @@ body {
   position: absolute;
   width: 2px;
   height: 2px;
-  background: var(--color-lavender);
+  background: var(--accent);
   border-radius: 50%;
   animation: particle-drift 8s ease-in-out infinite;
   opacity: 0.3;
@@ -77,11 +78,11 @@ body {
 .particle:nth-child(4) { animation-delay: 3s; top: 70%; left: 20%; }
 .particle:nth-child(5) { animation-delay: 4s; top: 30%; left: 80%; }
 
-/* Glassmorphism utility */
+/* Glassmorphism / Panel utility */
 .glass-panel {
-  background: rgba(17, 19, 25, 0.6);
+  background: rgba(35, 37, 47, 0.7); /* Surface with opacity */
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(198, 180, 255, 0.15);
+  border: 1px solid var(--border);
 }
 
 /* Reduced motion support */

@@ -5,23 +5,23 @@ export default function MolecularLoader() {
     <div className="molecular-loader">
       <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
         {/* Center node */}
-        <circle cx="30" cy="30" r="4" fill="#C6B4FF" className="molecule-node center-node" />
+        <circle cx="30" cy="30" r="4" fill="var(--accent)" className="molecule-node center-node" />
         
         {/* Outer ring nodes */}
-        <circle cx="30" cy="10" r="3" fill="#C6B4FF" className="molecule-node node-1" />
-        <circle cx="48" cy="18" r="3" fill="#C6B4FF" className="molecule-node node-2" />
-        <circle cx="50" cy="38" r="3" fill="#C6B4FF" className="molecule-node node-3" />
-        <circle cx="30" cy="50" r="3" fill="#C6B4FF" className="molecule-node node-4" />
-        <circle cx="10" cy="38" r="3" fill="#C6B4FF" className="molecule-node node-5" />
-        <circle cx="12" cy="18" r="3" fill="#C6B4FF" className="molecule-node node-6" />
+        <circle cx="30" cy="10" r="3" fill="var(--accent)" className="molecule-node node-1" />
+        <circle cx="48" cy="18" r="3" fill="var(--accent)" className="molecule-node node-2" />
+        <circle cx="50" cy="38" r="3" fill="var(--accent)" className="molecule-node node-3" />
+        <circle cx="30" cy="50" r="3" fill="var(--accent)" className="molecule-node node-4" />
+        <circle cx="10" cy="38" r="3" fill="var(--accent)" className="molecule-node node-5" />
+        <circle cx="12" cy="18" r="3" fill="var(--accent)" className="molecule-node node-6" />
         
         {/* Connection lines */}
-        <line x1="30" y1="30" x2="30" y2="10" stroke="#C6B4FF" strokeWidth="1" opacity="0.4" className="molecule-bond bond-1" />
-        <line x1="30" y1="30" x2="48" y2="18" stroke="#C6B4FF" strokeWidth="1" opacity="0.4" className="molecule-bond bond-2" />
-        <line x1="30" y1="30" x2="50" y2="38" stroke="#C6B4FF" strokeWidth="1" opacity="0.4" className="molecule-bond bond-3" />
-        <line x1="30" y1="30" x2="30" y2="50" stroke="#C6B4FF" strokeWidth="1" opacity="0.4" className="molecule-bond bond-4" />
-        <line x1="30" y1="30" x2="10" y2="38" stroke="#C6B4FF" strokeWidth="1" opacity="0.4" className="molecule-bond bond-5" />
-        <line x1="30" y1="30" x2="12" y2="18" stroke="#C6B4FF" strokeWidth="1" opacity="0.4" className="molecule-bond bond-6" />
+        <line x1="30" y1="30" x2="30" y2="10" stroke="var(--accent)" strokeWidth="1" opacity="0.4" className="molecule-bond bond-1" />
+        <line x1="30" y1="30" x2="48" y2="18" stroke="var(--accent)" strokeWidth="1" opacity="0.4" className="molecule-bond bond-2" />
+        <line x1="30" y1="30" x2="50" y2="38" stroke="var(--accent)" strokeWidth="1" opacity="0.4" className="molecule-bond bond-3" />
+        <line x1="30" y1="30" x2="30" y2="50" stroke="var(--accent)" strokeWidth="1" opacity="0.4" className="molecule-bond bond-4" />
+        <line x1="30" y1="30" x2="10" y2="38" stroke="var(--accent)" strokeWidth="1" opacity="0.4" className="molecule-bond bond-5" />
+        <line x1="30" y1="30" x2="12" y2="18" stroke="var(--accent)" strokeWidth="1" opacity="0.4" className="molecule-bond bond-6" />
       </svg>
       
       <style jsx>{`
@@ -134,4 +134,3 @@ export default function MolecularLoader() {
     </div>
   )
 }
-

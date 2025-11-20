@@ -74,7 +74,8 @@ function LiveArchitectureViz() {
             const currentX = fromX + (toX - fromX) * conn.progress;
             const currentY = fromY + (toY - fromY) * conn.progress;
 
-            ctx.strokeStyle = `rgba(198, 180, 255, ${0.3 * conn.progress})`;
+            // Accent line (Steel Blue)
+            ctx.strokeStyle = `rgba(154, 182, 194, ${0.3 * conn.progress})`;
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(fromX, fromY);
@@ -94,8 +95,8 @@ function LiveArchitectureViz() {
           const y = node.y * rect.height;
 
           // Node circle
-          ctx.fillStyle = "rgba(62, 43, 115, 0.6)";
-          ctx.strokeStyle = "rgba(198, 180, 255, 0.8)";
+          ctx.fillStyle = "rgba(35, 37, 47, 0.8)"; // Surface color
+          ctx.strokeStyle = "rgba(154, 182, 194, 0.8)"; // Accent color
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.arc(x, y, node.radius, 0, Math.PI * 2);
@@ -104,7 +105,7 @@ function LiveArchitectureViz() {
 
           // Node label
           if (node.radius >= maxRadius * 0.8) {
-            ctx.fillStyle = "#E0D8FF";
+            ctx.fillStyle = "#d7d7d7"; // Foreground
             ctx.font = "11px var(--font-space-grotesk)";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
@@ -137,8 +138,8 @@ function LiveArchitectureViz() {
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 w-full h-full opacity-40"
-      style={{ mixBlendMode: "screen" }}
+      className="absolute inset-0 w-full h-full opacity-60"
+      style={{ mixBlendMode: "normal" }}
     />
   );
 }
@@ -155,28 +156,29 @@ function FeatureCard({
 }) {
   return (
     <div
-      className="glass-panel rounded-lg p-8 transition-all duration-300 hover:scale-105 hover:shadow-2xl"
+      className="glass-panel rounded-lg p-8 transition-all duration-300 hover:shadow-2xl"
       style={{
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
+        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.2)",
+        backgroundColor: "rgba(35, 37, 47, 0.4)",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow =
-          "0 8px 40px rgba(198, 180, 255, 0.3)";
-        e.currentTarget.style.borderColor = "rgba(198, 180, 255, 0.4)";
+          "0 8px 40px rgba(0, 0, 0, 0.4)";
+        e.currentTarget.style.borderColor = "var(--accent)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.boxShadow = "0 4px 20px rgba(0, 0, 0, 0.3)";
-        e.currentTarget.style.borderColor = "rgba(198, 180, 255, 0.15)";
+        e.currentTarget.style.boxShadow = "0 4px 20px rgba(0, 0, 0, 0.2)";
+        e.currentTarget.style.borderColor = "var(--border)";
       }}
     >
       {icon && <div className="text-4xl mb-4">{icon}</div>}
       <h3
-        className="text-xl font-semibold mb-3"
-        style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+        className="text-xl font-semibold mb-3 text-[var(--foreground)]"
+        style={{ fontFamily: "var(--font-space-grotesk)" }}
       >
         {title}
       </h3>
-      <p className="text-sm leading-relaxed" style={{ color: "#C6B4FF" }}>
+      <p className="text-sm leading-relaxed text-[var(--foreground-muted)]">
         {description}
       </p>
     </div>
@@ -245,10 +247,9 @@ export default function Home() {
 
   return (
     <div
-      className="relative min-h-screen text-white overflow-x-hidden"
+      className="relative min-h-screen text-[var(--foreground)] overflow-x-hidden"
       style={{
-        background:
-          "linear-gradient(135deg, #111319 0%, #3E2B73 50%, #C6B4FF 100%)",
+        background: "var(--background)",
       }}
     >
       {/* Particle Background */}
@@ -272,21 +273,17 @@ export default function Home() {
             className="text-5xl md:text-7xl font-bold mb-6 leading-tight"
             style={{
               fontFamily: "var(--font-space-grotesk)",
-              background:
-                "linear-gradient(135deg, #E0D8FF 0%, #C6B4FF 50%, #E0D8FF 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
+              color: "var(--foreground)",
             }}
           >
             System Design Agent
             <br />
-            for building AI architectures
+            <span className="text-[var(--foreground-muted)]">for building AI architectures</span>
           </h1>
 
           <p
             className="text-xl md:text-2xl mb-12 max-w-3xl mx-auto leading-relaxed"
-            style={{ color: "rgba(198, 180, 255, 0.8)" }}
+            style={{ color: "var(--foreground-muted)" }}
           >
             Multi-agent system for researching and architecting systems
           </p>
@@ -296,21 +293,19 @@ export default function Home() {
             disabled={isLoading}
             className="px-10 py-4 text-lg font-semibold uppercase tracking-wider transition-all duration-300 rounded-lg"
             style={{
-              background:
-                "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
-              border: "2px solid rgba(198, 180, 255, 0.5)",
-              color: "#E0D8FF",
+              background: "var(--surface)",
+              border: "1px solid var(--accent)",
+              color: "var(--accent)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background =
-                "linear-gradient(135deg, rgba(62, 43, 115, 1), rgba(198, 180, 255, 0.5))";
-              e.currentTarget.style.boxShadow =
-                "0 0 30px rgba(198, 180, 255, 0.5)";
+              e.currentTarget.style.background = "var(--accent)";
+              e.currentTarget.style.color = "var(--surface)";
+              e.currentTarget.style.boxShadow = "0 0 20px rgba(154, 182, 194, 0.2)";
               e.currentTarget.style.transform = "translateY(-2px)";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background =
-                "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))";
+              e.currentTarget.style.background = "var(--surface)";
+              e.currentTarget.style.color = "var(--accent)";
               e.currentTarget.style.boxShadow = "none";
               e.currentTarget.style.transform = "translateY(0)";
             }}
@@ -328,15 +323,11 @@ export default function Home() {
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-10"
         }`}
-        style={{
-          background: "rgba(17, 19, 25, 0.6)",
-          backdropFilter: "blur(20px)",
-        }}
       >
         <div className="max-w-6xl mx-auto">
           <h2
             className="text-3xl md:text-5xl font-bold text-center mb-16"
-            style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+            style={{ fontFamily: "var(--font-space-grotesk)", color: "var(--foreground)" }}
           >
             How it works
           </h2>
@@ -373,7 +364,7 @@ export default function Home() {
         <div className="max-w-5xl mx-auto">
           <h2
             className="text-3xl md:text-5xl font-bold text-center mb-20"
-            style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+            style={{ fontFamily: "var(--font-space-grotesk)", color: "var(--foreground)" }}
           >
             Simple workflow
           </h2>
@@ -384,10 +375,9 @@ export default function Home() {
               <div
                 className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-2xl font-bold"
                 style={{
-                  background:
-                    "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
-                  border: "2px solid rgba(198, 180, 255, 0.5)",
-                  color: "#E0D8FF",
+                  background: "var(--surface)",
+                  border: "1px solid var(--accent)",
+                  color: "var(--accent)",
                 }}
               >
                 1
@@ -396,18 +386,18 @@ export default function Home() {
                 className="text-xl font-semibold mb-3"
                 style={{
                   fontFamily: "var(--font-space-grotesk)",
-                  color: "#E0D8FF",
+                  color: "var(--foreground)",
                 }}
               >
                 Describe
               </h3>
-              <p className="text-sm" style={{ color: "rgba(198, 180, 255, 0.7)" }}>
+              <p className="text-sm" style={{ color: "var(--foreground-muted)" }}>
                 Share your system requirements and constraints
               </p>
             </div>
 
             {/* Arrow */}
-            <div className="hidden md:block text-4xl" style={{ color: "#C6B4FF" }}>
+            <div className="hidden md:block text-4xl" style={{ color: "var(--foreground-muted)" }}>
               →
             </div>
 
@@ -416,10 +406,9 @@ export default function Home() {
               <div
                 className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-2xl font-bold"
                 style={{
-                  background:
-                    "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
-                  border: "2px solid rgba(198, 180, 255, 0.5)",
-                  color: "#E0D8FF",
+                  background: "var(--surface)",
+                  border: "1px solid var(--accent)",
+                  color: "var(--accent)",
                 }}
               >
                 2
@@ -428,18 +417,18 @@ export default function Home() {
                 className="text-xl font-semibold mb-3"
                 style={{
                   fontFamily: "var(--font-space-grotesk)",
-                  color: "#E0D8FF",
+                  color: "var(--foreground)",
                 }}
               >
                 Agent Works
               </h3>
-              <p className="text-sm" style={{ color: "rgba(198, 180, 255, 0.7)" }}>
+              <p className="text-sm" style={{ color: "var(--foreground-muted)" }}>
                 AI plans, researches, and designs your architecture
               </p>
             </div>
 
             {/* Arrow */}
-            <div className="hidden md:block text-4xl" style={{ color: "#C6B4FF" }}>
+            <div className="hidden md:block text-4xl" style={{ color: "var(--foreground-muted)" }}>
               →
             </div>
 
@@ -448,10 +437,9 @@ export default function Home() {
               <div
                 className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-2xl font-bold"
                 style={{
-                  background:
-                    "linear-gradient(135deg, rgba(62, 43, 115, 0.8), rgba(198, 180, 255, 0.3))",
-                  border: "2px solid rgba(198, 180, 255, 0.5)",
-                  color: "#E0D8FF",
+                  background: "var(--surface)",
+                  border: "1px solid var(--accent)",
+                  color: "var(--accent)",
                 }}
               >
                 3
@@ -460,12 +448,12 @@ export default function Home() {
                 className="text-xl font-semibold mb-3"
                 style={{
                   fontFamily: "var(--font-space-grotesk)",
-                  color: "#E0D8FF",
+                  color: "var(--foreground)",
                 }}
               >
                 Review
               </h3>
-              <p className="text-sm" style={{ color: "rgba(198, 180, 255, 0.7)" }}>
+              <p className="text-sm" style={{ color: "var(--foreground-muted)" }}>
                 Get detailed architecture with explanations
               </p>
             </div>
@@ -481,15 +469,11 @@ export default function Home() {
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-10"
         }`}
-        style={{
-          background: "rgba(17, 19, 25, 0.6)",
-          backdropFilter: "blur(20px)",
-        }}
       >
         <div className="max-w-6xl mx-auto">
           <h2
             className="text-3xl md:text-5xl font-bold text-center mb-16"
-            style={{ fontFamily: "var(--font-space-grotesk)", color: "#E0D8FF" }}
+            style={{ fontFamily: "var(--font-space-grotesk)", color: "var(--foreground)" }}
           >
             Example architectures
           </h2>
@@ -501,14 +485,14 @@ export default function Home() {
                 className="text-lg font-semibold mb-4"
                 style={{
                   fontFamily: "var(--font-space-grotesk)",
-                  color: "#E0D8FF",
+                  color: "var(--foreground)",
                 }}
               >
                 Real-time Chat Application
               </h4>
               <div
-                className="bg-black/30 rounded p-4 text-xs font-mono"
-                style={{ color: "#C6B4FF" }}
+                className="rounded p-4 text-xs font-mono"
+                style={{ background: "rgba(0,0,0,0.2)", color: "var(--foreground-muted)" }}
               >
                 <div className="mb-2">→ WebSocket Gateway</div>
                 <div className="mb-2 ml-4">→ Redis Pub/Sub</div>
@@ -524,14 +508,14 @@ export default function Home() {
                 className="text-lg font-semibold mb-4"
                 style={{
                   fontFamily: "var(--font-space-grotesk)",
-                  color: "#E0D8FF",
+                  color: "var(--foreground)",
                 }}
               >
                 AI Model Serving Platform
               </h4>
               <div
-                className="bg-black/30 rounded p-4 text-xs font-mono"
-                style={{ color: "#C6B4FF" }}
+                className="rounded p-4 text-xs font-mono"
+                style={{ background: "rgba(0,0,0,0.2)", color: "var(--foreground-muted)" }}
               >
                 <div className="mb-2">→ API Gateway + Load Balancer</div>
                 <div className="mb-2 ml-4">→ Model Registry</div>
@@ -545,21 +529,21 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="relative py-12 px-6 text-center border-t" style={{ borderColor: "rgba(198, 180, 255, 0.15)" }}>
+      <footer className="relative py-12 px-6 text-center border-t" style={{ borderColor: "var(--border)" }}>
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-3">
               <span
                 className="text-xs px-3 py-1 rounded-full"
                 style={{
-                  background: "rgba(198, 180, 255, 0.2)",
-                  border: "1px solid rgba(198, 180, 255, 0.3)",
-                  color: "#C6B4FF",
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  color: "var(--foreground-muted)",
                 }}
               >
                 Beta
               </span>
-              <span className="text-sm" style={{ color: "rgba(198, 180, 255, 0.6)" }}>
+              <span className="text-sm" style={{ color: "var(--foreground-muted)" }}>
                 In Development
               </span>
             </div>
@@ -568,12 +552,12 @@ export default function Home() {
               <button
                 onClick={() => router.push("/login")}
                 className="text-sm transition-colors duration-200"
-                style={{ color: "rgba(198, 180, 255, 0.8)" }}
+                style={{ color: "var(--foreground-muted)" }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "#E0D8FF";
+                  e.currentTarget.style.color = "var(--foreground)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.color = "rgba(198, 180, 255, 0.8)";
+                  e.currentTarget.style.color = "var(--foreground-muted)";
                 }}
               >
                 Login
@@ -581,12 +565,12 @@ export default function Home() {
               <button
                 onClick={() => router.push("/login")}
                 className="text-sm transition-colors duration-200"
-                style={{ color: "rgba(198, 180, 255, 0.8)" }}
+                style={{ color: "var(--foreground-muted)" }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "#E0D8FF";
+                  e.currentTarget.style.color = "var(--foreground)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.color = "rgba(198, 180, 255, 0.8)";
+                  e.currentTarget.style.color = "var(--foreground-muted)";
                 }}
               >
                 Sign Up
@@ -594,7 +578,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-8 text-xs" style={{ color: "rgba(198, 180, 255, 0.4)" }}>
+          <div className="mt-8 text-xs" style={{ color: "var(--border)" }}>
             © 2025 Systesign. All rights reserved.
           </div>
         </div>
