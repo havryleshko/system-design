@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 
 import { createServerSupabase } from "@/utils/supabase/server";
 
+const DEBUG_ENABLED = process.env.SUPABASE_TOKEN_DEBUG === "true";
+
 export async function GET() {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not available" }, { status: 404 });
+  if (!DEBUG_ENABLED) {
+    return NextResponse.json({ error: "Disabled" }, { status: 404 });
   }
 
   const supabase = await createServerSupabase();

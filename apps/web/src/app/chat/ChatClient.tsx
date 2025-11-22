@@ -51,13 +51,15 @@ function formatStreamFailure(failure: StreamFailure): string {
   return segments.filter(Boolean).join(" — ")
 }
 
+const TOKEN_DEBUG_ENABLED = process.env.NEXT_PUBLIC_SUPABASE_TOKEN_DEBUG === "true"
+
 export default function ChatClient({
   initialMessages,
   runId,
   designJson,
 }: ChatClientProps) {
   useEffect(() => {
-    if (process.env.NODE_ENV === "production") return
+    if (!TOKEN_DEBUG_ENABLED) return
     fetch("/api/debug/supabase-token")
       .then(async (res) => {
         if (!res.ok) return null
@@ -73,7 +75,7 @@ export default function ChatClient({
         }
       })
       .catch(() => {
-        // swallow errors – this is a dev-only helper
+        // swallow errors – this is a debug helper
       })
   }, [])
   const router = useRouter()
