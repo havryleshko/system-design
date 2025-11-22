@@ -31,6 +31,7 @@ type ChatMessage = {
 type ChatClientProps = {
   initialMessages: ChatMessage[]
   runId: string | null
+  threadId: string | null
   userId?: string | null
   designJson?: DesignJson | null
 }
@@ -56,6 +57,7 @@ const TOKEN_DEBUG_ENABLED = process.env.NEXT_PUBLIC_SUPABASE_TOKEN_DEBUG === "tr
 export default function ChatClient({
   initialMessages,
   runId,
+  threadId,
   designJson,
 }: ChatClientProps) {
   useEffect(() => {
@@ -85,11 +87,12 @@ export default function ChatClient({
   const [traceError, setTraceError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(threadId ?? null)
   const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const streamHandleRef = useRef<{ close: () => void } | null>(null)
-  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string | null; runId: string | null } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string | null; runId: string | null; threadId: string | null } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
   const [streamError, setStreamError] = useState<string | null>(null)
 
@@ -210,8 +213,9 @@ export default function ChatClient({
         ])
         return
       }
-      const { runId: newRunId } = result
+      const { runId: newRunId, threadId: newThreadId } = result
       setCurrentRunId(newRunId)
+      setCurrentThreadId(newThreadId)
       setStreamingContent("")
       streamingContentRef.current = ""
       setIsStreaming(true)
@@ -283,6 +287,7 @@ export default function ChatClient({
                 fields,
                 interruptId: first.id,
                 runId: newRunId,
+                threadId: newThreadId,
               })
               setIsStreaming(false)
             }
@@ -337,7 +342,7 @@ export default function ChatClient({
           }
           if (evt.type === 'run-completed') {
             setIsStreaming(false)
-            setClarifier(null)
+              setClarifier(null)
             setStreamError(null)
             startTransition(async () => {
               try {
@@ -473,6 +478,7 @@ return (
                   fields={clarifier.fields}
                   runId={clarifier.runId}
                   interruptId={clarifier.interruptId}
+                  threadId={clarifier.threadId}
                 />
               )}
             </div>
