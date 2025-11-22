@@ -386,7 +386,7 @@ return (
       {/* Header */}
       <div className="relative z-10 flex items-center justify-between border-b px-6 py-3 shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--surface)', backdropFilter: 'blur(18px)' }}>
         <div>
-          <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-space-grotesk)' }}>System Design Agent</h2>
+          <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-ibm-plex-mono)' }}>System Design Agent</h2>
           <p className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--foreground-muted)' }}>Autonomous system architecture</p>
         </div>
         <div className="flex items-center gap-3">
@@ -447,7 +447,7 @@ return (
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className="glass-panel rounded px-5 py-4" style={{ gap: 'var(--spacing-xs)' }}>
-                    <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)' }}>
+                    <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>
                       {m.role === 'assistant' ? 'agent' : m.role}
                     </div>
                     <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--foreground)', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{m.content}</div>
@@ -456,7 +456,7 @@ return (
               )}
               {isStreaming && (
                 <div className="glass-panel rounded px-5 py-4">
-                  <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)' }}>agent</div>
+                  <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent</div>
                   {streamingContent ? (
                     <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--foreground)', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{streamingContent}</div>
                   ) : (

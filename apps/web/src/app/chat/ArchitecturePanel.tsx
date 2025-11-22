@@ -46,7 +46,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
         return (
             <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--background)' }}>
                 <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-                    <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: 'var(--foreground)' }}>Architecture</h2>
+                    <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-ibm-plex-mono)', color: 'var(--foreground)' }}>Architecture</h2>
                     <p className="mt-1 text-xs" style={{ color: 'var(--foreground-muted)' }}>System design output</p>
                 </div>
                 <div className="flex flex-1 items-center justify-center px-6">
@@ -68,7 +68,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
     return (
         <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--background)' }}>
             <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-                <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: 'var(--foreground)' }}>Architecture</h2>
+                <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-ibm-plex-mono)', color: 'var(--foreground)' }}>Architecture</h2>
                 <p className="mt-1 text-xs" style={{ color: 'var(--foreground-muted)' }}>
                     {elements.length} element{elements.length !== 1 ? 's' : ''} · {relations.length} relation{relations.length !== 1 ? 's' : ''}
                 </p>
@@ -78,7 +78,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
                 {/* Elements */}
                 {elements.length > 0 && (
                     <section>
-                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)', marginBottom: 'var(--spacing-sm)' }}>Elements</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)', marginBottom: 'var(--spacing-sm)' }}>Elements</h3>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
                             {elements.map((el) => (
                                 <div key={el.id} className="glass-panel rounded px-4 py-3">
@@ -114,7 +114,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
                 {/* Relations */}
                 {relations.length > 0 && (
                     <section>
-                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)', marginBottom: 'var(--spacing-sm)' }}>Relations</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)', marginBottom: 'var(--spacing-sm)' }}>Relations</h3>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
                             {relations.map((rel, idx) => (
                                 <div key={idx} className="glass-panel rounded px-4 py-2.5">
@@ -138,7 +138,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
                 {/* Groups */}
                 {groups.length > 0 && (
                     <section>
-                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)', marginBottom: 'var(--spacing-sm)' }}>Groups</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)', marginBottom: 'var(--spacing-sm)' }}>Groups</h3>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
                             {groups.map((group) => (
                                 <div key={group.id} className="glass-panel rounded px-4 py-3">
@@ -163,7 +163,7 @@ export default function ArchitecturePanel({ designJson }: ArchitecturePanelProps
                 {/* Notes */}
                 {notes && (
                     <section>
-                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)', marginBottom: 'var(--spacing-sm)' }}>Notes</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)', marginBottom: 'var(--spacing-sm)' }}>Notes</h3>
                         <div className="glass-panel rounded px-4 py-3">
                             <p className="text-xs leading-relaxed" style={{ color: 'var(--foreground-muted)' }}>{notes}</p>
                         </div>

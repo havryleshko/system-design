@@ -84,7 +84,7 @@ export default function TracePanel({ trace, isLoading, error, onRefresh }: Trace
         <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--background)' }}>
             <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
                 <div>
-                    <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-space-grotesk)', color: 'var(--foreground)' }}>Trace</h2>
+                    <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'var(--font-ibm-plex-mono)', color: 'var(--foreground)' }}>Trace</h2>
                     <p className="mt-1 text-xs" style={{ color: 'var(--foreground-muted)' }}>Agent execution flow</p>
                 </div>
                 <button

@@ -49,7 +49,7 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
 
   return (
     <div className="glass-panel rounded px-5 py-4" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xs)' }}>
-      <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-space-grotesk)' }}>agent</div>
+      <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent</div>
       <div className="text-sm leading-relaxed" style={{ color: 'var(--foreground)', lineHeight: '1.7' }}>{question}</div>
 
       <form onSubmit={handleSubmit} className="grid" style={{ marginTop: 'var(--spacing-sm)', gap: 'var(--spacing-md)' }}>

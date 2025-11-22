@@ -106,7 +106,7 @@ function LiveArchitectureViz() {
           // Node label
           if (node.radius >= maxRadius * 0.8) {
             ctx.fillStyle = "#d7d7d7"; // Foreground
-            ctx.font = "11px var(--font-space-grotesk)";
+            ctx.font = "11px var(--font-ibm-plex-mono)";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(node.label, x, y);
@@ -174,7 +174,7 @@ function FeatureCard({
       {icon && <div className="text-4xl mb-4">{icon}</div>}
       <h3
         className="text-xl font-semibold mb-3 text-[var(--foreground)]"
-        style={{ fontFamily: "var(--font-space-grotesk)" }}
+        style={{ fontFamily: "var(--font-ibm-plex-mono)" }}
       >
         {title}
       </h3>
@@ -272,7 +272,7 @@ export default function Home() {
           <h1
             className="text-5xl md:text-7xl font-bold mb-6 leading-tight"
             style={{
-              fontFamily: "var(--font-space-grotesk)",
+              fontFamily: "var(--font-ibm-plex-mono)",
               color: "var(--foreground)",
             }}
           >
@@ -327,7 +327,7 @@ export default function Home() {
         <div className="max-w-6xl mx-auto">
           <h2
             className="text-3xl md:text-5xl font-bold text-center mb-16"
-            style={{ fontFamily: "var(--font-space-grotesk)", color: "var(--foreground)" }}
+            style={{ fontFamily: "var(--font-ibm-plex-mono)", color: "var(--foreground)" }}
           >
             How it works
           </h2>
@@ -364,7 +364,7 @@ export default function Home() {
         <div className="max-w-5xl mx-auto">
           <h2
             className="text-3xl md:text-5xl font-bold text-center mb-20"
-            style={{ fontFamily: "var(--font-space-grotesk)", color: "var(--foreground)" }}
+            style={{ fontFamily: "var(--font-ibm-plex-mono)", color: "var(--foreground)" }}
           >
             Simple workflow
           </h2>
@@ -385,7 +385,7 @@ export default function Home() {
               <h3
                 className="text-xl font-semibold mb-3"
                 style={{
-                  fontFamily: "var(--font-space-grotesk)",
+                  fontFamily: "var(--font-ibm-plex-mono)",
                   color: "var(--foreground)",
                 }}
               >
@@ -416,7 +416,7 @@ export default function Home() {
               <h3
                 className="text-xl font-semibold mb-3"
                 style={{
-                  fontFamily: "var(--font-space-grotesk)",
+                  fontFamily: "var(--font-ibm-plex-mono)",
                   color: "var(--foreground)",
                 }}
               >
@@ -447,7 +447,7 @@ export default function Home() {
               <h3
                 className="text-xl font-semibold mb-3"
                 style={{
-                  fontFamily: "var(--font-space-grotesk)",
+                  fontFamily: "var(--font-ibm-plex-mono)",
                   color: "var(--foreground)",
                 }}
               >
@@ -473,7 +473,7 @@ export default function Home() {
         <div className="max-w-6xl mx-auto">
           <h2
             className="text-3xl md:text-5xl font-bold text-center mb-16"
-            style={{ fontFamily: "var(--font-space-grotesk)", color: "var(--foreground)" }}
+            style={{ fontFamily: "var(--font-ibm-plex-mono)", color: "var(--foreground)" }}
           >
             Example architectures
           </h2>
@@ -484,7 +484,7 @@ export default function Home() {
               <h4
                 className="text-lg font-semibold mb-4"
                 style={{
-                  fontFamily: "var(--font-space-grotesk)",
+                  fontFamily: "var(--font-ibm-plex-mono)",
                   color: "var(--foreground)",
                 }}
               >
@@ -507,7 +507,7 @@ export default function Home() {
               <h4
                 className="text-lg font-semibold mb-4"
                 style={{
-                  fontFamily: "var(--font-space-grotesk)",
+                  fontFamily: "var(--font-ibm-plex-mono)",
                   color: "var(--foreground)",
                 }}
               >
