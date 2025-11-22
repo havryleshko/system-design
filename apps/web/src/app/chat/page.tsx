@@ -8,10 +8,12 @@ import type { DesignJson } from "./ArchitecturePanel";
 
 export default async function Page() {
   let runId: string | null = null;
+  let threadId: string | null = null;
   let designJson: DesignJson | null = null;
   try {
-    const { runId: r, state } = await getState(undefined, { redirectTo: "/chat" });
+    const { runId: r, threadId: tid, state } = await getState(undefined, { redirectTo: "/chat" });
     runId = r;
+    threadId = tid;
     // Prefer architecture_json for the left panel; fall back to design_json if present
     designJson =
       (state?.values?.architecture_json as DesignJson) ||
@@ -24,7 +26,13 @@ export default async function Page() {
   const userId = null;
   return (
     <ChatGuard>
-      <ChatClient userId={userId} initialMessages={initialMessages} runId={runId} designJson={designJson} />
+      <ChatClient
+        userId={userId}
+        initialMessages={initialMessages}
+        runId={runId}
+        threadId={threadId}
+        designJson={designJson}
+      />
     </ChatGuard>
   );
 }
