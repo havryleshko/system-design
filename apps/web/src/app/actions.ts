@@ -458,7 +458,11 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
 
 // Submit clarifier answers to resume the graph
 export async function submitClarifier(formData: FormData) {
-  const tid = await createThread();
+  const threadIdRaw = formData.get("thread_id");
+  const tid =
+    typeof threadIdRaw === "string" && threadIdRaw.trim()
+      ? threadIdRaw.trim()
+      : await createThread();
   const runIdRaw = formData.get("run_id");
   const interruptIdRaw = formData.get("interrupt_id");
   if (typeof runIdRaw !== "string" || !runIdRaw) {
