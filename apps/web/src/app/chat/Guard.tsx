@@ -17,12 +17,14 @@ export default function ChatGuard({ children }: { children: React.ReactNode }) {
 
   if (loading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-white">
-        <p className="text-sm text-white/60">Checking your session…</p>
+      <div 
+        className="flex min-h-screen items-center justify-center"
+        style={{ background: 'var(--background)', color: 'var(--foreground)' }}
+      >
+        <p className="text-sm" style={{ color: 'var(--foreground-muted)' }}>Checking your session…</p>
       </div>
     );
   }
 
   return <>{children}</>;
 }
-

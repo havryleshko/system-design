@@ -1,7 +1,9 @@
 "use client"
 
-import { useRef, useState, useTransition } from "react"
-import { fetchTrace, startRunStream } from "../actions"
+import { useEffect, useRef, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+
+import { fetchTrace, startRunStream, type StartStreamResult } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
@@ -33,11 +35,50 @@ type ChatClientProps = {
   designJson?: DesignJson | null
 }
 
+type StreamFailure = Extract<StartStreamResult, { ok: false }>
+
+function formatStreamFailure(failure: StreamFailure): string {
+  const detail = typeof failure.detail === "string" && failure.detail.trim() ? failure.detail.trim() : null
+  const hints: string[] = []
+  if (failure.status === 404) {
+    hints.push("We couldn't find the existing thread. Please try again to create a fresh session.")
+  } else if (typeof failure.status === "number" && failure.status >= 500) {
+    hints.push("The backend is temporarily unavailable. Please retry in a moment.")
+  }
+  const segments = [failure.error]
+  if (detail && detail !== failure.error) segments.push(detail)
+  if (hints.length > 0) segments.push(hints.join(" "))
+  return segments.filter(Boolean).join(" — ")
+}
+
+const TOKEN_DEBUG_ENABLED = process.env.NEXT_PUBLIC_SUPABASE_TOKEN_DEBUG === "true"
+
 export default function ChatClient({
   initialMessages,
   runId,
   designJson,
 }: ChatClientProps) {
+  useEffect(() => {
+    if (!TOKEN_DEBUG_ENABLED) return
+    fetch("/api/debug/supabase-token")
+      .then(async (res) => {
+        if (!res.ok) return null
+        try {
+          return await res.json()
+        } catch {
+          return null
+        }
+      })
+      .then((data) => {
+        if (data?.token) {
+          console.log("[debug] Supabase access_token", data.token)
+        }
+      })
+      .catch(() => {
+        // swallow errors – this is a debug helper
+      })
+  }, [])
+  const router = useRouter()
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [input, setInput] = useState("")
   const [trace, setTrace] = useState<RunTrace | null>(null)
@@ -149,7 +190,12 @@ export default function ChatClient({
     try {
       const result = await startRunStream(trimmed)
       if (!result.ok) {
-        const errorMessage = result.error || 'Run failed'
+        if (result.status === 401) {
+          setStreamError("Your session expired. Redirecting to login…")
+          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
+          return
+        }
+        const errorMessage = formatStreamFailure(result)
         setStreamError(errorMessage)
         setMessages((prev) => [
           ...prev,
@@ -327,7 +373,7 @@ export default function ChatClient({
   if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
 
 return (
-    <div className="relative flex h-screen flex-col text-white" style={{ background: 'linear-gradient(135deg, #111319 0%, #3E2B73 50%, #C6B4FF 100%)', overflow: 'hidden' }}>
+    <div className="relative flex h-screen flex-col text-[var(--foreground)]" style={{ background: 'var(--background)', overflow: 'hidden', fontFamily: 'var(--font-ibm-plex-mono)' }}>
       {/* Particle background */}
       <div className="particle-background">
         <div className="particle" style={{ top: '10%', left: '15%' }}></div>
@@ -338,25 +384,27 @@ return (
       </div>
 
       {/* Header */}
-      <div className="relative z-10 flex items-center justify-between border-b px-6 py-3 shrink-0" style={{ borderColor: 'rgba(198, 180, 255, 0.2)', background: 'rgba(17, 19, 25, 0.75)', backdropFilter: 'blur(18px)' }}>
+      <div className="relative z-10 flex items-center justify-between border-b px-6 py-3 shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--surface)', backdropFilter: 'blur(18px)' }}>
         <div>
-          <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-space-grotesk)' }}>System Design Agent</h2>
-          <p className="text-[11px] uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>Autonomous system architecture</p>
+          <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-ibm-plex-mono)' }}>System Design Agent</h2>
+          <p className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--foreground-muted)' }}>Autonomous system architecture</p>
         </div>
         <div className="flex items-center gap-3">
           <button
             className="border px-4 py-1.5 text-[11px] font-medium uppercase tracking-wider transition-all duration-200"
             style={{ 
-              borderColor: 'rgba(198, 180, 255, 0.4)',
-              background: 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))',
-              color: '#E0D8FF'
+              borderColor: 'var(--border)',
+              background: 'rgba(35, 37, 47, 0.3)',
+              color: 'var(--accent)'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.5), rgba(198, 180, 255, 0.2))';
-              e.currentTarget.style.boxShadow = '0 0 20px rgba(198, 180, 255, 0.3)';
+              e.currentTarget.style.background = 'var(--accent)';
+              e.currentTarget.style.color = 'var(--surface)';
+              e.currentTarget.style.boxShadow = '0 0 20px rgba(154, 182, 194, 0.2)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))';
+              e.currentTarget.style.background = 'rgba(35, 37, 47, 0.3)';
+              e.currentTarget.style.color = 'var(--accent)';
               e.currentTarget.style.boxShadow = 'none';
             }}
             onClick={async () => {
@@ -379,7 +427,7 @@ return (
       {/* 3-panel layout */}
       <div className="relative z-10 grid flex-1 min-h-0 grid-cols-12">
         {/* Left: Architecture */}
-        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderRight: '1px solid rgba(198, 180, 255, 0.15)', overflow: 'hidden' }}>
+        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderRight: '1px solid var(--border)', overflow: 'hidden' }}>
           <ArchitecturePanel designJson={architecture ?? null} />
         </div>
 
@@ -393,28 +441,28 @@ return (
                 </div>
               )}
               {messages.length === 0 ? (
-                <p className="text-sm" style={{ color: 'rgba(198, 180, 255, 0.5)', lineHeight: '1.6' }}>
+                <p className="text-sm" style={{ color: 'var(--foreground-muted)', lineHeight: '1.6' }}>
                   No messages yet. Ask the assistant anything about system design.
                 </p>
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className="glass-panel rounded px-5 py-4" style={{ gap: 'var(--spacing-xs)' }}>
-                    <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.7)', fontFamily: 'var(--font-space-grotesk)' }}>
+                    <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>
                       {m.role === 'assistant' ? 'agent' : m.role}
                     </div>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: '#ededed', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{m.content}</div>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--foreground)', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{m.content}</div>
                   </div>
                 ))
               )}
               {isStreaming && (
                 <div className="glass-panel rounded px-5 py-4">
-                  <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.7)', fontFamily: 'var(--font-space-grotesk)' }}>agent</div>
+                  <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent</div>
                   {streamingContent ? (
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: '#ededed', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{streamingContent}</div>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--foreground)', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{streamingContent}</div>
                   ) : (
                     <div className="flex items-center" style={{ marginTop: 'var(--spacing-sm)' }}>
                       <MolecularLoader />
-                      <span className="ml-3 text-xs" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>Analyzing request...</span>
+                      <span className="ml-3 text-xs" style={{ color: 'var(--foreground-muted)' }}>Analyzing request...</span>
                     </div>
                   )}
                 </div>
@@ -432,13 +480,13 @@ return (
             className="flex items-center px-4 py-2.5 shrink-0"
             style={{
               gap: 'var(--spacing-sm)',
-              borderTop: '1px solid rgba(198, 180, 255, 0.15)',
-              background: 'linear-gradient(90deg, rgba(17, 19, 25, 0.9), rgba(62, 43, 115, 0.55), rgba(17, 19, 25, 0.9))',
+              borderTop: '1px solid var(--border)',
+              background: 'var(--surface)',
             }}
           >
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
-              style={{ color: '#ededed', caretColor: '#C6B4FF' }}
+              style={{ color: 'var(--foreground)', caretColor: 'var(--accent)' }}
               placeholder="Type your message"
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -452,16 +500,18 @@ return (
             <button
               className="border px-4 py-1.5 text-xs font-medium uppercase tracking-wider transition-all duration-200"
               style={{ 
-                borderColor: 'rgba(198, 180, 255, 0.4)',
-                background: 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))',
-                color: '#E0D8FF'
+                borderColor: 'var(--border)',
+                background: 'rgba(35, 37, 47, 0.3)',
+                color: 'var(--accent)'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.5), rgba(198, 180, 255, 0.2))';
-                e.currentTarget.style.boxShadow = '0 0 20px rgba(198, 180, 255, 0.3)';
+                e.currentTarget.style.background = 'var(--accent)';
+                e.currentTarget.style.color = 'var(--surface)';
+                e.currentTarget.style.boxShadow = '0 0 20px rgba(154, 182, 194, 0.2)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))';
+                e.currentTarget.style.background = 'rgba(35, 37, 47, 0.3)';
+                e.currentTarget.style.color = 'var(--accent)';
                 e.currentTarget.style.boxShadow = 'none';
               }}
               onClick={send}
@@ -472,7 +522,7 @@ return (
         </div>
 
         {/* Right: Trace */}
-        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderLeft: '1px solid rgba(198, 180, 255, 0.15)', overflow: 'hidden' }}>
+        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderLeft: '1px solid var(--border)', overflow: 'hidden' }}>
           <TracePanel
             trace={trace}
             isLoading={isPending && !trace}
@@ -484,6 +534,3 @@ return (
     </div>
   )
 }
-
-
-

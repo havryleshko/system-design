@@ -49,19 +49,19 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
 
   return (
     <div className="glass-panel rounded px-5 py-4" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xs)' }}>
-      <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.7)', fontFamily: 'var(--font-space-grotesk)' }}>agent</div>
-      <div className="text-sm leading-relaxed" style={{ color: '#ededed', lineHeight: '1.7' }}>{question}</div>
+      <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent</div>
+      <div className="text-sm leading-relaxed" style={{ color: 'var(--foreground)', lineHeight: '1.7' }}>{question}</div>
 
       <form onSubmit={handleSubmit} className="grid" style={{ marginTop: 'var(--spacing-sm)', gap: 'var(--spacing-md)' }}>
         <input type="hidden" name="run_id" value={runId ?? ''} />
         <input type="hidden" name="interrupt_id" value={interruptId ?? ''} />
         {fields.map((name) => (
           <label key={name} className="text-xs" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
-            <span className="mb-1 block text-[10px] uppercase tracking-wider" style={{ color: 'rgba(198, 180, 255, 0.6)' }}>{name}</span>
+            <span className="mb-1 block text-[10px] uppercase tracking-wider" style={{ color: 'var(--foreground-muted)' }}>{name}</span>
             <input
               name={name}
               className="w-full rounded border bg-transparent px-3 py-2 text-sm focus:outline-none"
-              style={{ borderColor: 'rgba(198, 180, 255, 0.3)', color: '#ededed', caretColor: '#C6B4FF' }}
+              style={{ borderColor: 'var(--border)', color: 'var(--foreground)', caretColor: 'var(--accent)' }}
               placeholder={name}
               disabled={disabled || isPending}
             />
@@ -78,20 +78,22 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
             disabled={disabled || isPending}
             className="border px-4 py-2 text-xs font-medium uppercase tracking-wider transition-all duration-200"
             style={{ 
-              borderColor: disabled || isPending ? 'rgba(198, 180, 255, 0.2)' : 'rgba(198, 180, 255, 0.4)',
-              background: disabled || isPending ? 'rgba(62, 43, 115, 0.1)' : 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))',
-              color: disabled || isPending ? 'rgba(198, 180, 255, 0.4)' : '#E0D8FF',
+              borderColor: disabled || isPending ? 'var(--border)' : 'var(--accent)',
+              background: disabled || isPending ? 'rgba(35, 37, 47, 0.1)' : 'var(--surface)',
+              color: disabled || isPending ? 'var(--foreground-muted)' : 'var(--accent)',
               cursor: disabled || isPending ? 'not-allowed' : 'pointer'
             }}
             onMouseEnter={(e) => {
               if (!disabled && !isPending) {
-                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.5), rgba(198, 180, 255, 0.2))';
-                e.currentTarget.style.boxShadow = '0 0 20px rgba(198, 180, 255, 0.3)';
+                e.currentTarget.style.background = 'var(--accent)';
+                e.currentTarget.style.color = 'var(--surface)';
+                e.currentTarget.style.boxShadow = '0 0 20px rgba(154, 182, 194, 0.2)';
               }
             }}
             onMouseLeave={(e) => {
               if (!disabled && !isPending) {
-                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(62, 43, 115, 0.3), rgba(198, 180, 255, 0.1))';
+                e.currentTarget.style.background = 'var(--surface)';
+                e.currentTarget.style.color = 'var(--accent)';
                 e.currentTarget.style.boxShadow = 'none';
               }
             }}
@@ -104,18 +106,20 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
             disabled={disabled || isPending}
             className="border px-4 py-2 text-xs uppercase tracking-wider transition-all duration-200"
             style={{ 
-              borderColor: disabled || isPending ? 'rgba(198, 180, 255, 0.15)' : 'rgba(198, 180, 255, 0.3)',
-              background: 'rgba(198, 180, 255, 0.05)',
-              color: disabled || isPending ? 'rgba(198, 180, 255, 0.3)' : 'rgba(198, 180, 255, 0.7)',
+              borderColor: disabled || isPending ? 'var(--border)' : 'var(--border)',
+              background: 'rgba(35, 37, 47, 0.1)',
+              color: disabled || isPending ? 'var(--foreground-muted)' : 'var(--foreground-muted)',
               cursor: disabled || isPending ? 'not-allowed' : 'pointer'
             }}
             onMouseEnter={(e) => {
               if (!disabled && !isPending) {
-                e.currentTarget.style.background = 'rgba(198, 180, 255, 0.1)';
+                e.currentTarget.style.background = 'rgba(35, 37, 47, 0.3)';
+                e.currentTarget.style.color = 'var(--foreground)';
               }
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(198, 180, 255, 0.05)';
+              e.currentTarget.style.background = 'rgba(35, 37, 47, 0.1)';
+              e.currentTarget.style.color = 'var(--foreground-muted)';
             }}
           >
             Backtrack last turn
@@ -125,5 +129,3 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
     </div>
   )
 }
-
-
