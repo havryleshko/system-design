@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { fetchTrace, startRunStream, type StartStreamResult } from "../actions"
@@ -56,6 +56,26 @@ export default function ChatClient({
   runId,
   designJson,
 }: ChatClientProps) {
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return
+    fetch("/api/debug/supabase-token")
+      .then(async (res) => {
+        if (!res.ok) return null
+        try {
+          return await res.json()
+        } catch {
+          return null
+        }
+      })
+      .then((data) => {
+        if (data?.token) {
+          console.log("[debug] Supabase access_token", data.token)
+        }
+      })
+      .catch(() => {
+        // swallow errors – this is a dev-only helper
+      })
+  }, [])
   const router = useRouter()
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [input, setInput] = useState("")
