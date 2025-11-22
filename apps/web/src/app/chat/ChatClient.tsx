@@ -373,7 +373,7 @@ export default function ChatClient({
   if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
 
 return (
-    <div className="relative flex h-screen flex-col text-[var(--foreground)]" style={{ background: 'var(--background)', overflow: 'hidden' }}>
+    <div className="relative flex h-screen flex-col text-[var(--foreground)]" style={{ background: 'var(--background)', overflow: 'hidden', fontFamily: 'var(--font-ibm-plex-mono)' }}>
       {/* Particle background */}
       <div className="particle-background">
         <div className="particle" style={{ top: '10%', left: '15%' }}></div>
