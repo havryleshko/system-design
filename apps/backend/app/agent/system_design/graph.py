@@ -1,7 +1,9 @@
 from __future__ import annotations
 from typing import Literal
 import os
+import atexit
 from functools import lru_cache
+from contextlib import ExitStack
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver  # pyright: ignore[reportMissingImports]
@@ -99,6 +101,10 @@ builder.add_conditional_edges(
 builder.add_edge("finaliser", END)
 
 
+_CHECKPOINTER_STACK = ExitStack()
+atexit.register(_CHECKPOINTER_STACK.close)
+
+
 @lru_cache(maxsize=1)
 def _load_checkpointer() -> PostgresSaver:
     """
@@ -111,7 +117,7 @@ def _load_checkpointer() -> PostgresSaver:
     conn = os.getenv("LANGGRAPH_PG_URL")
     if not conn:
         raise RuntimeError("LANGGRAPH_PG_URL not configured; clarifier resume requires persistent checkpoints")
-    saver = PostgresSaver.from_conn_string(conn)
+    saver = _CHECKPOINTER_STACK.enter_context(PostgresSaver.from_conn_string(conn))
     # Ensure schema is ready before the first run triggers an interrupt.
     saver.setup()
     return saver
