@@ -1,6 +1,10 @@
 from __future__ import annotations
 from typing import Literal
+import os
+from functools import lru_cache
+
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.postgres import PostgresSaver  # pyright: ignore[reportMissingImports]
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
 from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
 # defining a graph with shared state
@@ -94,4 +98,23 @@ builder.add_conditional_edges(
 
 builder.add_edge("finaliser", END)
 
-graph = builder.compile()
+
+@lru_cache(maxsize=1)
+def _load_checkpointer() -> PostgresSaver:
+    """
+    Initialises the Postgres checkpointer once.
+
+    Clarifier resumes (thread interrupts) require persistent checkpoints,
+    so we fail fast if LANGGRAPH_PG_URL is missing or invalid rather than
+    letting requests reach the resume endpoint and 404.
+    """
+    conn = os.getenv("LANGGRAPH_PG_URL")
+    if not conn:
+        raise RuntimeError("LANGGRAPH_PG_URL not configured; clarifier resume requires persistent checkpoints")
+    saver = PostgresSaver.from_conn_string(conn)
+    # Ensure schema is ready before the first run triggers an interrupt.
+    saver.setup()
+    return saver
+
+
+graph = builder.compile(checkpointer=_load_checkpointer())
