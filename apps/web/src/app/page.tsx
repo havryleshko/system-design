@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { getBrowserSupabase } from "@/utils/supabase/browser";
 import type { Session } from "@supabase/supabase-js";
 
@@ -187,7 +187,6 @@ function FeatureCard({
 
 export default function Home() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [sectionsVisible, setSectionsVisible] = useState({
@@ -196,34 +195,10 @@ export default function Home() {
     examples: false,
   });
 
-  const rawRedirect = searchParams?.get("redirect") ?? null;
-  const oauthCode = searchParams?.get("code") ?? null;
-
-  const redirectTarget = useMemo(() => {
-    const value = rawRedirect;
-    if (!value) {
-      // If OAuth callback (has code param), default to /chat
-      if (oauthCode) return "/chat";
-      return null;
-    }
-    // Ensure we only redirect to relative paths inside the app
-    if (
-      value.startsWith("http://") ||
-      value.startsWith("https://") ||
-      value.startsWith("//")
-    ) {
-      return null;
-    }
-    if (!value.startsWith("/")) {
-      return `/${value}`;
-    }
-    return value;
-  }, [rawRedirect, oauthCode]);
-
   useEffect(() => {
     const supabase = getBrowserSupabase();
 
-    // Get initial session (this will automatically exchange OAuth code if present)
+    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setIsLoading(false);
@@ -234,24 +209,10 @@ export default function Home() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setIsLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (isLoading) return;
-    if (session && redirectTarget) {
-      // Clear OAuth code from URL after successful auth
-      const url = new URL(window.location.href);
-      url.searchParams.delete("code");
-      url.searchParams.delete("redirect");
-      router.replace(`${redirectTarget}${url.search}`);
-    } else if (!session && redirectTarget) {
-      router.replace(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
-    }
-  }, [redirectTarget, session, isLoading, router]);
 
   // Intersection observer for scroll animations
   useEffect(() => {
