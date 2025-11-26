@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useRef, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getBrowserSupabase } from "@/utils/supabase/browser";
 import type { Session } from "@supabase/supabase-js";
 
@@ -187,13 +187,24 @@ function FeatureCard({
 
 export default function Home() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const [sectionsVisible, setSectionsVisible] = useState({
     features: false,
     howItWorks: false,
     examples: false,
   });
+
+  const redirectParam = searchParams.get("redirect");
+  const safeRedirectTarget = useMemo(() => {
+    if (redirectParam && redirectParam.startsWith("/")) return redirectParam;
+    return "/chat";
+  }, [redirectParam]);
+  const hasOAuthExchangeParams =
+    Boolean(searchParams.get("code")) ||
+    Boolean(searchParams.get("refresh_token"));
 
   useEffect(() => {
     const supabase = getBrowserSupabase();
@@ -236,6 +247,23 @@ export default function Home() {
 
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (isRedirecting) return;
+    if (isLoading) return;
+    if (!session) return;
+    if (!redirectParam && !hasOAuthExchangeParams) return;
+    setIsRedirecting(true);
+    router.replace(safeRedirectTarget);
+  }, [
+    router,
+    safeRedirectTarget,
+    session,
+    redirectParam,
+    hasOAuthExchangeParams,
+    isLoading,
+    isRedirecting,
+  ]);
 
   const handleCTA = () => {
     if (session) {
@@ -290,7 +318,7 @@ export default function Home() {
 
           <button
             onClick={handleCTA}
-            disabled={isLoading}
+            disabled={isLoading || isRedirecting}
             className="px-10 py-4 text-lg font-semibold uppercase tracking-wider transition-all duration-300 rounded-lg"
             style={{
               background: "var(--surface)",
@@ -309,9 +337,23 @@ export default function Home() {
               e.currentTarget.style.boxShadow = "none";
               e.currentTarget.style.transform = "translateY(0)";
             }}
-          >
-            {isLoading ? "Loading..." : session ? "Go to Chat" : "Get Started"}
+            >
+            {isRedirecting
+              ? "Redirecting..."
+              : isLoading
+              ? "Loading..."
+              : session
+              ? "Go to Chat"
+              : "Get Started"}
           </button>
+          {isRedirecting && (
+            <p
+              className="mt-4 text-sm"
+              style={{ color: "var(--foreground-muted)" }}
+            >
+              Finishing sign-in and sending you to chat…
+            </p>
+          )}
         </div>
       </section>
 

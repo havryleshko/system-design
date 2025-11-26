@@ -458,6 +458,8 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
 
 // Submit clarifier answers to resume the graph
 export async function submitClarifier(formData: FormData) {
+  const scope = "clarifier.submit";
+  const requestId = makeRequestId("clarifier-resume");
   const threadIdRaw = formData.get("thread_id");
   const tid =
     typeof threadIdRaw === "string" && threadIdRaw.trim()
@@ -483,15 +485,37 @@ export async function submitClarifier(formData: FormData) {
     typeof interruptIdRaw === "string" && interruptIdRaw
       ? { resume: { [interruptIdRaw]: resumeValue } }
       : { resume: resumeValue };
-
-  const res = await authFetch(`${BASE}/threads/${tid}/runs/${runIdRaw}/resume`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(resumeBody),
+  const resumeTarget = `${BASE}/threads/${tid}/runs/${runIdRaw}/resume`;
+  console.info(`[${scope}] resuming clarifier`, {
+    requestId,
+    threadId: tid,
+    runId: runIdRaw,
+    interruptId: typeof interruptIdRaw === "string" ? interruptIdRaw : null,
+    resume: resumeBody,
   });
+  const res = await authFetch(
+    resumeTarget,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(resumeBody),
+    },
+    "/clarifier",
+    { requestId, scope, target: resumeTarget }
+  );
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(detail || `Failed to resume run (${res.status})`);
+    logError(scope, "Resume failed", {
+      requestId,
+      threadId: tid,
+      runId: runIdRaw,
+      status: res.status,
+      body: detail?.slice(0, 1024) || null,
+    });
+    const statusFragment = res.status ? ` (${res.status})` : "";
+    const message =
+      detail?.trim() || `Failed to resume clarifier${statusFragment}`;
+    throw new Error(message);
   }
 }
 

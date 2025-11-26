@@ -70,7 +70,11 @@ export default function ClarifierCard({ question, fields, runId, interruptId, th
           </label>
         ))}
         {formError && (
-          <p className="text-xs" style={{ color: '#ffaaaa' }} role="alert">
+          <p
+            className="text-xs"
+            style={{ color: '#ffaaaa', whiteSpace: 'pre-wrap' }}
+            role="alert"
+          >
             {formError}
           </p>
         )}
