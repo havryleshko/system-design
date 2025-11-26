@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { Suspense, useEffect, useState, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getBrowserSupabase } from "@/utils/supabase/browser";
 import type { Session } from "@supabase/supabase-js";
@@ -185,7 +185,7 @@ function FeatureCard({
   );
 }
 
-export default function Home() {
+function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [session, setSession] = useState<Session | null>(null);
@@ -626,5 +626,24 @@ export default function Home() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          className="flex min-h-screen items-center justify-center"
+          style={{ background: "var(--background)", color: "var(--foreground)" }}
+        >
+          <p className="text-sm" style={{ color: "var(--foreground-muted)" }}>
+            Loading…
+          </p>
+        </div>
+      }
+    >
+      <HomeContent />
+    </Suspense>
   );
 }
