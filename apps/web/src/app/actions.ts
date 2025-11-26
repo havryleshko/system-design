@@ -185,7 +185,10 @@ export async function getState(threadId?: string, options: GetStateOptions = {})
   }
 
   const state = await res.json();
-  const runId = state?.values?.run_id ?? null;
+  const runId =
+    (state?.values?.run_id as string | null | undefined) ??
+    (state?.metadata?.run_id as string | null | undefined) ??
+    null;
   return { threadId: tid, state, runId };
 }
 
