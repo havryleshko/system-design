@@ -7,6 +7,7 @@ import json, os, math, requests
 from jsonschema import validate as jsonschema_validate, ValidationError
 from datetime import datetime
 from langgraph.types import interrupt
+import logging
 try:
     from app.storage.memory import add_event, record_node_tokens
 except ImportError:  # pragma: no cover - fallback for older deployments
@@ -22,6 +23,8 @@ except ImportError:  # pragma: no cover - fallback for older deployments
         """No-op fallback used when token logging helper is unavailable."""
         return None
 from app.schemas.runs import RunEvent
+from app.services.memori import prepare_memori_for_langchain
+logger = logging.getLogger(__name__)
 
 ARCHITECTURE_NODE_KINDS = [
     "Person",
@@ -343,17 +346,39 @@ def json_only(text: str) -> Optional[dict]:
             return None
     return None
 
-def call_brain(messages: list[any], *, run_id: str | None = None, node: str | None = None) -> str:
+def call_brain(
+    messages: list[any],
+    *,
+    state: Optional[State] = None,
+    run_id: str | None = None,
+    node: str | None = None,
+) -> str:
     ms = normalise(messages)
     brain = make_brain()
+    metadata = {}
+    if state is not None:
+        metadata = state.get("metadata", {}) or {}
+    user_id = metadata.get("user_id")
+    thread_id = metadata.get("thread_id")
+    process_id = thread_id or run_id or metadata.get("run_id")
+    try:
+        prepare_memori_for_langchain(brain, user_id=user_id, process_id=process_id)
+    except Exception as exc:
+        logger.warning("[memori] continuing without long-term memory: %s", exc)
     r = brain.invoke(ms)
     if run_id and node:
         log_token_usage(run_id, node, r)
     return getattr(r, "content", "") or ""
 
 
-def call_brain_json(messages: list[any], *, run_id: str | None = None, node: str | None = None) -> dict:
-    raw = call_brain(messages, run_id=run_id, node=node)
+def call_brain_json(
+    messages: list[any],
+    *,
+    state: Optional[State] = None,
+    run_id: str | None = None,
+    node: str | None = None,
+) -> dict:
+    raw = call_brain(messages, state=state, run_id=run_id, node=node)
     try:
         return json.loads(raw)
     except Exception:
@@ -618,7 +643,7 @@ def intent(state: State) -> Dict[str, any]:
         "Output strictly as compact JSON with the keys: goal (str), missing_fields (array of strings) \n"
     ))
     human = HumanMessage(content=f"Input:\n{user_text}\n\nReturn JSON only")
-    raw = call_brain([sys, human])
+    raw = call_brain([sys, human], state=state)
     data = json_only(raw) or {}
     goal = str(data.get("goal") or user_text).strip()
     missing: list[str] = []
@@ -645,7 +670,7 @@ def clarifier(state: State) -> Dict[str, any]:
             "As a system design expert, craft a single concise clarifying question to collect the missing items for a system design task"
         ))
         human = HumanMessage(content=f"Ask for {need}. Keep short & specific")
-        question = call_brain([sys, human]).strip() or f"Please provide {need}"
+        question = call_brain([sys, human], state=state).strip() or f"Please provide {need}"
         payload = {
             "type": "clarifier",
             "question": question,
@@ -681,7 +706,12 @@ def planner(state: State) -> Dict[str, any]:
     ))
     prompt = f"Goal:\n{goal}\n\nAdditional info (may include constraints:\n{constraints}\n\nReturn a compact numbered plan)"
     run_id = state.get("metadata", {}).get("run_id")
-    plan = call_brain([sys, HumanMessage(content=prompt[:1600])], run_id=run_id, node="planner").strip()
+    plan = call_brain(
+        [sys, HumanMessage(content=prompt[:1600])],
+        state=state,
+        run_id=run_id,
+        node="planner",
+    ).strip()
     return {"plan": plan}
 
 def web_search(state: State) -> Dict[str, any]:
@@ -801,13 +831,23 @@ def designer(state: State) -> Dict[str, any]:
 
     run_id = state.get("metadata", {}).get("run_id")
     try:
-        parsed = call_brain_json([sys, HumanMessage(content=prompt[:1600])], run_id=run_id, node="designer")
+        parsed = call_brain_json(
+            [sys, HumanMessage(content=prompt[:1600])],
+            state=state,
+            run_id=run_id,
+            node="designer",
+        )
     except Exception:
         recovery = SystemMessage(content=(
             "You must return valid JSON. Output only the JSON object with keys"
             " components, data_flow, storage, nfr_mapping, brief."
         ))
-        parsed = call_brain_json([recovery, HumanMessage(content=prompt[:1600])], run_id=run_id, node="designer")
+        parsed = call_brain_json(
+            [recovery, HumanMessage(content=prompt[:1600])],
+            state=state,
+            run_id=run_id,
+            node="designer",
+        )
 
     design_brief = str(parsed.get("brief") or "").strip()
     design_json = {
@@ -855,7 +895,12 @@ def critic(state: State) -> Dict[str, any]:
     }, ensure_ascii=False)
 
     run_id = state.get("metadata", {}).get("run_id")
-    raw_result = call_brain([sys, HumanMessage(content=prompt)], run_id=run_id, node="critic")
+    raw_result = call_brain(
+        [sys, HumanMessage(content=prompt)],
+        state=state,
+        run_id=run_id,
+        node="critic",
+    )
     parsed = json_only(raw_result) or {}
     try:
         jsonschema_validate(parsed, CRITIC_SCHEMA)
@@ -863,7 +908,12 @@ def critic(state: State) -> Dict[str, any]:
         recovery = SystemMessage(content=(
             "Respond again using valid JSON that matches the schema exactly."
         ))
-        raw_result = call_brain([recovery, HumanMessage(content=prompt)], run_id=run_id, node="critic")
+        raw_result = call_brain(
+            [recovery, HumanMessage(content=prompt)],
+            state=state,
+            run_id=run_id,
+            node="critic",
+        )
         parsed = json_only(raw_result) or {}
         jsonschema_validate(parsed, CRITIC_SCHEMA)
 
@@ -918,7 +968,12 @@ def finaliser(state: State) -> Dict[str, any]:
         "Architecture requirements: Use existing elements when possible, stick to IDs and kinds that align with Mermaid C4."
     )
     run_id = state.get("metadata", {}).get("run_id")
-    raw_response = call_brain([sys, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
+    raw_response = call_brain(
+        [sys, HumanMessage(content=prompt)],
+        state=state,
+        run_id=run_id,
+        node="finaliser",
+    ).strip()
     parsed = _strip_nulls(json_only(raw_response) or {})
     parsed["architecture"] = normalise_architecture(parsed.get("architecture"), goal=goal, design_brief=design_brief)
     try:
@@ -927,7 +982,12 @@ def finaliser(state: State) -> Dict[str, any]:
         recovery = SystemMessage(content=(
             "Respond again as JSON only that matches the schema exactly."
         ))
-        raw_response = call_brain([recovery, HumanMessage(content=prompt)], run_id=run_id, node="finaliser").strip()
+        raw_response = call_brain(
+            [recovery, HumanMessage(content=prompt)],
+            state=state,
+            run_id=run_id,
+            node="finaliser",
+        ).strip()
         parsed = _strip_nulls(json_only(raw_response) or {})
         parsed["architecture"] = normalise_architecture(parsed.get("architecture"), goal=goal, design_brief=design_brief)
         try:
