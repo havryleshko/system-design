@@ -11,4 +11,4 @@ jsonschema
 pyjwt>=2.8.0
 httpx>=0.24.0
 langgraph-checkpoint-postgres
-memori==3.0.0b3
+memori
