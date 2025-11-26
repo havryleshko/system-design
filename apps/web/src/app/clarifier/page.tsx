@@ -28,6 +28,11 @@ function extractInterruptId(state: any): string | null {
 
 export default async function ClarifierPage() {
     const { state, threadId, runId } = await getState(undefined, { redirectTo: "/clarifier" });
+    console.info("[clarifier.page] state run ids", {
+        valuesRunId: state?.values?.run_id ?? null,
+        metadataRunId: state?.metadata?.run_id ?? null,
+        runIdFromGetState: runId ?? null,
+    });
     const interruptId = extractInterruptId(state);
     const missing = state?.values?.missing_fields || [];
     const question = lastAiQuestion(state);
