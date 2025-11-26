@@ -9,10 +9,11 @@ type ClarifierCardProps = {
   fields: string[]
   runId: string | null
   interruptId: string | null
+  threadId: string | null
 }
 
-export default function ClarifierCard({ question, fields, runId, interruptId }: ClarifierCardProps) {
-  const disabled = !runId || !interruptId
+export default function ClarifierCard({ question, fields, runId, interruptId, threadId }: ClarifierCardProps) {
+  const disabled = !runId || !interruptId || !threadId
   const [formError, setFormError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -55,6 +56,7 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
       <form onSubmit={handleSubmit} className="grid" style={{ marginTop: 'var(--spacing-sm)', gap: 'var(--spacing-md)' }}>
         <input type="hidden" name="run_id" value={runId ?? ''} />
         <input type="hidden" name="interrupt_id" value={interruptId ?? ''} />
+        <input type="hidden" name="thread_id" value={threadId ?? ''} />
         {fields.map((name) => (
           <label key={name} className="text-xs" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
             <span className="mb-1 block text-[10px] uppercase tracking-wider" style={{ color: 'var(--foreground-muted)' }}>{name}</span>
@@ -68,7 +70,11 @@ export default function ClarifierCard({ question, fields, runId, interruptId }: 
           </label>
         ))}
         {formError && (
-          <p className="text-xs" style={{ color: '#ffaaaa' }} role="alert">
+          <p
+            className="text-xs"
+            style={{ color: '#ffaaaa', whiteSpace: 'pre-wrap' }}
+            role="alert"
+          >
             {formError}
           </p>
         )}

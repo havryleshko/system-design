@@ -1,6 +1,14 @@
 from __future__ import annotations
 from typing import Literal
+import os
+import atexit
+from functools import lru_cache
+from contextlib import ExitStack
+import logging
+from urllib.parse import urlparse
+
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.postgres import PostgresSaver  # pyright: ignore[reportMissingImports]
 from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
 from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
 # defining a graph with shared state
@@ -94,4 +102,36 @@ builder.add_conditional_edges(
 
 builder.add_edge("finaliser", END)
 
-graph = builder.compile()
+
+_CHECKPOINTER_STACK = ExitStack()
+atexit.register(_CHECKPOINTER_STACK.close)
+logger = logging.getLogger("app.agent.system_design.graph")
+
+
+@lru_cache(maxsize=1)
+def _load_checkpointer() -> PostgresSaver:
+    """
+    Initialises the Postgres checkpointer once.
+
+    Clarifier resumes (thread interrupts) require persistent checkpoints,
+    so we fail fast if LANGGRAPH_PG_URL is missing or invalid rather than
+    letting requests reach the resume endpoint and 404.
+    """
+    conn = os.getenv("LANGGRAPH_PG_URL")
+    if not conn:
+        raise RuntimeError("LANGGRAPH_PG_URL not configured; clarifier resume requires persistent checkpoints")
+    parsed = urlparse(conn)
+    host = parsed.hostname or "unknown"
+    logger.info("Initialising LangGraph Postgres checkpointer", {"host": host})
+    try:
+        saver = _CHECKPOINTER_STACK.enter_context(PostgresSaver.from_conn_string(conn))
+        # Ensure schema is ready before the first run triggers an interrupt.
+        saver.setup()
+        logger.info("LangGraph checkpointer ready", {"host": host})
+        return saver
+    except Exception:
+        logger.exception("Failed to initialise LangGraph checkpointer", {"host": host})
+        raise
+
+
+graph = builder.compile(checkpointer=_load_checkpointer())
