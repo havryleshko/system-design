@@ -477,20 +477,24 @@ export async function resumeClarifier({
     typeof interruptId === "string" && interruptId
       ? { resume: { [interruptId]: resumeValue } }
       : { resume: resumeValue };
+  const payload = {
+    assistant_id: ASSISTANT_ID,
+    ...resumeBody,
+  };
   const resumeTarget = `${BASE}/threads/${threadId}/runs/${runId}/resume`;
   console.info(`[${scope}] resuming clarifier`, {
     requestId,
     threadId,
     runId,
     interruptId,
-    resume: resumeBody,
+    payload,
   });
   const res = await authFetch(
     resumeTarget,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(resumeBody),
+      body: JSON.stringify(payload),
     },
     "/chat",
     { requestId, scope, target: resumeTarget }
