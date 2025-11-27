@@ -457,38 +457,32 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
   }
 }
 
-// Submit clarifier answers to resume the graph
-export async function submitClarifier(formData: FormData) {
-  const scope = "clarifier.submit";
+export type ResumeClarifierParams = {
+  threadId: string;
+  runId: string;
+  interruptId: string | null;
+  answer: string;
+};
+
+export async function resumeClarifier({
+  threadId,
+  runId,
+  interruptId,
+  answer,
+}: ResumeClarifierParams): Promise<void> {
+  const scope = "clarifier.resume";
   const requestId = makeRequestId("clarifier-resume");
-  const threadIdRaw = formData.get("thread_id");
-  const tid =
-    typeof threadIdRaw === "string" && threadIdRaw.trim()
-      ? threadIdRaw.trim()
-      : await createThread();
-  const runIdRaw = formData.get("run_id");
-  const interruptIdRaw = formData.get("interrupt_id");
-  if (typeof runIdRaw !== "string" || !runIdRaw) {
-    throw new Error("Run ID missing while resuming clarifier");
-  }
-
-  const answerRaw = formData.get("answer");
-  const answer = typeof answerRaw === "string" ? answerRaw.trim() : "";
-  if (!answer) {
-    throw new Error("Answer first.");
-  }
-
-  const resumeValue: Record<string, unknown> = { answer };
+  const resumeValue = { answer };
   const resumeBody =
-    typeof interruptIdRaw === "string" && interruptIdRaw
-      ? { resume: { [interruptIdRaw]: resumeValue } }
+    typeof interruptId === "string" && interruptId
+      ? { resume: { [interruptId]: resumeValue } }
       : { resume: resumeValue };
-  const resumeTarget = `${BASE}/threads/${tid}/runs/${runIdRaw}/resume`;
+  const resumeTarget = `${BASE}/threads/${threadId}/runs/${runId}/resume`;
   console.info(`[${scope}] resuming clarifier`, {
     requestId,
-    threadId: tid,
-    runId: runIdRaw,
-    interruptId: typeof interruptIdRaw === "string" ? interruptIdRaw : null,
+    threadId,
+    runId,
+    interruptId,
     resume: resumeBody,
   });
   const res = await authFetch(
@@ -505,8 +499,8 @@ export async function submitClarifier(formData: FormData) {
     const detail = await res.text().catch(() => "");
     logError(scope, "Resume failed", {
       requestId,
-      threadId: tid,
-      runId: runIdRaw,
+      threadId,
+      runId,
       status: res.status,
       body: detail?.slice(0, 1024) || null,
     });

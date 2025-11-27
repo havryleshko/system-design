@@ -22,7 +22,11 @@ except ImportError:
     ) -> None:
             return None
 from app.schemas.runs import RunEvent
-from app.services.langgraph_store import load_long_term_messages, record_long_term_memory
+from app.services.langgraph_store import (
+    load_long_term_messages,
+    record_long_term_memory,
+    search_semantic_memory,
+)
 logger = logging.getLogger(__name__)
 
 ARCHITECTURE_NODE_KINDS = [
@@ -368,11 +372,44 @@ def call_brain(
     thread_id = metadata.get("thread_id")
     process_id = thread_id or run_id or metadata.get("run_id")
 
-    memory_messages = load_long_term_messages(
+    # Hybrid memory: episodic (recent) + semantic (relevant)
+    episodic_messages = load_long_term_messages(
         user_id=user_id,
         process_id=process_id,
         limit=12,
     )
+    
+    # Extract query from current prompt for semantic search
+    semantic_messages: list[BaseMessage] = []
+    if prompt_msg and user_id:
+        query_text = get_content(prompt_msg)
+        if query_text and len(query_text.strip()) > 10:  # Only search if query is substantial
+            try:
+                semantic_messages = search_semantic_memory(
+                    user_id=user_id,
+                    query=query_text,
+                    limit=10,
+                )
+            except Exception as exc:
+                logger.warning("Semantic search failed, using episodic only: %s", exc)
+    
+    # Merge episodic and semantic, deduplicating by content
+    memory_messages: list[BaseMessage] = []
+    seen_content: set[str] = set()
+    
+    # Add episodic first (preserves chronological order)
+    for msg in episodic_messages:
+        content = get_content(msg)
+        if content and content not in seen_content:
+            seen_content.add(content)
+            memory_messages.append(msg)
+    
+    # Add semantic results (most relevant first)
+    for msg in semantic_messages:
+        content = get_content(msg)
+        if content and content not in seen_content:
+            seen_content.add(content)
+            memory_messages.append(msg)
 
     if memory_messages:
         ms = sys_m + memory_messages + recent + other_m

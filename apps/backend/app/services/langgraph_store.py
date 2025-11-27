@@ -11,6 +11,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import OpenAIEmbeddings
 from langgraph.store.postgres import PostgresStore
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ atexit.register(_STORE_STACK.close)
 
 _MAX_HISTORY = int(os.getenv("LANGGRAPH_STORE_MAX_MESSAGES", "40"))
 _NAMESPACE_ROOT = ("system_design_agent",)
+_SEMANTIC_SEARCH_LIMIT = int(os.getenv("LANGGRAPH_STORE_SEMANTIC_LIMIT", "10"))
 
 
 def _connection_url() -> str:
@@ -30,14 +32,28 @@ def _connection_url() -> str:
 
 
 @lru_cache(maxsize=1)
+def _get_embeddings() -> OpenAIEmbeddings:
+    """Get shared OpenAI embeddings instance for semantic search."""
+    return OpenAIEmbeddings(model="text-embedding-3-small")
+
+
+@lru_cache(maxsize=1)
 def _get_store() -> PostgresStore:
     conn = _connection_url()
     host = urlparse(conn).hostname or "unknown"
-    logger.info("Initialising LangGraph Store", extra={"host": host})
+    logger.info("Initialising LangGraph Store with embeddings", extra={"host": host})
     try:
-        store = _STORE_STACK.enter_context(PostgresStore.from_conn_string(conn))
+        embeddings = _get_embeddings()
+        index_config = {
+            "dims": 1536,  # OpenAI text-embedding-3-small dimension
+            "embed": embeddings,
+            "fields": ["content"],  # Embed the message content field
+        }
+        store = _STORE_STACK.enter_context(
+            PostgresStore.from_conn_string(conn, index=index_config)
+        )
         store.setup()
-        logger.info("LangGraph Store ready", extra={"host": host})
+        logger.info("LangGraph Store ready with semantic search", extra={"host": host})
         return store
     except Exception as e:
         logger.exception(f"Failed to initialise LangGraph Store, {e}", extra={"host": host})
@@ -133,6 +149,75 @@ def load_long_term_messages(
     return history
 
 
+def search_semantic_memory(
+    *,
+    user_id: Optional[str],
+    query: str,
+    limit: int = 10,
+) -> list[BaseMessage]:
+    """
+    Search for semantically relevant messages using vector similarity.
+    
+    Args:
+        user_id: User ID to search within
+        query: Search query text
+        limit: Maximum number of results to return
+        
+    Returns:
+        List of messages ordered by relevance (most relevant first)
+    """
+    if not query or not query.strip():
+        return []
+    
+    try:
+        store = _get_store()
+    except Exception as exc:
+        logger.warning("LangGraph Store unavailable, skipping semantic search: %s", exc)
+        return []
+    
+    ns = _namespace(user_id)
+    try:
+        # Search for semantically similar messages
+        results = store.search(
+            ns,
+            query=query.strip(),
+            limit=min(limit, _SEMANTIC_SEARCH_LIMIT),
+        )
+        
+        # Extract messages from search results
+        messages: list[BaseMessage] = []
+        seen_keys: set[tuple[str, ...]] = set()
+        
+        for item in results:
+            # Avoid duplicates
+            key = (item.namespace, item.key)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            
+            # Extract messages from the stored value
+            value = item.value
+            if isinstance(value, dict):
+                raw_messages = value.get("messages")
+                if isinstance(raw_messages, list):
+                    for entry in raw_messages:
+                        if isinstance(entry, dict):
+                            msg = _entry_to_message(entry)
+                            if msg is not None:
+                                messages.append(msg)
+        
+        logger.debug(
+            "Semantic search found %d messages for query: %s",
+            len(messages),
+            query[:50],
+        )
+        return messages
+        
+    except Exception as exc:
+        logger.warning("Semantic search failed: %s", exc)
+        return []
+
+
 def record_long_term_memory(
     *,
     user_id: Optional[str],
@@ -169,8 +254,19 @@ def record_long_term_memory(
     if _MAX_HISTORY > 0 and len(history) > _MAX_HISTORY:
         history = history[-_MAX_HISTORY:]
 
+    # Create content field for semantic search (concatenate all message contents)
+    content_parts: list[str] = []
+    for entry in history:
+        if isinstance(entry, dict):
+            content = entry.get("content", "")
+            if content:
+                role = entry.get("role", "user")
+                content_parts.append(f"{role}: {content}")
+    content_text = "\n".join(content_parts)
+
     payload = {
         "messages": history,
+        "content": content_text,  # For semantic search embeddings
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     try:

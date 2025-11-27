@@ -3,11 +3,10 @@
 import { useEffect, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
-import { fetchTrace, startRunStream, type StartStreamResult } from "../actions"
+import { fetchTrace, resumeClarifier, startRunStream, type StartStreamResult } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
-import ClarifierCard from "./ClarifierCard"
 import NodeStatusRibbon from "./NodeStatusRibbon"
 import MolecularLoader from "./MolecularLoader"
 
@@ -190,6 +189,31 @@ export default function ChatClient({
     setInput("")
     setStreamError(null)
 
+    if (clarifier && clarifier.runId && clarifier.threadId) {
+      setIsStreaming(true)
+      setStreamingContent("")
+      streamingContentRef.current = ""
+      try {
+        await resumeClarifier({
+          threadId: clarifier.threadId,
+          runId: clarifier.runId,
+          interruptId: clarifier.interruptId,
+          answer: trimmed,
+        })
+        setClarifier(null)
+        return
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to resume clarifier"
+        setStreamError(message)
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `Sorry, something went wrong: ${message}` },
+        ])
+        setIsStreaming(false)
+        return
+      }
+    }
+
     try {
       const result = await startRunStream(trimmed)
       if (!result.ok) {
@@ -283,6 +307,13 @@ export default function ChatClient({
                 interruptId: first.id,
                 runId: newRunId,
                 threadId: newThreadId,
+              })
+              setMessages((prev) => {
+                const last = prev[prev.length - 1]
+                if (last && last.role === 'assistant' && last.content === question) {
+                  return prev
+                }
+                return [...prev, { role: 'assistant', content: question }]
               })
               setIsStreaming(false)
             }
@@ -447,14 +478,6 @@ return (
                     </div>
                   )}
                 </div>
-              )}
-              {clarifier && (
-                <ClarifierCard
-                  question={clarifier.question}
-                  runId={clarifier.runId}
-                  interruptId={clarifier.interruptId}
-                  threadId={clarifier.threadId}
-                />
               )}
             </div>
           <div
