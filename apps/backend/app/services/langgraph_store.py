@@ -33,7 +33,6 @@ def _connection_url() -> str:
 
 @lru_cache(maxsize=1)
 def _get_embeddings() -> OpenAIEmbeddings:
-    """Get shared OpenAI embeddings instance for semantic search."""
     return OpenAIEmbeddings(model="text-embedding-3-small")
 
 
@@ -45,9 +44,9 @@ def _get_store() -> PostgresStore:
     try:
         embeddings = _get_embeddings()
         index_config = {
-            "dims": 1536,  # OpenAI text-embedding-3-small dimension
+            "dims": 1536,
             "embed": embeddings,
-            "fields": ["content"],  # Embed the message content field
+            "fields": ["content"],
         }
         store = _STORE_STACK.enter_context(
             PostgresStore.from_conn_string(conn, index=index_config)
@@ -155,17 +154,6 @@ def search_semantic_memory(
     query: str,
     limit: int = 10,
 ) -> list[BaseMessage]:
-    """
-    Search for semantically relevant messages using vector similarity.
-    
-    Args:
-        user_id: User ID to search within
-        query: Search query text
-        limit: Maximum number of results to return
-        
-    Returns:
-        List of messages ordered by relevance (most relevant first)
-    """
     if not query or not query.strip():
         return []
     
@@ -184,18 +172,14 @@ def search_semantic_memory(
             limit=min(limit, _SEMANTIC_SEARCH_LIMIT),
         )
         
-        # Extract messages from search results
         messages: list[BaseMessage] = []
         seen_keys: set[tuple[str, ...]] = set()
         
         for item in results:
-            # Avoid duplicates
             key = (item.namespace, item.key)
             if key in seen_keys:
                 continue
             seen_keys.add(key)
-            
-            # Extract messages from the stored value
             value = item.value
             if isinstance(value, dict):
                 raw_messages = value.get("messages")
