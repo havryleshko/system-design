@@ -180,81 +180,23 @@ export default function ChatClient({
     })
   }
 
-  async function send() {
-    const trimmed = input.trim()
-    if (!trimmed) return
-
-    const userMessage: ChatMessage = { role: "user", content: trimmed }
-    setMessages((prev) => [...prev, userMessage])
-    setInput("")
+  const attachStream = (threadId: string, runId: string, resetStatuses: boolean) => {
+    setStreamingContent("")
+    streamingContentRef.current = ""
+    setIsStreaming(true)
     setStreamError(null)
+    if (resetStatuses) setNodeStatuses([])
 
-    if (clarifier && clarifier.runId && clarifier.threadId) {
-      setIsStreaming(true)
-      setStreamingContent("")
-      streamingContentRef.current = ""
+    if (streamHandleRef.current) {
       try {
-        await resumeClarifier({
-          threadId: clarifier.threadId,
-          runId: clarifier.runId,
-          interruptId: clarifier.interruptId,
-          answer: trimmed,
-        })
-        setClarifier(null)
-        return
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to resume clarifier"
-        setStreamError(message)
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `Sorry, something went wrong: ${message}` },
-        ])
-        setIsStreaming(false)
-        return
-      }
+        streamHandleRef.current.close()
+      } catch {}
+      streamHandleRef.current = null
     }
 
-    try {
-      const result = await startRunStream(trimmed)
-      if (!result.ok) {
-        if (result.status === 401) {
-          setStreamError("Your session expired. Redirecting to login…")
-          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
-          return
-        }
-        const errorMessage = formatStreamFailure(result)
-        setStreamError(errorMessage)
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
-        ])
-        return
-      }
-      if (!result.runId) {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: 'Run created but no run ID was returned' },
-        ])
-        return
-      }
-      const { runId: newRunId, threadId: newThreadId } = result
-      setCurrentRunId(newRunId)
-      setCurrentThreadId(newThreadId)
-      setStreamingContent("")
-      streamingContentRef.current = ""
-      setIsStreaming(true)
-      setClarifier(null)
-      setNodeStatuses([])
-      setStreamError(null)
-
-      if (streamHandleRef.current) {
-        try { streamHandleRef.current.close() } catch {}
-        streamHandleRef.current = null
-      }
-
-      const handle = openRunStream({
-        threadId: result.threadId,
-        runId: newRunId,
+    const handle = openRunStream({
+        threadId,
+        runId,
         onEvent: (evt: NormalizedStreamEvent) => {
           console.log("[chat] stream event", evt);
           if (evt.type === 'message-delta') {
@@ -305,8 +247,8 @@ export default function ChatClient({
               setClarifier({
                 question,
                 interruptId: first.id,
-                runId: newRunId,
-                threadId: newThreadId,
+                runId,
+                threadId,
               })
               setMessages((prev) => {
                 const last = prev[prev.length - 1]
@@ -341,7 +283,7 @@ export default function ChatClient({
               }
               setClarifier((prev) => {
                 if (!prev) return prev
-                if (prev.runId && prev.runId !== newRunId) return prev
+                if (prev.runId && prev.runId !== runId) return prev
                 return null
               })
             }
@@ -349,11 +291,11 @@ export default function ChatClient({
           }
           if (evt.type === 'run-completed') {
             setIsStreaming(false)
-              setClarifier(null)
+            setClarifier(null)
             setStreamError(null)
             startTransition(async () => {
               try {
-                const data = await fetchTrace(newRunId)
+                const data = await fetchTrace(runId)
                 setTrace(data)
                 setTraceError(null)
               } catch (err) {
@@ -370,6 +312,70 @@ export default function ChatClient({
         },
       })
       streamHandleRef.current = handle
+  }
+
+  async function send() {
+    const trimmed = input.trim()
+    if (!trimmed) return
+
+    const userMessage: ChatMessage = { role: "user", content: trimmed }
+    setMessages((prev) => [...prev, userMessage])
+    setInput("")
+    setStreamError(null)
+
+    if (clarifier && clarifier.runId && clarifier.threadId) {
+      try {
+        await resumeClarifier({
+          threadId: clarifier.threadId,
+          runId: clarifier.runId,
+          interruptId: clarifier.interruptId,
+          answer: trimmed,
+        })
+        setCurrentThreadId(clarifier.threadId)
+        setCurrentRunId(clarifier.runId)
+        setClarifier(null)
+        attachStream(clarifier.threadId, clarifier.runId, false)
+        return
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to resume clarifier"
+        setStreamError(message)
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `Sorry, something went wrong: ${message}` },
+        ])
+        setIsStreaming(false)
+        return
+      }
+    }
+
+    try {
+      const result = await startRunStream(trimmed)
+      if (!result.ok) {
+        if (result.status === 401) {
+          setStreamError("Your session expired. Redirecting to login…")
+          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
+          return
+        }
+        const errorMessage = formatStreamFailure(result)
+        setStreamError(errorMessage)
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
+        ])
+        return
+      }
+      if (!result.runId) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: 'Run created but no run ID was returned' },
+        ])
+        return
+      }
+      const { runId: newRunId, threadId: newThreadId } = result
+      setCurrentRunId(newRunId)
+      setCurrentThreadId(newThreadId)
+      setClarifier(null)
+      attachStream(newThreadId, newRunId, true)
     } catch (err) {
       console.error("Run failed", err)
       const message = err instanceof Error ? err.message : "Unknown error"

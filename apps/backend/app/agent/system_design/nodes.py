@@ -721,7 +721,12 @@ def clarifier(state: State) -> Dict[str, any]:
     }
     answer = interrupt(payload)
     answer_text = _clarifier_answer_to_text(answer)
-    updates: Dict[str, any] = {"clarifier_done": True}
+    metadata = (state.get("metadata") or {}).copy()
+    metadata["clarifier_done"] = True
+    updates: Dict[str, any] = {
+        "clarifier_done": True,
+        "metadata": metadata,
+    }
     if answer_text:
         updates["messages"] = [HumanMessage(content=answer_text)]
     return updates
