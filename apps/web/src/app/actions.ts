@@ -142,7 +142,6 @@ export async function createThread(options: CreateThreadOptions = {}): Promise<s
       if (existing) return existing;
     }
     const id = await forceCreateThread({ requestId, scope });
-    revalidatePath("/clarifier");
     revalidatePath("/result");
     revalidatePath("/chat");
     return id;
@@ -263,8 +262,7 @@ function isTerminal(state: ThreadState, expectedRunId: string | null): boolean {
   return Boolean(
     (typeof values.output === "string" && values.output) ||
       values.architecture_json ||
-      values.design_json ||
-      (typeof values.clarifier_question === "string" && values.clarifier_question)
+      values.design_json
   );
 }
 
@@ -474,16 +472,13 @@ export async function submitClarifier(formData: FormData) {
     throw new Error("Run ID missing while resuming clarifier");
   }
 
-  const answers: Record<string, string> = {};
-  for (const [key, value] of formData.entries()) {
-    if (key === "run_id" || key === "interrupt_id") continue;
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (!trimmed) continue;
-    answers[key] = trimmed;
+  const answerRaw = formData.get("answer");
+  const answer = typeof answerRaw === "string" ? answerRaw.trim() : "";
+  if (!answer) {
+    throw new Error("Please provide an answer.");
   }
 
-  const resumeValue: Record<string, unknown> = Object.keys(answers).length > 0 ? answers : {};
+  const resumeValue: Record<string, unknown> = { answer };
   const resumeBody =
     typeof interruptIdRaw === "string" && interruptIdRaw
       ? { resume: { [interruptIdRaw]: resumeValue } }
@@ -503,7 +498,7 @@ export async function submitClarifier(formData: FormData) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(resumeBody),
     },
-    "/clarifier",
+    "/chat",
     { requestId, scope, target: resumeTarget }
   );
   if (!res.ok) {
@@ -522,46 +517,3 @@ export async function submitClarifier(formData: FormData) {
   }
 }
 
-// Backtrack one checkpoint and resume
-export async function backtrackLast() {
-  const tid = await createThread();
-
-  // 1) History (newest first)
-  const histRes = await authFetch(`${BASE}/threads/${tid}/history`, { cache: "no-store" }); // GET history
-  if (!histRes.ok) throw new Error(`Failed to fetch history: ${histRes.status}`);
-  const states = await histRes.json();
-  if (!Array.isArray(states) || states.length < 2) return; // nothing to backtrack
-
-  const latest = states[0];
-  const prev = states[1]; // previous checkpoint
-
-  const latestValues = latest?.state?.values;
-  const missing = Array.isArray(latestValues?.missing_fields) ? latestValues.missing_fields : [];
-  const canBacktrack = missing.length > 0;
-
-  if (!canBacktrack) {
-    throw new Error("Backtracking is only available immediately after a clarifier turn.");
-  }
-
-  // 2) Optionally edit state at that checkpoint (no edits here, just fork)
-  const updRes = await authFetch(`${BASE}/threads/${tid}/state`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      checkpoint_id: prev.checkpoint_id,
-      values: {},
-    }),
-  }); // POST update_state
-  if (!updRes.ok) throw new Error(`Failed to update state: ${updRes.status}`);
-  const newCfg = await updRes.json();
-
-  // 3) Resume from the new checkpoint id
-  const resumePayload = { input: null, checkpoint_id: newCfg.checkpoint_id } as Record<string, unknown>;
-  const resumeResult = await invokeRun(tid, resumePayload, true);
-  if (!resumeResult.ok) {
-    throw new Error(resumeResult.error);
-  }
-
-  revalidatePath("/clarifier");
-  revalidatePath("/result");
-}

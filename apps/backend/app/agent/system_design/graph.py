@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver  # pyright: ignore[reportMissingImports]
-from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
+from .state import State, CRITIC_TARGET, MAX_CRITIC_PASSES
 from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
 # defining a graph with shared state
 builder = StateGraph(State)
@@ -27,11 +27,8 @@ builder.add_node("finaliser", finaliser)
 builder.add_edge(START, "intent")
 
 def route_from_intent(state: State) -> Literal["clarifier", "planner"]:
-    missing = state.get("missing_fields") or []
-    it = int(state.get("iterations", 0) or 0)
-    if missing and it < MAX_ITERATIONS:
-        return "clarifier"
-    return "planner"
+    # Always send the user to clarifier once so the agent can gather one extra detail
+    return "clarifier"
 
 builder.add_conditional_edges(
     "intent", 
@@ -110,22 +107,15 @@ logger = logging.getLogger("app.agent.system_design.graph")
 
 @lru_cache(maxsize=1)
 def _load_checkpointer() -> PostgresSaver:
-    """
-    Initialises the Postgres checkpointer once.
 
-    Clarifier resumes (thread interrupts) require persistent checkpoints,
-    so we fail fast if LANGGRAPH_PG_URL is missing or invalid rather than
-    letting requests reach the resume endpoint and 404.
-    """
     conn = os.getenv("LANGGRAPH_PG_URL")
     if not conn:
-        raise RuntimeError("LANGGRAPH_PG_URL not configured; clarifier resume requires persistent checkpoints")
+        raise RuntimeError("LANGGRAPH_PG_URL not configured")
     parsed = urlparse(conn)
     host = parsed.hostname or "unknown"
     logger.info("Initialising LangGraph Postgres checkpointer", {"host": host})
     try:
         saver = _CHECKPOINTER_STACK.enter_context(PostgresSaver.from_conn_string(conn))
-        # Ensure schema is ready before the first run triggers an interrupt.
         saver.setup()
         logger.info("LangGraph checkpointer ready", {"host": host})
         return saver

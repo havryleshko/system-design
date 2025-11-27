@@ -25,7 +25,7 @@ export default async function ResultPage() {
             )}
 
             <div style={{marginTop: 24}}>
-                <a href="/clarifier">Back to Clarifier</a>
+                <a href="/chat">Back to Chat</a>
             </div>
 
             <details style={{ marginTop: 24}}>

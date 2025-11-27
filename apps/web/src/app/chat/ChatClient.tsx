@@ -92,7 +92,7 @@ export default function ChatClient({
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const streamHandleRef = useRef<{ close: () => void } | null>(null)
-  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string | null; runId: string | null; threadId: string | null } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; interruptId: string | null; runId: string | null; threadId: string | null } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
   const [streamError, setStreamError] = useState<string | null>(null)
 
@@ -278,13 +278,8 @@ export default function ChatClient({
                 typeof payload?.question === 'string'
                   ? payload.question
                   : 'The agent needs a bit more context before proceeding.'
-              const rawFields = Array.isArray(payload?.missing_fields) ? payload.missing_fields : []
-              const fields = rawFields
-                .map((field) => (typeof field === 'string' ? field.trim() : ''))
-                .filter((field): field is string => Boolean(field))
               setClarifier({
                 question,
-                fields,
                 interruptId: first.id,
                 runId: newRunId,
                 threadId: newThreadId,
@@ -313,30 +308,11 @@ export default function ChatClient({
                 setStreamingContent("")
                 streamingContentRef.current = ""
               }
-              const missingRaw = Array.isArray(values["missing_fields"]) ? values["missing_fields"] : []
-              const missingFields = missingRaw
-                .map((field) => (typeof field === 'string' ? field.trim() : ''))
-                .filter((field): field is string => Boolean(field))
-              const question =
-                typeof values["clarifier_question"] === "string"
-                  ? values["clarifier_question"].trim()
-                  : ""
-              if (missingFields.length === 0 || !question) {
-                setClarifier((prev) => {
-                  if (!prev) return prev
-                  if (prev.runId && prev.runId !== newRunId) return prev
-                  return null
-                })
-              } else {
-                setClarifier((prev) => {
-                  if (!prev || (prev.runId && prev.runId !== newRunId)) return prev
-                  return {
-                    ...prev,
-                    question: question || prev.question,
-                    fields: missingFields,
-                  }
-                })
-              }
+              setClarifier((prev) => {
+                if (!prev) return prev
+                if (prev.runId && prev.runId !== newRunId) return prev
+                return null
+              })
             }
             return
           }
@@ -475,7 +451,6 @@ return (
               {clarifier && (
                 <ClarifierCard
                   question={clarifier.question}
-                  fields={clarifier.fields}
                   runId={clarifier.runId}
                   interruptId={clarifier.interruptId}
                   threadId={clarifier.threadId}

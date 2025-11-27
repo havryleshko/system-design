@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
-from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
+from .state import State, CRITIC_TARGET, MAX_CRITIC_PASSES
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from functools import lru_cache
 import json, os, math, requests
@@ -10,7 +10,7 @@ from langgraph.types import interrupt
 import logging
 try:
     from app.storage.memory import add_event, record_node_tokens
-except ImportError:  # pragma: no cover - fallback for older deployments
+except ImportError:
     from app.storage.memory import add_event
 
     def record_node_tokens(
@@ -20,10 +20,9 @@ except ImportError:  # pragma: no cover - fallback for older deployments
         completion_tokens: int,
         total_tokens: int,
     ) -> None:
-        """No-op fallback used when token logging helper is unavailable."""
-        return None
+            return None
 from app.schemas.runs import RunEvent
-from app.services.memori import prepare_memori_for_langchain
+from app.services.langgraph_store import load_long_term_messages, record_long_term_memory
 logger = logging.getLogger(__name__)
 
 ARCHITECTURE_NODE_KINDS = [
@@ -294,12 +293,6 @@ def normalise_architecture(raw: Any, *, goal: str, design_brief: str) -> Dict[st
 
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
-    """
-    Lazily construct the OpenAI chat client.
-    Using an lru_cache avoids paying the construction cost more than once,
-    while preventing import-time failures (e.g. missing OPENAI_API_KEY)
-    from breaking service startup and /threads creation.
-    """
     model_name = model or os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
     return ChatOpenAI(model=model_name)
 
@@ -353,19 +346,51 @@ def call_brain(
     run_id: str | None = None,
     node: str | None = None,
 ) -> str:
-    ms = normalise(messages)
-    brain = make_brain()
-    metadata = {}
+    original_ms = normalise(messages)
+    prompt_msg: Optional[BaseMessage] = None
+    for candidate in reversed(original_ms):
+        if isinstance(candidate, HumanMessage):
+            prompt_msg = candidate
+            break
+
+    sys_m = [m for m in original_ms if isinstance(m, SystemMessage)]
+    other_m = [m for m in original_ms if not isinstance(m, SystemMessage)]
+    recent: list[BaseMessage] = []
+    if state is not None:
+        state_messages = state.get("messages", []) or []
+        if state_messages:
+            recent = normalise(state_messages[-15:])
+
+    metadata: Dict[str, Any] = {}
     if state is not None:
         metadata = state.get("metadata", {}) or {}
     user_id = metadata.get("user_id")
     thread_id = metadata.get("thread_id")
     process_id = thread_id or run_id or metadata.get("run_id")
-    try:
-        prepare_memori_for_langchain(brain, user_id=user_id, process_id=process_id)
-    except Exception as exc:
-        logger.warning("[memori] continuing without long-term memory: %s", exc)
+
+    memory_messages = load_long_term_messages(
+        user_id=user_id,
+        process_id=process_id,
+        limit=12,
+    )
+
+    if memory_messages:
+        ms = sys_m + memory_messages + recent + other_m
+    elif recent:
+        ms = sys_m + recent + other_m
+    else:
+        ms = sys_m + other_m
+
+    brain = make_brain()
     r = brain.invoke(ms)
+    record_long_term_memory(
+        user_id=user_id,
+        process_id=process_id,
+        prompt=prompt_msg,
+        response=r,
+        run_id=run_id,
+        node=node,
+    )
     if run_id and node:
         log_token_usage(run_id, node, r)
     return getattr(r, "content", "") or ""
@@ -632,66 +657,36 @@ def tavily_search(
         seen_urls.add(url_value)
     return snippets[:max_snippets]
 
-def tool_call(state: State) -> Dict[str, any]:  # For later
-    return {}
-
 def intent(state: State) -> Dict[str, any]:
     user_text = last_human_text(state.get("messages", []))
     sys = SystemMessage(content=(
-        "You are a system design expert. You extract system design intent from an input and see what required fields are missing. \n"
-        "Required fields: ['use_case', 'constraints'] \n"
-        "Output strictly as compact JSON with the keys: goal (str), missing_fields (array of strings) \n"
+        "You are a system design expert. Extract the system design goal from the user's input.\n"
+        "Output strictly as compact JSON with the key: goal (str)\n"
     ))
     human = HumanMessage(content=f"Input:\n{user_text}\n\nReturn JSON only")
     raw = call_brain([sys, human], state=state)
     data = json_only(raw) or {}
     goal = str(data.get("goal") or user_text).strip()
-    missing: list[str] = []
-    for m in (data.get('missing_fields') or []):
-        text = str(m).strip()
-        if text and text not in missing:
-            missing.append(text)
-    updates: Dict[str, any] = {"goal": goal, "missing_fields": missing}
-    if not missing:
-        updates["iterations"] = 0
-    return updates
+    return {"goal": goal}
 
 def clarifier(state: State) -> Dict[str, any]:
-    raw_missing = state.get('missing_fields', []) or []
-    missing = []
-    for item in raw_missing:
-        text = str(item).strip()
-        if text and text not in missing:
-            missing.append(text)
-    it = int(state.get("iterations", 0) or 0)
-    if missing and it < MAX_ITERATIONS:
-        need = ", ".join(str(x) for x in missing)
-        sys = SystemMessage(content=(
-            "As a system design expert, craft a single concise clarifying question to collect the missing items for a system design task"
-        ))
-        human = HumanMessage(content=f"Ask for {need}. Keep short & specific")
-        question = call_brain([sys, human], state=state).strip() or f"Please provide {need}"
-        payload = {
-            "type": "clarifier",
-            "question": question,
-            "missing_fields": missing,
-        }
-        answer = interrupt(payload)
-        answer_text = _clarifier_answer_to_text(answer)
-        updates: Dict[str, any] = {
-            "clarifier_question": question,
-            "missing_fields": [],
-            "iterations": it + 1,
-        }
-        if answer_text:
-            updates["messages"] = [HumanMessage(content=answer_text)]
-        return updates
-    updates: Dict[str, any] = {
-        "missing_fields": missing,
+    goal = state.get("goal", "") or ""
+    sys = SystemMessage(content=(
+        "As a system design expert, craft one concise clarifying question to gather any additional information "
+        "needed to produce a minimal system design architecture. Ask about constraints, scale, requirements, or "
+        "any details that will help finalize the design."
+    ))
+    human = HumanMessage(content=f"User goal: {goal}\n\nAsk one short, specific clarifying question.")
+    question = call_brain([sys, human], state=state).strip() or "What additional details will help me design this system?"
+    payload = {
+        "type": "clarifier",
+        "question": question,
     }
-    if not missing:
-        updates["iterations"] = 0
-        updates["clarifier_question"] = None
+    answer = interrupt(payload)
+    answer_text = _clarifier_answer_to_text(answer)
+    updates: Dict[str, any] = {}
+    if answer_text:
+        updates["messages"] = [HumanMessage(content=answer_text)]
     return updates
 
 def planner(state: State) -> Dict[str, any]:
