@@ -475,7 +475,7 @@ export async function submitClarifier(formData: FormData) {
   const answerRaw = formData.get("answer");
   const answer = typeof answerRaw === "string" ? answerRaw.trim() : "";
   if (!answer) {
-    throw new Error("Please provide an answer.");
+    throw new Error("Answer first.");
   }
 
   const resumeValue: Record<string, unknown> = { answer };
