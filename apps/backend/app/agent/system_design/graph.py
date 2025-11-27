@@ -27,8 +27,8 @@ builder.add_node("finaliser", finaliser)
 builder.add_edge(START, "intent")
 
 def route_from_intent(state: State) -> Literal["clarifier", "planner"]:
-    # Always send the user to clarifier once so the agent can gather one extra detail
-    return "clarifier"
+    clarifier_done = bool(state.get("clarifier_done"))
+    return "planner" if clarifier_done else "clarifier"
 
 builder.add_conditional_edges(
     "intent", 

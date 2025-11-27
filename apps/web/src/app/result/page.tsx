@@ -21,7 +21,7 @@ export default async function ResultPage() {
                     <pre style={{whiteSpace: "pre-wrap"}}>{output}</pre>
                 </article>
             ) : (
-                <p>Final output not ready yet; return to Clarifier and answer the questions.</p>
+                <p>Final output not ready yet; return to the chat to continue the conversation.</p>
             )}
 
             <div style={{marginTop: 24}}>

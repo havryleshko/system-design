@@ -479,6 +479,14 @@ return (
                   )}
                 </div>
               )}
+              {clarifier && (
+                <div className="glass-panel rounded px-5 py-3" style={{ border: "1px solid rgba(154,182,194,0.25)", background: "rgba(9,12,15,0.6)" }}>
+                  <div className="text-xs uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent requires clarification</div>
+                  <p className="text-sm" style={{ color: 'var(--foreground)', marginTop: 'var(--spacing-xs)' }}>
+                    Answer the question above using the chat box to continue.
+                  </p>
+                </div>
+              )}
             </div>
           <div
             className="flex items-center px-4 py-2.5 shrink-0"
@@ -491,7 +499,7 @@ return (
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
               style={{ color: 'var(--foreground)', caretColor: 'var(--accent)' }}
-              placeholder="Type your message"
+              placeholder={clarifier ? "Answer the clarifier question…" : "Type your message"}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {

@@ -10,6 +10,7 @@ class State(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
     stream_messages: Annotated[list[BaseMessage], overwrite]
     goal: str
+    clarifier_done: Annotated[bool, overwrite]
     plan: str
     design: str
     output: str
