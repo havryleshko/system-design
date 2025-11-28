@@ -3,11 +3,10 @@
 import { useEffect, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
-import { fetchTrace, startRunStream, type StartStreamResult } from "../actions"
+import { fetchTrace, resumeClarifier, startRunStream, type StartStreamResult } from "../actions"
 import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
 import TracePanel from "./TracePanel"
 import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
-import ClarifierCard from "./ClarifierCard"
 import NodeStatusRibbon from "./NodeStatusRibbon"
 import MolecularLoader from "./MolecularLoader"
 
@@ -92,7 +91,7 @@ export default function ChatClient({
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const streamHandleRef = useRef<{ close: () => void } | null>(null)
-  const [clarifier, setClarifier] = useState<{ question: string; fields: string[]; interruptId: string | null; runId: string | null; threadId: string | null } | null>(null)
+  const [clarifier, setClarifier] = useState<{ question: string; interruptId: string | null; runId: string | null; threadId: string | null } | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
   const [streamError, setStreamError] = useState<string | null>(null)
 
@@ -181,56 +180,23 @@ export default function ChatClient({
     })
   }
 
-  async function send() {
-    const trimmed = input.trim()
-    if (!trimmed) return
-
-    const userMessage: ChatMessage = { role: "user", content: trimmed }
-    setMessages((prev) => [...prev, userMessage])
-    setInput("")
+  const attachStream = (threadId: string, runId: string, resetStatuses: boolean) => {
+    setStreamingContent("")
+    streamingContentRef.current = ""
+    setIsStreaming(true)
     setStreamError(null)
+    if (resetStatuses) setNodeStatuses([])
 
-    try {
-      const result = await startRunStream(trimmed)
-      if (!result.ok) {
-        if (result.status === 401) {
-          setStreamError("Your session expired. Redirecting to login…")
-          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
-          return
-        }
-        const errorMessage = formatStreamFailure(result)
-        setStreamError(errorMessage)
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
-        ])
-        return
-      }
-      if (!result.runId) {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: 'Run created but no run ID was returned' },
-        ])
-        return
-      }
-      const { runId: newRunId, threadId: newThreadId } = result
-      setCurrentRunId(newRunId)
-      setCurrentThreadId(newThreadId)
-      setStreamingContent("")
-      streamingContentRef.current = ""
-      setIsStreaming(true)
-      setClarifier(null)
-      setNodeStatuses([])
-      setStreamError(null)
+    if (streamHandleRef.current) {
+      try {
+        streamHandleRef.current.close()
+      } catch {}
+      streamHandleRef.current = null
+    }
 
-      if (streamHandleRef.current) {
-        try { streamHandleRef.current.close() } catch {}
-        streamHandleRef.current = null
-      }
-
-      const handle = openRunStream({
-        threadId: result.threadId,
-        runId: newRunId,
+    const handle = openRunStream({
+        threadId,
+        runId,
         onEvent: (evt: NormalizedStreamEvent) => {
           console.log("[chat] stream event", evt);
           if (evt.type === 'message-delta') {
@@ -278,16 +244,18 @@ export default function ChatClient({
                 typeof payload?.question === 'string'
                   ? payload.question
                   : 'The agent needs a bit more context before proceeding.'
-              const rawFields = Array.isArray(payload?.missing_fields) ? payload.missing_fields : []
-              const fields = rawFields
-                .map((field) => (typeof field === 'string' ? field.trim() : ''))
-                .filter((field): field is string => Boolean(field))
               setClarifier({
                 question,
-                fields,
                 interruptId: first.id,
-                runId: newRunId,
-                threadId: newThreadId,
+                runId,
+                threadId,
+              })
+              setMessages((prev) => {
+                const last = prev[prev.length - 1]
+                if (last && last.role === 'assistant' && last.content === question) {
+                  return prev
+                }
+                return [...prev, { role: 'assistant', content: question }]
               })
               setIsStreaming(false)
             }
@@ -313,40 +281,21 @@ export default function ChatClient({
                 setStreamingContent("")
                 streamingContentRef.current = ""
               }
-              const missingRaw = Array.isArray(values["missing_fields"]) ? values["missing_fields"] : []
-              const missingFields = missingRaw
-                .map((field) => (typeof field === 'string' ? field.trim() : ''))
-                .filter((field): field is string => Boolean(field))
-              const question =
-                typeof values["clarifier_question"] === "string"
-                  ? values["clarifier_question"].trim()
-                  : ""
-              if (missingFields.length === 0 || !question) {
-                setClarifier((prev) => {
-                  if (!prev) return prev
-                  if (prev.runId && prev.runId !== newRunId) return prev
-                  return null
-                })
-              } else {
-                setClarifier((prev) => {
-                  if (!prev || (prev.runId && prev.runId !== newRunId)) return prev
-                  return {
-                    ...prev,
-                    question: question || prev.question,
-                    fields: missingFields,
-                  }
-                })
-              }
+              setClarifier((prev) => {
+                if (!prev) return prev
+                if (prev.runId && prev.runId !== runId) return prev
+                return null
+              })
             }
             return
           }
           if (evt.type === 'run-completed') {
             setIsStreaming(false)
-              setClarifier(null)
+            setClarifier(null)
             setStreamError(null)
             startTransition(async () => {
               try {
-                const data = await fetchTrace(newRunId)
+                const data = await fetchTrace(runId)
                 setTrace(data)
                 setTraceError(null)
               } catch (err) {
@@ -363,6 +312,70 @@ export default function ChatClient({
         },
       })
       streamHandleRef.current = handle
+  }
+
+  async function send() {
+    const trimmed = input.trim()
+    if (!trimmed) return
+
+    const userMessage: ChatMessage = { role: "user", content: trimmed }
+    setMessages((prev) => [...prev, userMessage])
+    setInput("")
+    setStreamError(null)
+
+    if (clarifier && clarifier.runId && clarifier.threadId) {
+      try {
+        await resumeClarifier({
+          threadId: clarifier.threadId,
+          runId: clarifier.runId,
+          interruptId: clarifier.interruptId,
+          answer: trimmed,
+        })
+        setCurrentThreadId(clarifier.threadId)
+        setCurrentRunId(clarifier.runId)
+        setClarifier(null)
+        attachStream(clarifier.threadId, clarifier.runId, false)
+        return
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to resume clarifier"
+        setStreamError(message)
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `Sorry, something went wrong: ${message}` },
+        ])
+        setIsStreaming(false)
+        return
+      }
+    }
+
+    try {
+      const result = await startRunStream(trimmed)
+      if (!result.ok) {
+        if (result.status === 401) {
+          setStreamError("Your session expired. Redirecting to login…")
+          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
+          return
+        }
+        const errorMessage = formatStreamFailure(result)
+        setStreamError(errorMessage)
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
+        ])
+        return
+      }
+      if (!result.runId) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: 'Run created but no run ID was returned' },
+        ])
+        return
+      }
+      const { runId: newRunId, threadId: newThreadId } = result
+      setCurrentRunId(newRunId)
+      setCurrentThreadId(newThreadId)
+      setClarifier(null)
+      attachStream(newThreadId, newRunId, true)
     } catch (err) {
       console.error("Run failed", err)
       const message = err instanceof Error ? err.message : "Unknown error"
@@ -473,13 +486,12 @@ return (
                 </div>
               )}
               {clarifier && (
-                <ClarifierCard
-                  question={clarifier.question}
-                  fields={clarifier.fields}
-                  runId={clarifier.runId}
-                  interruptId={clarifier.interruptId}
-                  threadId={clarifier.threadId}
-                />
+                <div className="glass-panel rounded px-5 py-3" style={{ border: "1px solid rgba(154,182,194,0.25)", background: "rgba(9,12,15,0.6)" }}>
+                  <div className="text-xs uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent requires clarification</div>
+                  <p className="text-sm" style={{ color: 'var(--foreground)', marginTop: 'var(--spacing-xs)' }}>
+                    Answer the question above using the chat box to continue.
+                  </p>
+                </div>
               )}
             </div>
           <div
@@ -493,7 +505,7 @@ return (
             <input
               className="flex-1 bg-transparent text-sm focus:outline-none"
               style={{ color: 'var(--foreground)', caretColor: 'var(--accent)' }}
-              placeholder="Type your message"
+              placeholder={clarifier ? "Answer the clarifier question…" : "Type your message"}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {

@@ -10,10 +10,16 @@ class State(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
     stream_messages: Annotated[list[BaseMessage], overwrite]
     goal: str
-    missing_fields: Annotated[list[str], overwrite]
-    iterations: Annotated[int, overwrite]
-    clarifier_question: Annotated[str, overwrite]
+    clarifier_done: Annotated[bool, overwrite]
     plan: str
+    plan_state: Dict[str, Any]
+    plan_scope: Dict[str, Any]
+    research_state: Dict[str, Any]
+    design_state: Dict[str, Any]
+    critic_state: Dict[str, Any]
+    eval_state: Dict[str, Any]
+    orchestrator: Dict[str, Any]
+    run_phase: str
     design: str
     output: str
     grounding_queries: Annotated[list[str], operator.add]
@@ -30,5 +36,3 @@ class State(TypedDict, total=False):
 
 CRITIC_TARGET = 0.85
 MAX_CRITIC_PASSES = 1
-
-MAX_ITERATIONS = 2

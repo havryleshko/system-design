@@ -6,8 +6,6 @@ from app.schemas.runs import RunEvent, RunStart, RunStatus, RunTrace
 
 _RUNS: Dict[str, RunStatus] = {}
 _EVENTS: Dict[str, List[RunEvent]] = {}
-_THREADS: Dict[str, Dict[str, any]] = {}
-_HISTORY: Dict[str, List[Dict[str, any]]] = {}
 _TOKEN_USAGE: Dict[str, Dict[str, Dict[str, int]]] = {}
 
 def create_run(payload: RunStart) -> RunStatus:
@@ -61,22 +59,3 @@ def record_node_tokens(
     entry["prompt_tokens"] = max(0, entry.get("prompt_tokens", 0) + safe_prompt)
     entry["completion_tokens"] = max(0, entry.get("completion_tokens", 0) + safe_completion)
     entry["total_tokens"] = max(0, entry.get("total_tokens", 0) + safe_total)
-
-
-def create_thread() -> Dict[str, any]:
-    thread_id = str(uuid4())
-    state = {"id": thread_id, "values": {}, "metadata": {}, "next": None}
-    _THREADS[thread_id] = state
-    _HISTORY[thread_id] = [{"state": state, "checkpoint_id": "root"}]
-    return {"thread_id": thread_id, "id": thread_id}
-
-
-def get_thread_state(thread_id: str) -> Optional[Dict[str, any]]:
-    state = _THREADS.get(thread_id)
-    if not state:
-        return None
-    return state
-
-
-def get_thread_history(thread_id: str) -> Optional[List[Dict[str, any]]]:
-    return _HISTORY.get(thread_id)

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Literal
 import os
 import atexit
 from functools import lru_cache
@@ -7,101 +6,73 @@ from contextlib import ExitStack
 import logging
 from urllib.parse import urlparse
 
+from typing import Literal
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver  # pyright: ignore[reportMissingImports]
-from .state import State, MAX_ITERATIONS, CRITIC_TARGET, MAX_CRITIC_PASSES
-from .nodes import intent, clarifier, planner, kb_search, web_search, designer, critic, finaliser 
-# defining a graph with shared state
+
+from .state import State
+from .nodes import (
+    orchestrator,
+    planner_agent,
+    planner_scope,
+    planner_steps,
+    research_agent,
+    design_agent,
+    critic_agent,
+    evals_agent,
+)
+
 builder = StateGraph(State)
 
-# registering nodes
-builder.add_node("intent", intent)
-builder.add_node("clarifier", clarifier)
-builder.add_node("planner", planner)
-builder.add_node("kb_search", kb_search)
-builder.add_node("web_search", web_search)
-builder.add_node("designer", designer)
-builder.add_node("critic", critic)
-builder.add_node("finaliser", finaliser)
+builder.add_node("orchestrator", orchestrator)
+builder.add_node("planner_agent", planner_agent)
+builder.add_node("planner_scope", planner_scope)
+builder.add_node("planner_steps", planner_steps)
+builder.add_node("research", research_agent)
+builder.add_node("design", design_agent)
+builder.add_node("critic", critic_agent)
+builder.add_node("evals", evals_agent)
 
-builder.add_edge(START, "intent")
-
-def route_from_intent(state: State) -> Literal["clarifier", "planner"]:
-    missing = state.get("missing_fields") or []
-    it = int(state.get("iterations", 0) or 0)
-    if missing and it < MAX_ITERATIONS:
-        return "clarifier"
-    return "planner"
-
-builder.add_conditional_edges(
-    "intent", 
-    route_from_intent,
-    {"clarifier": "clarifier", "planner": "planner"},
-)
-
-# Clarifier funnels back into the main chain once the user has supplied enough context.
-builder.add_edge("clarifier", "planner")
+builder.add_edge(START, "orchestrator")
+builder.add_edge("evals", END)
+builder.add_edge("planner_agent", "orchestrator")
+builder.add_edge("planner_agent", "planner_scope")
+builder.add_edge("planner_agent", "planner_steps")
+builder.add_edge("planner_scope", "planner_agent")
+builder.add_edge("planner_steps", "planner_agent")
+builder.add_edge("research", "orchestrator")
+builder.add_edge("design", "orchestrator")
+builder.add_edge("critic", "orchestrator")
 
 
-from .nodes import last_human_text
-
-
-def route_from_planner(state: State) -> Literal["kb_search"]:
-    return "kb_search"
-
-
-def route_from_kb(state: State) -> Literal["web_search", "designer"]:
-    user_msg = last_human_text(state.get("messages", []))
-    trigger_keywords = ["web", "search", "google", "browse", "internet", "cite", "live"]
-    use_web = any(keyword in user_msg.lower() for keyword in trigger_keywords)
-    metadata = state.get("metadata", {}) or {}
-    qualified = int(metadata.get("kb_qualified") or 0)
-    required_hits = int(metadata.get("kb_required_hits") or 2)
-    force_web_on_low = metadata.get("kb_force_web_on_low_results", False)
-
-    if qualified < required_hits:
-        if force_web_on_low:
-            use_web = True
-        else:
-            use_web = False
-    elif not use_web:
-        use_web = False
-    return "web_search" if use_web else "designer"
+def _route_from_orchestrator(state: State) -> Literal["planner", "research", "design", "critic", "evals", "DONE"]:
+    phase = (state.get("run_phase") or "planner").lower()
+    if phase == "planner":
+        return "planner"
+    if phase == "research":
+        return "research"
+    if phase == "design":
+        return "design"
+    if phase == "critic":
+        return "critic"
+    if phase == "evals":
+        return "evals"
+    return "DONE"
 
 
 builder.add_conditional_edges(
-    "planner",
-    route_from_planner,
-    {"kb_search": "kb_search"}
+    "orchestrator",
+    _route_from_orchestrator,
+    {
+        "planner": "planner_agent",
+        "research": "research",
+        "design": "design",
+        "critic": "critic",
+        "evals": "evals",
+        "DONE": END,
+    },
 )
-
-builder.add_conditional_edges(
-    "kb_search",
-    route_from_kb,
-    {"web_search": "web_search", "designer": "designer"}
-)
-
-# after web_search always go to designer
-builder.add_edge("web_search", "designer")
-builder.add_edge("designer", "critic")
-
-
-def route_from_critic(state: State) -> Literal["finaliser", "designer"]:
-    score = float(state.get("critic_score") or 0)
-    loops = int(state.get("critic_iterations") or 0)
-    if score >= CRITIC_TARGET or loops >= MAX_CRITIC_PASSES:
-        return "finaliser"
-    return "designer"
-
-
-builder.add_conditional_edges(
-    "critic",
-    route_from_critic,
-    {"finaliser": "finaliser", "designer": "designer"}
-)
-
-builder.add_edge("finaliser", END)
-
 
 _CHECKPOINTER_STACK = ExitStack()
 atexit.register(_CHECKPOINTER_STACK.close)
@@ -110,22 +81,14 @@ logger = logging.getLogger("app.agent.system_design.graph")
 
 @lru_cache(maxsize=1)
 def _load_checkpointer() -> PostgresSaver:
-    """
-    Initialises the Postgres checkpointer once.
-
-    Clarifier resumes (thread interrupts) require persistent checkpoints,
-    so we fail fast if LANGGRAPH_PG_URL is missing or invalid rather than
-    letting requests reach the resume endpoint and 404.
-    """
     conn = os.getenv("LANGGRAPH_PG_URL")
     if not conn:
-        raise RuntimeError("LANGGRAPH_PG_URL not configured; clarifier resume requires persistent checkpoints")
+        raise RuntimeError("LANGGRAPH_PG_URL not configured")
     parsed = urlparse(conn)
     host = parsed.hostname or "unknown"
     logger.info("Initialising LangGraph Postgres checkpointer", {"host": host})
     try:
         saver = _CHECKPOINTER_STACK.enter_context(PostgresSaver.from_conn_string(conn))
-        # Ensure schema is ready before the first run triggers an interrupt.
         saver.setup()
         logger.info("LangGraph checkpointer ready", {"host": host})
         return saver
