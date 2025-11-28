@@ -12,6 +12,14 @@ class State(TypedDict, total=False):
     goal: str
     clarifier_done: Annotated[bool, overwrite]
     plan: str
+    plan_state: Dict[str, Any]
+    plan_scope: Dict[str, Any]
+    research_state: Dict[str, Any]
+    design_state: Dict[str, Any]
+    critic_state: Dict[str, Any]
+    eval_state: Dict[str, Any]
+    orchestrator: Dict[str, Any]
+    run_phase: str
     design: str
     output: str
     grounding_queries: Annotated[list[str], operator.add]

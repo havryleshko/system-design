@@ -15,6 +15,11 @@ type LogContext = {
   target?: string;
 };
 
+type SessionInfo = {
+  token: string;
+  userId: string | null;
+};
+
 function makeRequestId(prefix: string): string {
   if (typeof randomUUID === "function") return randomUUID();
   const rand = Math.random().toString(16).slice(2);
@@ -29,13 +34,34 @@ function logError(scope: string, message: string, extra?: Record<string, unknown
   console.error(`[${scope}] ${message}`, extra);
 }
 
-async function ensureSession(redirectTo: string, context?: LogContext): Promise<string> {
+type RunMetadata = Record<string, unknown>;
+
+function buildRunMetadata(options: {
+  userId?: string | null;
+  threadId?: string | null;
+  extra?: RunMetadata | null;
+}): RunMetadata | undefined {
+  const metadata: RunMetadata = {
+    client: "web-chat",
+    ...(options.extra ?? {}),
+  };
+  if (options.userId) metadata.user_id = options.userId;
+  if (options.threadId) metadata.thread_id = options.threadId;
+  if (Object.keys(metadata).length === 1 && metadata.client === "web-chat") {
+    // No meaningful metadata specified
+    return undefined;
+  }
+  return metadata;
+}
+
+async function ensureSession(redirectTo: string, context?: LogContext): Promise<SessionInfo> {
   const requestId = context?.requestId ?? makeRequestId("ensureSession");
   const supabase = await createServerSupabase();
   const {
     data: { session },
   } = await supabase.auth.getSession();
   const token = session?.access_token ?? null;
+  const userId = session?.user?.id ?? null;
   if (!token) {
     logWarn("auth.ensureSession", "Missing Supabase session", {
       requestId,
@@ -48,14 +74,22 @@ async function ensureSession(redirectTo: string, context?: LogContext): Promise<
     const query = params.toString();
     redirect(query ? `/login?${query}` : '/login');
   }
-  return token;
+  return { token, userId };
+}
+
+async function getSessionUserId(
+  redirectTo = "/chat",
+  context?: LogContext
+): Promise<string | null> {
+  const { userId } = await ensureSession(redirectTo, context);
+  return userId;
 }
 
 async function authFetch(input: string, init: RequestInit = {}, redirectTo = "/chat", context?: LogContext) {
   const requestId = context?.requestId ?? makeRequestId("authFetch");
   const scope = context?.scope ?? "auth.fetch";
   const target = context?.target ?? input;
-  const token = await ensureSession(redirectTo, { requestId, scope });
+  const { token } = await ensureSession(redirectTo, { requestId, scope });
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
   try {
@@ -92,17 +126,27 @@ export async function setThreadCookie(id: string): Promise<void> {
   store.set("thread_id", id, { path: "/", httpOnly: true });
 }
 
-export async function forceCreateThread(context?: LogContext): Promise<string> {
-  const requestId = context?.requestId ?? makeRequestId("thread-force");
-  const scope = "thread.forceCreate";
+type ForceCreateThreadOptions = LogContext & {
+  metadata?: Record<string, unknown>;
+  userId?: string | null;
+};
+
+export async function forceCreateThread(options: ForceCreateThreadOptions = {}): Promise<string> {
+  const requestId = options.requestId ?? makeRequestId("thread-force");
+  const scope = options.scope ?? "thread.forceCreate";
   const url = `${BASE}/threads`;
+  const userId =
+    typeof options.userId === "undefined"
+      ? await getSessionUserId("/chat", { requestId, scope })
+      : options.userId;
+  const metadata = buildRunMetadata({ userId, extra: options.metadata }) ?? {};
   try {
     const res = await authFetch(
       url,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ metadata: {} }),
+        body: JSON.stringify({ metadata }),
       },
       "/chat",
       { requestId, scope, target: url }
@@ -131,6 +175,8 @@ export async function forceCreateThread(context?: LogContext): Promise<string> {
 type CreateThreadOptions = {
   force?: boolean;
   requestId?: string;
+  metadata?: Record<string, unknown>;
+  userId?: string | null;
 };
 
 export async function createThread(options: CreateThreadOptions = {}): Promise<string> {
@@ -141,7 +187,11 @@ export async function createThread(options: CreateThreadOptions = {}): Promise<s
       const existing = await getThreadCookie();
       if (existing) return existing;
     }
-    const id = await forceCreateThread({ requestId, scope });
+    let userId = options.userId;
+    if (typeof userId === "undefined") {
+      userId = await getSessionUserId("/chat", { requestId, scope });
+    }
+    const id = await forceCreateThread({ requestId, scope, metadata: options.metadata, userId });
     revalidatePath("/result");
     revalidatePath("/chat");
     return id;
@@ -288,14 +338,23 @@ async function waitForState(threadId: string, runId: string, timeoutMs = 120_000
   };
 }
 
-async function invokeRun(threadId: string, body: Record<string, unknown>, wait: boolean, context?: LogContext): Promise<RunResult> {
+async function invokeRun(
+  threadId: string,
+  body: Record<string, unknown>,
+  wait: boolean,
+  context?: LogContext,
+  metadata?: Record<string, unknown>
+): Promise<RunResult> {
   const requestId = context?.requestId ?? makeRequestId("invokeRun");
   const scope = context?.scope ?? "run.invoke";
   const target = `${BASE}/threads/${threadId}/runs`;
-  const payload = {
+  const payload: Record<string, unknown> = {
     assistant_id: ASSISTANT_ID,
     ...body,
   };
+  if (metadata && Object.keys(metadata).length > 0) {
+    payload.metadata = metadata;
+  }
 
   try {
     const res = await authFetch(
@@ -345,11 +404,12 @@ async function executeRun({ input, wait }: { input: string; wait: boolean }): Pr
   };
 
   let forced = false;
+  const sessionUserId = await getSessionUserId("/chat", { requestId, scope: "run.execute" });
 
   while (true) {
     let tid: string;
     try {
-      tid = await createThread({ force: forced, requestId });
+      tid = await createThread({ force: forced, requestId, userId: sessionUserId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logError("run.execute", "Failed to create thread", { requestId, forced, error: message });
@@ -360,7 +420,14 @@ async function executeRun({ input, wait }: { input: string; wait: boolean }): Pr
     }
     let result: RunResult;
     try {
-      result = await invokeRun(tid, body, wait, { requestId, scope: "run.invoke", target: `${BASE}/threads/${tid}/runs` });
+      const metadata = buildRunMetadata({ userId: sessionUserId, threadId: tid }) ?? {};
+      result = await invokeRun(
+        tid,
+        body,
+        wait,
+        { requestId, scope: "run.invoke", target: `${BASE}/threads/${tid}/runs` },
+        metadata
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logError("run.execute", "invokeRun threw", { requestId, threadId: tid, error: message });
@@ -423,9 +490,11 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
       },
     };
 
+    const userId = await getSessionUserId("/chat", { requestId, scope });
+
     let threadId: string;
     try {
-      threadId = await createThread({ requestId });
+      threadId = await createThread({ requestId, userId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logError(scope, "createThread failed", { requestId, error: message });
@@ -434,7 +503,14 @@ export async function startRunStream(input: string): Promise<StartStreamResult> 
 
     let result: RunResult;
     try {
-      result = await invokeRun(threadId, body, false, { requestId, scope, target: `${BASE}/threads/${threadId}/runs` });
+      const metadata = buildRunMetadata({ userId, threadId }) ?? {};
+      result = await invokeRun(
+        threadId,
+        body,
+        false,
+        { requestId, scope, target: `${BASE}/threads/${threadId}/runs` },
+        metadata
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logError(scope, "invokeRun threw", { requestId, threadId, error: message });
