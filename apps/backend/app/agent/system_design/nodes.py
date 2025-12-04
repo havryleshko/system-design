@@ -1,12 +1,33 @@
 from typing import Any, Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from .state import State
-from langchain_openai import ChatOpenAI
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:  # pragma: no cover - fallback for test environments
+    class ChatOpenAI:  # type: ignore[too-many-ancestors]
+        def __init__(self, *args, **kwargs) -> None:
+            raise ImportError("langchain_openai is required to run planner nodes")
 from functools import lru_cache
 import json, os, math
 from datetime import datetime
-from langgraph.types import interrupt, Command
+try:
+    from langgraph.types import interrupt, Command
+except ImportError:  # pragma: no cover - fallback for local tests
+    class Command(dict):  # type: ignore[too-many-ancestors]
+        def __init__(self, **kwargs) -> None:
+            super().__init__(**kwargs)
+
+    def interrupt(payload):  # type: ignore[no-untyped-def]
+        raise RuntimeError("langgraph is required to interrupt planner flow")
 import logging
+try:
+    import requests
+except ImportError:  # pragma: no cover
+    requests = None  # type: ignore[assignment]
+try:
+    from supabase import create_client  # type: ignore[import]
+except ImportError:  # pragma: no cover
+    create_client = None  # type: ignore[assignment]
 try:
     from app.storage.memory import add_event, record_node_tokens
 except ImportError:
@@ -21,12 +42,39 @@ except ImportError:
     ) -> None:
             return None
 from app.schemas.runs import RunEvent
-from app.services.langgraph_store import (
-    load_long_term_messages,
-    record_long_term_memory,
-    search_semantic_memory,
-)
+try:
+    from app.services.langgraph_store import (
+        load_long_term_messages,
+        record_long_term_memory,
+        search_semantic_memory,
+    )
+except ImportError:  # pragma: no cover - optional for local tests
+    def load_long_term_messages(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return []
+
+    def record_long_term_memory(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return None
+
+    def search_semantic_memory(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return []
 logger = logging.getLogger(__name__)
+
+TAVILY_ENDPOINT = "https://api.tavily.com/search"
+
+
+@lru_cache(maxsize=1)
+def _get_supabase_client() -> Any:
+    if create_client is None:
+        return None
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return None
+    try:
+        return create_client(url, key)
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.warning("Supabase client init failed: %s", exc)
+        return None
 
 
 def _coerce_str(value: Any, *, max_len: Optional[int] = None) -> Optional[str]:
@@ -150,6 +198,135 @@ def _strip_nulls(value: Any) -> Any:
     if isinstance(value, list):
         return [_strip_nulls(item) for item in value if item is not None]
     return value
+
+
+def _limit_strings(items: list[str], *, limit: int = 8) -> list[str]:
+    seen: set[str] = set()
+    trimmed: list[str] = []
+    for item in items:
+        if not item:
+            continue
+        if item in seen:
+            continue
+        trimmed.append(item)
+        seen.add(item)
+        if len(trimmed) >= limit:
+            break
+    return trimmed
+
+
+def _limit_dicts(items: list[dict[str, Any]], *, limit: int = 8) -> list[dict[str, Any]]:
+    seen: set[tuple[str, ...]] = set()
+    trimmed: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = tuple(sorted(f"{k}:{item.get(k)}" for k in item.keys()))
+        if key in seen:
+            continue
+        trimmed.append(item)
+        seen.add(key)
+        if len(trimmed) >= limit:
+            break
+    return trimmed
+
+
+def _research_payload(
+    source: str,
+    status: str,
+    *,
+    highlights: Optional[list[str]] = None,
+    citations: Optional[list[dict[str, Any]]] = None,
+    risks: Optional[list[str]] = None,
+    notes: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "source": source,
+        "status": status,
+        "highlights": highlights or [],
+        "citations": citations or [],
+        "risks": risks or [],
+    }
+    if notes:
+        payload["notes"] = notes
+    if reason:
+        payload["reason"] = reason
+    return payload
+
+
+def _fetch_supabase_entries(goal: str) -> list[dict[str, Any]]:
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    table = os.getenv("SUPABASE_KB_TABLE", "knowledge_base")
+    try:
+        query = client.table(table).select("*").limit(5)
+        if goal:
+            try:
+                query = query.ilike("goal", f"%{goal[:60]}%")
+            except AttributeError:
+                pass
+        response = query.execute()
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.warning("Supabase query failed: %s", exc)
+        return []
+    data = getattr(response, "data", None)
+    if data is None and isinstance(response, dict):
+        data = response.get("data")
+    return data or []
+
+
+def _github_request(url: str, *, token: Optional[str]) -> Optional[Any]:
+    if requests is None:
+        return None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "system-design-agent",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code >= 400:
+            logger.warning("GitHub API error %s for %s", resp.status_code, url)
+            return None
+        return resp.json()
+    except Exception as exc:  # pragma: no cover - network failure
+        logger.warning("GitHub API request failed: %s", exc)
+        return None
+
+
+def _tavily_search(query: str) -> list[dict[str, Any]]:
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key or requests is None:
+        return []
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "max_results": 5,
+        "search_depth": "basic",
+    }
+    try:
+        resp = requests.post(TAVILY_ENDPOINT, json=payload, timeout=15)
+        if resp.status_code >= 400:
+            logger.warning("Tavily search failed with %s", resp.status_code)
+            return []
+        data = resp.json()
+    except Exception as exc:  # pragma: no cover - network failure
+        logger.warning("Tavily search request failed: %s", exc)
+        return []
+    results = data.get("results") if isinstance(data, dict) else None
+    if isinstance(results, list):
+        return [item for item in results if isinstance(item, dict)]
+    return []
+
+
+def _summarise_highlights(highlights: list[str]) -> str:
+    if not highlights:
+        return ""
+    bullet_points = "\n".join(f"- {line}" for line in highlights[:5])
+    return bullet_points
 
 
 def _fallback_architecture(goal: str, design_brief: str) -> Dict[str, Any]:
@@ -777,13 +954,236 @@ def planner_steps(state: State) -> Dict[str, any]:
     }
 
 
+def knowledge_base_node(state: State) -> Dict[str, Any]:
+    metadata = state.get("metadata") or {}
+    goal = _coerce_str(state.get("goal"), max_len=320) or ""
+
+    entries = metadata.get("kb_entries")
+    sources: list[dict[str, Any]] = []
+    note = None
+    if isinstance(entries, list) and entries:
+        sources = [entry for entry in entries if isinstance(entry, dict)]
+        note = "metadata entries"
+    else:
+        sources = _fetch_supabase_entries(goal)
+        note = "supabase lookup" if sources else None
+
+    highlights: list[str] = []
+    citations: list[dict[str, Any]] = []
+    risks: list[str] = []
+
+    for entry in sources:
+        summary = _coerce_str(entry.get("summary") or entry.get("note"), max_len=280)
+        if summary:
+            highlights.append(summary)
+        url = _coerce_str(entry.get("url") or entry.get("link"), max_len=320)
+        if url:
+            citations.append(
+                {
+                    "source": "knowledge_base",
+                    "url": url,
+                    "title": _coerce_str(entry.get("title"), max_len=160) or "Knowledge base reference",
+                }
+            )
+        risk_items = entry.get("risks") or entry.get("warnings") or []
+        if isinstance(risk_items, (list, tuple)):
+            for risk in risk_items:
+                text = _coerce_str(risk, max_len=160)
+                if text:
+                    risks.append(text)
+
+    status = "completed" if highlights or citations else "skipped"
+    reason = None if status == "completed" else "No knowledge base entries returned"
+    return _research_payload(
+        "knowledge_base",
+        status,
+        highlights=_limit_strings(highlights),
+        citations=_limit_dicts(citations),
+        risks=_limit_strings(risks),
+        notes=note,
+        reason=reason,
+    )
+
+
+def github_api_node(state: State) -> Dict[str, Any]:
+    metadata = state.get("metadata") or {}
+    repo = metadata.get("github_repo")
+    repo_data = metadata.get("github_repo_data")
+    issues_data = metadata.get("github_issue_data")
+    note: Optional[str] = None
+
+    if isinstance(repo_data, dict):
+        note = "metadata snapshot"
+    else:
+        repo = _coerce_str(repo, max_len=120)
+        if not repo:
+            return _research_payload(
+                "github_api",
+                "skipped",
+                notes="github_repo metadata missing",
+                reason="github_repo not set in metadata",
+            )
+        if requests is None:
+            return _research_payload(
+                "github_api",
+                "skipped",
+                notes="requests library unavailable",
+                reason="requests dependency missing",
+            )
+        token = _coerce_str(metadata.get("github_token"), max_len=200) or _coerce_str(
+            os.getenv("GITHUB_TOKEN"), max_len=200
+        )
+        base_url = f"https://api.github.com/repos/{repo}"
+        repo_data = _github_request(base_url, token=token) or {}
+        issues_resp = _github_request(
+            f"{base_url}/issues?state=open&per_page=5", token=token
+        )
+        issues_data = (
+            issues_resp
+            if isinstance(issues_resp, list)
+            else issues_resp.get("items", [])
+            if isinstance(issues_resp, dict)
+            else []
+        )
+        note = "github api"
+
+    highlights: list[str] = []
+    citations: list[dict[str, Any]] = []
+    risks: list[str] = []
+
+    description = _coerce_str(repo_data.get("description"), max_len=240)
+    if description:
+        highlights.append(f"{repo or repo_data.get('full_name')}: {description}")
+    language = _coerce_str(repo_data.get("language"), max_len=80)
+    if language:
+        highlights.append(f"Primary language: {language}")
+    stars = repo_data.get("stargazers_count")
+    if isinstance(stars, int):
+        highlights.append(f"GitHub stars: {stars}")
+    html_url = _coerce_str(repo_data.get("html_url"), max_len=320)
+    if html_url:
+        citations.append({"source": "github_repo", "url": html_url, "title": repo_data.get("full_name") or repo})
+
+    for issue in issues_data[:5]:
+        if not isinstance(issue, dict):
+            continue
+        title = _coerce_str(issue.get("title"), max_len=200)
+        if title:
+            risks.append(f"Issue: {title}")
+        link = _coerce_str(issue.get("html_url"), max_len=320)
+        if link:
+            citations.append({"source": "github_issue", "url": link, "title": title or "Issue"})
+
+    status = "completed" if highlights or citations else "skipped"
+    reason = None if status == "completed" else "GitHub data unavailable"
+    return _research_payload(
+        "github_api",
+        status,
+        highlights=_limit_strings(highlights),
+        citations=_limit_dicts(citations),
+        risks=_limit_strings(risks),
+        notes=note,
+        reason=reason,
+    )
+
+
+def web_search_node(state: State) -> Dict[str, Any]:
+    metadata = state.get("metadata") or {}
+    manual_results = metadata.get("web_results")
+    query = _coerce_str(metadata.get("search_query"), max_len=320) or _coerce_str(state.get("goal"), max_len=320)
+
+    if isinstance(manual_results, list) and manual_results:
+        results = [item for item in manual_results if isinstance(item, dict)]
+        note = "metadata results"
+    else:
+        if not query:
+            return _research_payload(
+                "web_search",
+                "skipped",
+                notes="No query available",
+                reason="goal and search_query missing",
+            )
+        results = _tavily_search(query)
+        note = "tavily" if results else None
+
+    highlights: list[str] = []
+    citations: list[dict[str, Any]] = []
+
+    for item in results:
+        snippet = _coerce_str(item.get("content") or item.get("snippet"), max_len=320)
+        title = _coerce_str(item.get("title"), max_len=160)
+        url = _coerce_str(item.get("url"), max_len=320)
+        if snippet:
+            highlights.append(snippet)
+        if url:
+            citations.append({"source": "web_search", "url": url, "title": title or snippet or "search result"})
+
+    status = "completed" if highlights or citations else "skipped"
+    reason = None if status == "completed" else "No web results returned"
+    return _research_payload(
+        "web_search",
+        status,
+        highlights=_limit_strings(highlights),
+        citations=_limit_dicts(citations),
+        risks=[],
+        notes=note,
+        reason=reason,
+    )
+
+
 def research_agent(state: State) -> Dict[str, any]:
-    """Placeholder research agent."""
+    node_outputs = {
+        "knowledge_base": knowledge_base_node(state),
+        "github_api": github_api_node(state),
+        "web_search": web_search_node(state),
+    }
+
+    highlights = _limit_strings(
+        [
+            _coerce_str(item, max_len=320) or ""
+            for result in node_outputs.values()
+            for item in result.get("highlights", [])
+        ]
+    )
+    citations = _limit_dicts(
+        [
+            cite
+            for result in node_outputs.values()
+            for cite in result.get("citations", [])
+            if isinstance(cite, dict)
+        ]
+    )
+    risks = _limit_strings(
+        [
+            _coerce_str(item, max_len=200) or ""
+            for result in node_outputs.values()
+            for item in result.get("risks", [])
+        ]
+    )
+
+    has_completion = any(result.get("status") == "completed" for result in node_outputs.values())
+    status = "completed" if has_completion else "skipped"
+
+    existing_state = state.get("research_state") or {}
+    merged_nodes = dict(existing_state.get("nodes") or {})
+    merged_nodes.update(node_outputs)
+
+    research_state = {
+        **existing_state,
+        "status": status,
+        "nodes": merged_nodes,
+        "highlights": highlights,
+        "citations": citations,
+        "risks": risks,
+    }
+
+    summary = _summarise_highlights(highlights)
+
     return {
-        "research_state": {
-            "status": "pending",
-            "notes": "Research agent not yet implemented.",
-        },
+        "research_state": research_state,
+        "research_highlights": highlights,
+        "research_citations": citations,
+        "research_summary": summary,
         "run_phase": "design",
     }
 
