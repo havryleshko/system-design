@@ -1,33 +1,17 @@
 from typing import Any, Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from .state import State
-try:
-    from langchain_openai import ChatOpenAI
-except ImportError:  # pragma: no cover - fallback for test environments
-    class ChatOpenAI:  # type: ignore[too-many-ancestors]
-        def __init__(self, *args, **kwargs) -> None:
-            raise ImportError("langchain_openai is required to run planner nodes")
+from langchain_openai import ChatOpenAI
+
 from functools import lru_cache
 import json, os, math
 from datetime import datetime
-try:
-    from langgraph.types import interrupt, Command
-except ImportError:  # pragma: no cover - fallback for local tests
-    class Command(dict):  # type: ignore[too-many-ancestors]
-        def __init__(self, **kwargs) -> None:
-            super().__init__(**kwargs)
 
-    def interrupt(payload):  # type: ignore[no-untyped-def]
-        raise RuntimeError("langgraph is required to interrupt planner flow")
+from langgraph.types import interrupt, Command
 import logging
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None  # type: ignore[assignment]
-try:
-    from supabase import create_client  # type: ignore[import]
-except ImportError:  # pragma: no cover
-    create_client = None  # type: ignore[assignment]
+import requests
+from supabase import create_client  
+
 try:
     from app.storage.memory import add_event, record_node_tokens
 except ImportError:
@@ -48,14 +32,14 @@ try:
         record_long_term_memory,
         search_semantic_memory,
     )
-except ImportError:  # pragma: no cover - optional for local tests
-    def load_long_term_messages(*args, **kwargs):  # type: ignore[no-untyped-def]
+except ImportError: 
+    def load_long_term_messages(*args, **kwargs):  #
         return []
 
-    def record_long_term_memory(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def record_long_term_memory(*args, **kwargs):
         return None
 
-    def search_semantic_memory(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def search_semantic_memory(*args, **kwargs):
         return []
 logger = logging.getLogger(__name__)
 
@@ -72,7 +56,7 @@ def _get_supabase_client() -> Any:
         return None
     try:
         return create_client(url, key)
-    except Exception as exc:  # pragma: no cover - optional dependency
+    except Exception as exc: 
         logger.warning("Supabase client init failed: %s", exc)
         return None
 
@@ -133,20 +117,85 @@ def _coerce_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _compute_plan_quality(scope: dict[str, Any] | None, steps: Sequence[dict[str, Any]] | None) -> float:
+def _compute_plan_quality(scope: dict[str, Any] | None, steps: Sequence[dict[str, Any]] | None, state: Optional[State] = None) -> float:
     scope = scope or {}
-    risks = len(scope.get("risks") or [])
-    blocking = len(scope.get("blocking_issues") or [])
-    info = len(scope.get("info_issues") or [])
-    step_count = len(steps or [])
-
-    # Simple heuristic: more steps and fewer risks/issues raise the score.
-    base = 0.4 + 0.08 * min(step_count, 5)
-    penalty = 0.15 * blocking + 0.1 * info + 0.08 * risks
-    quality = base - penalty
+    steps = steps or []
+    step_summaries: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        title = _coerce_str(step.get("title"), max_len=120) or ""
+        detail = _coerce_str(step.get("detail"), max_len=240) or ""
+        if title or detail:
+            step_summaries.append(f"- {title}: {detail}" if title and detail else f"- {title or detail}")
+    
+    plan_text = "\n".join(step_summaries) if step_summaries else "No plan steps provided"
+    
+    # Schema for LLM response
+    schema_desc = json.dumps(
+        {
+            "quality": 0.8,
+            "notes": "Brief rationale for the quality score",
+        },
+        ensure_ascii=False,
+    )
+    
+    sys = SystemMessage(content=(
+        "You are a senior system design planner evaluating plan quality. "
+        "Return JSON only matching this schema:\n"
+        f"{schema_desc}\n"
+        "Score quality from 0.0 to 1.0 based on: clarity of steps, coverage of requirements, "
+        "presence of risks/issues, dependencies, and overall feasibility. "
+        "Higher scores indicate clearer, more complete plans with fewer blockers."
+    ))
+    
+    # Build prompt with context
+    prompt_lines: list[str] = []
+    if plan_text:
+        prompt_lines.append(f"Plan steps:\n{plan_text}")
+    
+    issues = scope.get("issues") or []
+    if issues:
+        prompt_lines.append("\nKnown issues:\n" + "\n".join(f"- {_coerce_str(i, max_len=200)}" for i in issues if i))
+    
+    risks = scope.get("risks") or []
+    if risks:
+        prompt_lines.append("\nKnown risks:\n" + "\n".join(f"- {_coerce_str(r, max_len=200)}" for r in risks if r))
+    
+    blocking = scope.get("blocking_issues") or []
+    if blocking:
+        prompt_lines.append("\nBlocking issues:\n" + "\n".join(f"- {_coerce_str(b, max_len=200)}" for b in blocking if b))
+    
     if scope.get("needs_clarifier"):
-        quality -= 0.2
-    return max(0.0, min(1.0, quality))
+        prompt_lines.append("\nNote: Plan requires clarifier input before proceeding.")
+    
+    prompt = "\n".join(prompt_lines) if prompt_lines else "No plan context provided."
+    
+    run_id = state.get("metadata", {}).get("run_id") if state else None
+    
+    try:
+        raw = call_brain(
+            [sys, HumanMessage(content=prompt)],
+            state=state,
+            run_id=run_id,
+            node="planner_quality",
+        )
+        parsed = json_only(raw) or {}
+        quality_val = parsed.get("quality")
+        
+        if quality_val is not None:
+            try:
+                quality_float = float(quality_val)
+                return max(0.0, min(1.0, quality_float))
+            except (TypeError, ValueError):
+                logger.warning("_compute_plan_quality: invalid quality value: %s", quality_val)
+                return 0.0
+        else:
+            logger.warning("_compute_plan_quality: LLM response missing quality field")
+            return 0.0
+    except Exception as exc:
+        logger.warning("_compute_plan_quality: LLM call failed: %s", exc)
+        return 0.0
 
 
 def _clarifier_answer_to_text(value: Any) -> str:
@@ -515,15 +564,11 @@ def call_brain(
     user_id = metadata.get("user_id")
     thread_id = metadata.get("thread_id")
     process_id = thread_id or run_id or metadata.get("run_id")
-
-    # Hybrid memory: episodic (recent) + semantic (relevant)
     episodic_messages = load_long_term_messages(
         user_id=user_id,
         process_id=process_id,
         limit=12,
     )
-    
-    # Extract query from current prompt for semantic search
     semantic_messages: list[BaseMessage] = []
     if prompt_msg and user_id:
         query_text = get_content(prompt_msg)
@@ -536,19 +581,13 @@ def call_brain(
                 )
             except Exception as exc:
                 logger.warning("Semantic search failed, using episodic only: %s", exc)
-    
-    # Merge episodic and semantic, deduplicating by content
     memory_messages: list[BaseMessage] = []
     seen_content: set[str] = set()
-    
-    # Add episodic first (preserves chronological order)
     for msg in episodic_messages:
         content = get_content(msg)
         if content and content not in seen_content:
             seen_content.add(content)
             memory_messages.append(msg)
-    
-    # Add semantic results (most relevant first)
     for msg in semantic_messages:
         content = get_content(msg)
         if content and content not in seen_content:
@@ -880,7 +919,7 @@ def planner_steps(state: State) -> Dict[str, any]:
                 },
             )
         normalized_steps = normalized_steps[:5]
-        quality = _compute_plan_quality(scope, normalized_steps)
+        quality = _compute_plan_quality(scope, normalized_steps, state)
         summary_text = "\n".join(f"- {step['title']}" for step in normalized_steps)
         return {
             "plan": summary_text,
@@ -936,7 +975,7 @@ def planner_steps(state: State) -> Dict[str, any]:
         )
 
     normalized_steps = normalized_steps[:5]
-    quality = _compute_plan_quality(scope, normalized_steps)
+    quality = _compute_plan_quality(scope, normalized_steps, state)
     summary_text = _coerce_str(summary, max_len=600) or "\n".join(
         f"- {step['title']}" for step in normalized_steps
     )
@@ -1643,7 +1682,10 @@ def design_agent(state: State) -> Dict[str, any]:
 def critic_agent(state: State) -> Dict[str, any]:
     """Placeholder critic agent."""
     return {
-        "critic_state": critic_state,
+        "critic_state": {
+            "status": "pending",
+            "notes": "Critic agent not yet implemented.",
+        },
     }
 
 
