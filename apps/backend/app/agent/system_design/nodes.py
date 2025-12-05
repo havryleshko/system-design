@@ -1188,26 +1188,462 @@ def research_agent(state: State) -> Dict[str, any]:
     }
 
 
-def design_agent(state: State) -> Dict[str, any]:
-    """Placeholder design agent."""
+def _initial_design_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
+    data = existing if isinstance(existing, dict) else {}
     return {
-        "design_state": {
-            "status": "pending",
-            "notes": "Design agent not yet implemented.",
+        "status": _coerce_str(data.get("status")) or "pending",
+        "components": data.get("components") or {},
+        "diagram": data.get("diagram") or {},
+        "costs": data.get("costs") or {},
+        "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=160),
+    }
+
+
+def _plan_has_component_hints(plan_state: dict[str, Any]) -> bool:
+    steps = plan_state.get("steps") or []
+    if not isinstance(steps, list):
+        return False
+    keywords = {"component", "service", "module", "microservice", "database"}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        text_parts = [
+            _coerce_str(step.get("title"), max_len=200) or "",
+            _coerce_str(step.get("detail"), max_len=400) or "",
+        ]
+        text = " ".join(text_parts).lower()
+        if any(keyword in text for keyword in keywords):
+            return True
+    return False
+
+
+def _design_subnode_order(plan_state: dict[str, Any]) -> list[str]:
+    cost_node = "cost_est_node"
+    component_first = _plan_has_component_hints(plan_state)
+    primary = ["component_library_node", "diagram_generator_node"]
+    if not component_first:
+        primary.reverse()
+    return primary + [cost_node]
+
+
+def _call_design_subnode(node_name: str, state: State) -> dict[str, Any]:
+    func = globals().get(node_name)
+    if not callable(func):
+        note = f"{node_name} not implemented"
+        return {"status": "skipped", "notes": note}
+    try:
+        result = func(state)
+        if not isinstance(result, dict):
+            raise ValueError(f"{node_name} must return a dict result.")
+        return result
+    except Exception as exc:  # pragma: no cover - defensive guardrail
+        logger.warning("Design subnode %s failed: %s", node_name, exc)
+        return {"status": "skipped", "notes": f"{node_name} error: {exc}"}
+
+
+def _append_design_note(notes: list[str], message: Optional[str]) -> list[str]:
+    text = _coerce_str(message, max_len=160)
+    if text and text not in notes:
+        updated = notes + [text]
+        return updated[-8:]
+    return notes
+
+
+def component_library_node(state: State) -> Dict[str, Any]:
+    component_file = os.path.join(
+        os.path.dirname(__file__),
+        "component_library.json"
+    )
+    components: list[dict[str, Any]] = []
+    metadata: dict[str, Any] = {
+        "source_path": component_file,
+        "count": 0,
+    }
+    notes: list[str] = []
+    
+    try:
+        if not os.path.exists(component_file):
+            notes.append(f"Component library file not found: {component_file}")
+            return {
+                "status": "skipped",
+                "components": [],
+                "metadata": metadata,
+                "notes": notes,
+            }
+        
+        with open(component_file, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        
+        if not isinstance(raw_data, list):
+            notes.append("Component library file does not contain a JSON array")
+            return {
+                "status": "skipped",
+                "components": [],
+                "metadata": metadata,
+                "notes": notes,
+            }
+        
+        # Normalize and validate entries
+        for idx, entry in enumerate(raw_data):
+            if not isinstance(entry, dict):
+                continue
+            component_id = _coerce_str(entry.get("id"), max_len=64)
+            if not component_id:
+                continue
+            
+            # Keep essential fields, coerce others
+            normalized: dict[str, Any] = {
+                "id": component_id,
+                "name": _coerce_str(entry.get("name"), max_len=120) or component_id,
+                "type": _coerce_str(entry.get("type"), max_len=32) or "unknown",
+                "description": _coerce_str(entry.get("description"), max_len=400) or "",
+            }
+            
+            # Optional fields
+            if entry.get("owner"):
+                normalized["owner"] = _coerce_str(entry.get("owner"), max_len=80)
+            if entry.get("inputs"):
+                normalized["inputs"] = _coerce_str_list(entry.get("inputs"), max_items=8, max_len=200)
+            if entry.get("outputs"):
+                normalized["outputs"] = _coerce_str_list(entry.get("outputs"), max_items=8, max_len=200)
+            if entry.get("dependencies"):
+                normalized["dependencies"] = _coerce_str_list(entry.get("dependencies"), max_items=8, max_len=120)
+            if entry.get("protocols"):
+                normalized["protocols"] = _coerce_str_list(entry.get("protocols"), max_items=6, max_len=80)
+            if entry.get("refs"):
+                normalized["refs"] = _coerce_str_list(entry.get("refs"), max_items=5, max_len=320)
+            if entry.get("repos"):
+                normalized["repos"] = _coerce_str_list(entry.get("repos"), max_items=5, max_len=200)
+            
+            components.append(normalized)
+        
+        metadata["count"] = len(components)
+        
+        if components:
+            status = "completed"
+            notes.append(f"Loaded {len(components)} component(s) from library")
+        else:
+            status = "skipped"
+            notes.append("Component library file is empty or contains no valid entries")
+        
+    except json.JSONDecodeError as exc:
+        logger.warning("component_library_node: JSON parse error: %s", exc)
+        notes.append(f"Failed to parse component library JSON: {exc}")
+        return {
+            "status": "skipped",
+            "components": [],
+            "metadata": metadata,
+            "notes": notes,
+        }
+    except Exception as exc:  # pragma: no cover - defensive guardrail
+        logger.warning("component_library_node: unexpected error: %s", exc)
+        notes.append(f"Error loading component library: {exc}")
+        return {
+            "status": "skipped",
+            "components": [],
+            "metadata": metadata,
+            "notes": notes,
+        }
+    
+    return {
+        "status": status,
+        "components": components,
+        "metadata": metadata,
+        "notes": notes,
+    }
+
+
+def diagram_generator_node(state: State) -> Dict[str, Any]:
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+    components_data = design_state.get("components") or {}
+    components_list = components_data.get("components") or []
+    
+    notes: list[str] = []
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    node_ids: set[str] = set()
+    
+    # Extract nodes from components
+    for comp in components_list:
+        if not isinstance(comp, dict):
+            continue
+        comp_id = _coerce_str(comp.get("id"), max_len=64)
+        comp_name = _coerce_str(comp.get("name"), max_len=120) or comp_id
+        comp_type = _coerce_str(comp.get("type"), max_len=32) or "unknown"
+        
+        if not comp_id or comp_id in node_ids:
+            continue
+        
+        node_ids.add(comp_id)
+        nodes.append({
+            "id": comp_id,
+            "label": comp_name,
+            "type": comp_type,
+        })
+        
+        # Extract dependency edges
+        deps = comp.get("dependencies") or []
+        if isinstance(deps, list):
+            for dep in deps:
+                dep_str = _coerce_str(dep, max_len=120)
+                if not dep_str:
+                    continue
+                # Try to match dependency to a component ID (simple heuristic)
+                dep_id = None
+                for other_comp in components_list:
+                    if not isinstance(other_comp, dict):
+                        continue
+                    other_id = _coerce_str(other_comp.get("id"), max_len=64)
+                    other_name = _coerce_str(other_comp.get("name"), max_len=120) or ""
+                    if other_id and (other_id.lower() in dep_str.lower() or other_name.lower() in dep_str.lower()):
+                        dep_id = other_id
+                        break
+                
+                if dep_id and dep_id in node_ids:
+                    edges.append({
+                        "source": dep_id,
+                        "target": comp_id,
+                        "label": dep_str[:80],
+                        "type": "dependency",
+                    })
+    plan_steps = plan_state.get("steps") or []
+    if isinstance(plan_steps, list):
+        for step in plan_steps:
+            if not isinstance(step, dict):
+                continue
+            step_title = _coerce_str(step.get("title"), max_len=200) or ""
+            step_detail = _coerce_str(step.get("detail"), max_len=400) or ""
+            step_text = f"{step_title} {step_detail}".lower()
+
+            mentioned_ids: list[str] = []
+            for comp in components_list:
+                if not isinstance(comp, dict):
+                    continue
+                comp_id = _coerce_str(comp.get("id"), max_len=64)
+                comp_name = _coerce_str(comp.get("name"), max_len=120) or ""
+                if comp_id and comp_id in node_ids:
+                    if comp_id.lower() in step_text or comp_name.lower() in step_text:
+                        mentioned_ids.append(comp_id)
+
+            for i in range(len(mentioned_ids) - 1):
+                edges.append({
+                    "source": mentioned_ids[i],
+                    "target": mentioned_ids[i + 1],
+                    "label": step_title[:60] if step_title else "data_flow",
+                    "type": "data_flow",
+                })
+    
+    # Generate Mermaid text
+    mermaid_lines: list[str] = ["flowchart TD"]
+    
+    # Add nodes with type-based shapes
+    for node in nodes:
+        node_id = node["id"]
+        node_label = node["label"].replace('"', "'")
+        node_type = node.get("type", "").lower()
+        
+        if node_type == "db":
+            mermaid_lines.append(f'    {node_id}[( "{node_label}" )]')
+        elif node_type == "api":
+            mermaid_lines.append(f'    {node_id}["{node_label}"]')
+        else:
+            mermaid_lines.append(f'    {node_id}["{node_label}"]')
+    
+    # Add edges
+    for edge in edges:
+        source = edge["source"]
+        target = edge["target"]
+        label = edge.get("label", "")
+        edge_type = edge.get("type", "")
+        
+        label_part = f'|"{label}"|' if label else ""
+        mermaid_lines.append(f'    {source} -->{label_part} {target}')
+    
+    mermaid_text = "\n".join(mermaid_lines) if mermaid_lines else ""
+    
+    # Build simple JSON graph
+    graph_json = {
+        "nodes": nodes,
+        "edges": edges,
+    }
+    
+    # Determine status
+    if nodes:
+        status = "completed"
+        notes.append(f"Generated diagram with {len(nodes)} node(s) and {len(edges)} edge(s)")
+    else:
+        status = "skipped"
+        notes.append("No components found in design_state to generate diagram")
+    
+    return {
+        "status": status,
+        "mermaid": mermaid_text,
+        "graph": graph_json,
+        "notes": notes,
+    }
+
+
+def cost_est_node(state: State) -> Dict[str, Any]:
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+    components_data = design_state.get("components") or {}
+    components_list = components_data.get("components") or []
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
+    
+    if not components_list:
+        return {
+            "status": "skipped",
+            "estimates": [],
+            "total": {"monthly_usd": 0, "one_time_usd": 0},
+        }
+    comp_summaries: list[str] = []
+    for comp in components_list:
+        if not isinstance(comp, dict):
+            continue
+        comp_id = _coerce_str(comp.get("id"), max_len=64) or "unknown"
+        comp_name = _coerce_str(comp.get("name"), max_len=120) or comp_id
+        comp_type = _coerce_str(comp.get("type"), max_len=32) or "unknown"
+        comp_desc = _coerce_str(comp.get("description"), max_len=200) or ""
+        comp_summaries.append(f"- {comp_id} ({comp_name}, type: {comp_type}): {comp_desc}")
+    
+    components_text = "\n".join(comp_summaries) if comp_summaries else "No components listed"
+    
+    schema_desc = json.dumps(
+        {
+            "estimates": [
+                {
+                    "component_id": "auth-service-supabase",
+                    "name": "Component name",
+                    "monthly_usd": 50.0,
+                    "one_time_usd": 0.0,
+                    "notes": "Brief cost rationale",
+                }
+            ],
         },
-        "run_phase": "critic",
+        ensure_ascii=False,
+    )
+    
+    sys = SystemMessage(content=(
+        "You are a cost estimation expert for system architectures. "
+        "Return JSON only matching this schema:\n"
+        f"{schema_desc}\n"
+        "Provide approximate cost estimates in USD. "
+        "monthly_usd: recurring monthly costs (hosting, services, maintenance). "
+        "one_time_usd: one-time setup/initial costs (development, migration, setup). "
+        "Include a brief notes field explaining the estimate rationale. "
+        "Estimates should be approximate and reasonable for the component type and scale."
+    ))
+    
+    prompt_lines = ["Estimate costs for the following architecture components:\n"]
+    prompt_lines.append(components_text)
+    if plan_summary:
+        prompt_lines.append(f"\nPlan context:\n{plan_summary}")
+    prompt = "\n".join(prompt_lines)
+    
+    run_id = state.get("metadata", {}).get("run_id")
+    try:
+        raw = call_brain(
+            [sys, HumanMessage(content=prompt)],
+            state=state,
+            run_id=run_id,
+            node="cost_est_node",
+        )
+        parsed = json_only(raw) or {}
+        estimates_raw = parsed.get("estimates") or []
+    except Exception as exc:
+        logger.warning("cost_est_node: LLM call failed: %s", exc)
+        return {
+            "status": "skipped",
+            "estimates": [],
+            "total": {"monthly_usd": 0, "one_time_usd": 0},
+        }
+    estimates: list[dict[str, Any]] = []
+    total_monthly = 0.0
+    total_one_time = 0.0
+    
+    for est in estimates_raw:
+        if not isinstance(est, dict):
+            continue
+        comp_id = _coerce_str(est.get("component_id"), max_len=64)
+        name = _coerce_str(est.get("name"), max_len=120) or comp_id or "unknown"
+        monthly = est.get("monthly_usd")
+        one_time = est.get("one_time_usd")
+        notes = _coerce_str(est.get("notes"), max_len=200) or ""
+        try:
+            monthly_val = float(monthly) if monthly is not None else 0.0
+            one_time_val = float(one_time) if one_time is not None else 0.0
+        except (TypeError, ValueError):
+            monthly_val = 0.0
+            one_time_val = 0.0
+        if comp_id:
+            estimates.append({
+                "component_id": comp_id,
+                "name": name,
+                "monthly_usd": monthly_val,
+                "one_time_usd": one_time_val,
+                "notes": notes,
+            })
+            total_monthly += monthly_val
+            total_one_time += one_time_val
+    
+    status = "completed" if estimates else "skipped"
+    
+    return {
+        "status": status,
+        "estimates": estimates,
+        "total": {
+            "monthly_usd": total_monthly,
+            "one_time_usd": total_one_time,
+        },
+    }
+
+
+def design_agent(state: State) -> Dict[str, any]:
+    plan_state = state.get("plan_state") or {}
+    existing = state.get("design_state")
+    design_state = _initial_design_state(existing)
+
+    node_field_map = {
+        "component_library_node": "components",
+        "diagram_generator_node": "diagram",
+        "cost_est_node": "costs",
+    }
+    node_outputs: dict[str, dict[str, Any]] = {}
+
+    for node_name in _design_subnode_order(plan_state):
+        result = _call_design_subnode(node_name, state)
+        node_outputs[node_name] = result
+        target_field = node_field_map.get(node_name)
+        if target_field:
+            design_state[target_field] = result
+        note_hint = result.get("notes") or result.get("reason") or result.get("status")
+        design_state["notes"] = _append_design_note(design_state.get("notes", []), note_hint)
+
+    statuses = [
+        _coerce_str(result.get("status"), max_len=16) or ""
+        for result in node_outputs.values()
+    ]
+    lowered = [status.lower() for status in statuses if status]
+    if any(status == "completed" for status in lowered):
+        overall_status = "completed"
+    elif any(status == "pending" for status in lowered):
+        overall_status = "pending"
+    elif lowered:
+        overall_status = "skipped"
+    else:
+        overall_status = design_state.get("status") or "pending"
+    design_state["status"] = overall_status
+
+    return {
+        "design_state": design_state,
     }
 
 
 def critic_agent(state: State) -> Dict[str, any]:
     """Placeholder critic agent."""
     return {
-        "critic_state": {
-            "status": "pending",
-            "notes": "Critic agent not yet implemented.",
-            "next_phase": "evals",
-        },
-        "run_phase": "evals",
+        "critic_state": critic_state,
     }
 
 
