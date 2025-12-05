@@ -10,7 +10,12 @@ from datetime import datetime
 from langgraph.types import interrupt, Command
 import logging
 import requests
-from supabase import create_client  
+
+# Supabase client is optional; guard import so graph can load without the package present.
+try:
+    from supabase import create_client  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    create_client = None
 
 try:
     from app.storage.memory import add_event, record_node_tokens

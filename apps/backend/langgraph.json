@@ -4,7 +4,7 @@
   "graphs": {
     "system_design_agent": "app.agent.system_design.graph:graph"
   },
-  "env": "env",
+  "env": ".env",
   "auth": {
     "path": "app.auth:auth"
   }

@@ -97,4 +97,4 @@ def _load_checkpointer() -> PostgresSaver:
         raise
 
 
-graph = builder.compile(checkpointer=_load_checkpointer())
+graph = builder.compile() # for production, use checkpointer=_load_checkpointer()
