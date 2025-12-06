@@ -800,7 +800,7 @@ def planner_agent(state: State) -> Dict[str, any]:
     
     # Finalize and record memory
     summary = _coerce_str(plan_state.get("summary"), max_len=600)
-    _record_final_plan_memory(state, summary)
+    _record_final_plan_memory(state, summary, plan_state=plan_state)
     
     updates: Dict[str, Any] = {
         "planner_state": planner_state,
@@ -816,7 +816,7 @@ def planner_agent(state: State) -> Dict[str, any]:
     return updates
 
 
-def _record_final_plan_memory(state: State, summary: Optional[str]) -> None:
+def _record_final_plan_memory(state: State, summary: Optional[str], plan_state: Optional[dict[str, Any]] = None) -> None:
     metadata = state.get("metadata") or {}
     user_id = metadata.get("user_id")
     thread_id = metadata.get("thread_id")
@@ -829,8 +829,8 @@ def _record_final_plan_memory(state: State, summary: Optional[str]) -> None:
     if prompt_msg is None:
         return
 
-    plan_state = state.get("plan_state") or {}
-    steps = plan_state.get("steps") or []
+    plan_state_data = plan_state or state.get("plan_state") or {}
+    steps = plan_state_data.get("steps") or []
     lines: list[str] = []
     summary_text = _coerce_str(summary, max_len=600)
     if summary_text:
