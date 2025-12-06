@@ -27,6 +27,11 @@ from .nodes import (
     component_library_node,
     diagram_generator_node,
     cost_est_node,
+    review_node,
+    hallucination_check_node,
+    risk_node,
+    telemetry_node,
+    scores_node,
 )
 
 builder = StateGraph(State)
@@ -45,7 +50,11 @@ builder.add_node("web_search_node", web_search_node)
 builder.add_node("component_library_node", component_library_node)
 builder.add_node("diagram_generator_node", diagram_generator_node)
 builder.add_node("cost_est_node", cost_est_node)
-
+builder.add_node("review_node", review_node)
+builder.add_node("hallucination_check_node", hallucination_check_node)
+builder.add_node("risk_node", risk_node)
+builder.add_node("telemetry_node", telemetry_node)
+builder.add_node("scores_node", scores_node)
 builder.add_edge(START, "orchestrator")
 
 builder.add_edge("planner_agent", "orchestrator")
@@ -53,6 +62,8 @@ builder.add_edge("planner_agent", "planner_scope")
 builder.add_edge("planner_agent", "planner_steps")
 builder.add_edge("planner_scope", "planner_agent")
 builder.add_edge("planner_steps", "planner_agent")
+
+# research agent
 builder.add_edge("research_agent", "orchestrator")
 builder.add_edge("research_agent", "knowledge_base_node")
 builder.add_edge("research_agent", "github_api_node")
@@ -60,6 +71,8 @@ builder.add_edge("research_agent", "web_search_node")
 builder.add_edge("knowledge_base_node", "research_agent")
 builder.add_edge("github_api_node", "research_agent")
 builder.add_edge("web_search_node", "research_agent")
+
+# design 
 builder.add_edge("design_agent", "orchestrator")
 builder.add_edge("design_agent", "component_library_node")
 builder.add_edge("design_agent", "diagram_generator_node")
@@ -68,7 +81,21 @@ builder.add_edge("component_library_node", "design_agent")
 builder.add_edge("diagram_generator_node", "design_agent")
 builder.add_edge("cost_est_node", "design_agent")
 builder.add_edge("design_agent", "orchestrator")
+
+# critic agent
 builder.add_edge("critic_agent", "orchestrator")
+builder.add_edge("critic_agent", "review_node")
+builder.add_edge("critic_agent", "hallucination_check_node")
+builder.add_edge("critic_agent", "risk_node")
+builder.add_edge("review_node", "critic_agent")
+builder.add_edge("hallucination_check_node", "critic_agent")
+builder.add_edge("risk_node", "critic_agent")
+
+# evals  wiring
+builder.add_edge("evals_agent", "telemetry_node")
+builder.add_edge("telemetry_node", "evals_agent")
+builder.add_edge("evals_agent", "scores_node")
+builder.add_edge("scores_node", "evals_agent")
 builder.add_edge("evals_agent", "orchestrator")
 builder.add_edge("orchestrator", END)
 

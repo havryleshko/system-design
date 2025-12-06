@@ -707,20 +707,58 @@ def orchestrator(state: State) -> Dict[str, any]:
 
 
 
-def planner_agent(state: State) -> Command | Dict[str, any]:
-    plan_scope = state.get("plan_scope") or {}
-    plan_state = state.get("plan_state") or {}
-
-    if plan_scope.get("status") != "completed":
-        return Command(goto="planner_scope")
-
-    if plan_state.get("status") != "completed":
-        return Command(goto="planner_steps")
-
+def planner_agent(state: State) -> Dict[str, any]:
+    existing = state.get("planner_state")
+    planner_state = _initial_planner_state(existing)
+    
+    node_field_map = {
+        "planner_scope": "scope",
+        "planner_steps": "steps",
+    }
+    node_outputs: dict[str, dict[str, Any]] = {}
+    
+    subnode_order = ["planner_scope", "planner_steps"]
+    
+    for node_name in subnode_order:
+        result = _call_planner_subnode(node_name, state)
+        node_outputs[node_name] = result
+        target_field = node_field_map.get(node_name)
+        if target_field:
+            planner_state[target_field] = result
+        note_hint = result.get("notes") or result.get("reason") or result.get("status")
+        planner_state["notes"] = _append_planner_note(planner_state.get("notes", []), note_hint)
+    
+    statuses = [
+        _coerce_str(result.get("status"), max_len=16) or ""
+        for result in node_outputs.values()
+    ]
+    lowered = [status.lower() for status in statuses if status]
+    if any(status == "completed" for status in lowered):
+        overall_status = "completed"
+    elif any(status == "pending" for status in lowered):
+        overall_status = "pending"
+    elif lowered:
+        overall_status = "skipped"
+    else:
+        overall_status = planner_state.get("status") or "pending"
+    planner_state["status"] = overall_status
+    
+    # Extract plan_scope and plan_state for backward compatibility
+    scope_result = node_outputs.get("planner_scope", {})
+    steps_result = node_outputs.get("planner_steps", {})
+    plan_scope = scope_result.get("plan_scope") or scope_result.get("scope") or {}
+    plan_state = steps_result.get("plan_state") or steps_result.get("steps") or {}
+    
+    # Handle clarifier check
     if plan_scope.get("needs_clarifier"):
-        # Wait for orchestrator to trigger clarifier before moving forward
-        return {"plan_state": {}, "run_phase": "planner"}
-
+        return {
+            "planner_state": planner_state,
+            "plan_scope": plan_scope,
+            "plan_state": plan_state,
+            "run_phase": "planner",
+        }
+    
+    # Handle quality check
     metadata = state.get("metadata") or {}
     quality_raw = plan_state.get("quality")
     quality: Optional[float] = None
@@ -729,7 +767,7 @@ def planner_agent(state: State) -> Command | Dict[str, any]:
             quality = float(quality_raw)
         except (TypeError, ValueError):
             quality = None
-
+    
     if quality is not None:
         min_quality = 0.5
         already_retried = metadata.get("planner_quality_retry")
@@ -737,18 +775,28 @@ def planner_agent(state: State) -> Command | Dict[str, any]:
             updated_meta = dict(metadata)
             updated_meta["planner_quality_retry"] = True
             return {
-                "plan_state": {},
+                "planner_state": planner_state,
+                "plan_scope": plan_scope,
+                "plan_state": plan_state,
                 "metadata": updated_meta,
                 "run_phase": "planner",
             }
-
+    
+    # Finalize and record memory
     summary = _coerce_str(plan_state.get("summary"), max_len=600)
-    updates: Dict[str, Any] = {"run_phase": "research"}
+    _record_final_plan_memory(state, summary)
+    
+    updates: Dict[str, Any] = {
+        "planner_state": planner_state,
+        "plan_scope": plan_scope,
+        "plan_state": plan_state,
+        "run_phase": "research",
+    }
     if summary:
         updates["plan"] = summary
     if quality is not None:
         updates["plan_quality"] = quality
-    _record_final_plan_memory(state, summary)
+    
     return updates
 
 
@@ -840,7 +888,21 @@ def planner_scope(state: State) -> Dict[str, any]:
         "risks": risks[:5],
         "status": "completed",
     }
-    return {"plan_scope": plan_scope}
+    notes: list[str] = []
+    if blocking_issues:
+        notes.append(f"Blocking issues found: {len(blocking_issues)}")
+    if info_issues:
+        notes.append(f"Info issues found: {len(info_issues)}")
+    if not notes:
+        notes.append("Scope analysis completed")
+    
+    return {
+        "status": "completed",
+        "scope": plan_scope,
+        "notes": notes,
+        # Keep backward compatibility
+        "plan_scope": plan_scope,
+    }
 
 
 def planner_steps(state: State) -> Dict[str, any]:
@@ -985,16 +1047,30 @@ def planner_steps(state: State) -> Dict[str, any]:
         f"- {step['title']}" for step in normalized_steps
     )
 
+    plan_state_data = {
+        "status": "completed",
+        "steps": normalized_steps,
+        "summary": summary_text,
+        "issues": issues,
+        "risks": risks,
+        "quality": quality,
+    }
+    
+    notes: list[str] = []
+    if normalized_steps:
+        notes.append(f"Generated {len(normalized_steps)} plan step(s)")
+    if quality is not None:
+        notes.append(f"Plan quality: {quality:.2f}")
+    if not notes:
+        notes.append("Plan steps completed")
+    
     return {
+        "status": "completed",
+        "steps": plan_state_data,
+        "notes": notes,
+        # Keep backward compatibility
         "plan": summary_text,
-        "plan_state": {
-            "status": "completed",
-            "steps": normalized_steps,
-            "summary": summary_text,
-            "issues": issues,
-            "risks": risks,
-            "quality": quality,
-        },
+        "plan_state": plan_state_data,
     }
 
 
@@ -1176,18 +1252,38 @@ def web_search_node(state: State) -> Dict[str, Any]:
 
 
 def research_agent(state: State) -> Dict[str, any]:
-    node_outputs = {
-        "knowledge_base": knowledge_base_node(state),
-        "github_api": github_api_node(state),
-        "web_search": web_search_node(state),
+    existing = state.get("research_state")
+    research_state = _initial_research_state(existing)
+    
+    node_field_map = {
+        "knowledge_base_node": "knowledge_base",
+        "github_api_node": "github_api",
+        "web_search_node": "web_search",
     }
-
+    node_outputs: dict[str, dict[str, Any]] = {}
+    
+    subnode_order = ["knowledge_base_node", "github_api_node", "web_search_node"]
+    
+    for node_name in subnode_order:
+        result = _call_research_subnode(node_name, state)
+        node_outputs[node_name] = result
+        target_field = node_field_map.get(node_name)
+        if target_field:
+            # Store node output in research_state.nodes
+            if "nodes" not in research_state:
+                research_state["nodes"] = {}
+            research_state["nodes"][target_field] = result
+        note_hint = result.get("notes") or result.get("reason") or result.get("status")
+        research_state["notes"] = _append_research_note(research_state.get("notes", []), note_hint)
+    
+    # Aggregate highlights, citations, risks from all subnodes
     highlights = _limit_strings(
         [
             _coerce_str(item, max_len=320) or ""
             for result in node_outputs.values()
             for item in result.get("highlights", [])
-        ]
+        ],
+        limit=12,
     )
     citations = _limit_dicts(
         [
@@ -1195,40 +1291,80 @@ def research_agent(state: State) -> Dict[str, any]:
             for result in node_outputs.values()
             for cite in result.get("citations", [])
             if isinstance(cite, dict)
-        ]
+        ],
+        limit=12,
     )
     risks = _limit_strings(
         [
             _coerce_str(item, max_len=200) or ""
             for result in node_outputs.values()
             for item in result.get("risks", [])
-        ]
+        ],
+        limit=8,
     )
-
-    has_completion = any(result.get("status") == "completed" for result in node_outputs.values())
-    status = "completed" if has_completion else "skipped"
-
-    existing_state = state.get("research_state") or {}
-    merged_nodes = dict(existing_state.get("nodes") or {})
-    merged_nodes.update(node_outputs)
-
-    research_state = {
-        **existing_state,
-        "status": status,
-        "nodes": merged_nodes,
-        "highlights": highlights,
-        "citations": citations,
-        "risks": risks,
-    }
-
+    
+    # Update research_state with aggregated data
+    research_state["highlights"] = highlights
+    research_state["citations"] = citations
+    research_state["risks"] = risks
+    
+    # Determine overall status
+    statuses = [
+        _coerce_str(result.get("status"), max_len=16) or ""
+        for result in node_outputs.values()
+    ]
+    lowered = [status.lower() for status in statuses if status]
+    if any(status == "completed" for status in lowered):
+        overall_status = "completed"
+    elif any(status == "pending" for status in lowered):
+        overall_status = "pending"
+    elif lowered:
+        overall_status = "skipped"
+    else:
+        overall_status = research_state.get("status") or "pending"
+    research_state["status"] = overall_status
+    
     summary = _summarise_highlights(highlights)
-
+    
     return {
         "research_state": research_state,
         "research_highlights": highlights,
         "research_citations": citations,
         "research_summary": summary,
         "run_phase": "design",
+    }
+
+
+def _initial_research_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
+    data = existing if isinstance(existing, dict) else {}
+    return {
+        "status": _coerce_str(data.get("status")) or "pending",
+        "nodes": data.get("nodes") or {},
+        "highlights": _coerce_str_list(data.get("highlights"), max_items=12, max_len=320),
+        "citations": _limit_dicts(data.get("citations") or [], limit=12),
+        "risks": _coerce_str_list(data.get("risks"), max_items=8, max_len=200),
+        "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=160),
+    }
+
+
+def _initial_planner_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
+    data = existing if isinstance(existing, dict) else {}
+    return {
+        "status": _coerce_str(data.get("status")) or "pending",
+        "scope": data.get("scope") or {},
+        "steps": data.get("steps") or {},
+        "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=160),
+    }
+
+
+def _initial_eval_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
+    data = existing if isinstance(existing, dict) else {}
+    return {
+        "status": _coerce_str(data.get("status")) or "pending",
+        "telemetry": data.get("telemetry") or {},
+        "scores": data.get("scores") or {},
+        "needs_attention": bool(data.get("needs_attention")) if data.get("needs_attention") is not None else False,
+        "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=200),
     }
 
 
@@ -1270,6 +1406,51 @@ def _design_subnode_order(plan_state: dict[str, Any]) -> list[str]:
     return primary + [cost_node]
 
 
+def _call_research_subnode(node_name: str, state: State) -> dict[str, Any]:
+    func = globals().get(node_name)
+    if not callable(func):
+        note = f"{node_name} not implemented"
+        return {"status": "skipped", "notes": note}
+    try:
+        result = func(state)
+        if not isinstance(result, dict):
+            raise ValueError(f"{node_name} must return a dict result.")
+        return result
+    except Exception as exc:  # pragma: no cover - defensive guardrail
+        logger.warning("Research subnode %s failed: %s", node_name, exc)
+        return {"status": "skipped", "notes": f"{node_name} error: {exc}"}
+
+
+def _call_eval_subnode(node_name: str, state: State) -> dict[str, Any]:
+    func = globals().get(node_name)
+    if not callable(func):
+        note = f"{node_name} not implemented"
+        return {"status": "skipped", "notes": [note]}
+    try:
+        result = func(state)
+        if not isinstance(result, dict):
+            raise ValueError(f"{node_name} must return a dict result.")
+        return result
+    except Exception as exc:  # pragma: no cover - defensive guardrail
+        logger.warning("Eval subnode %s failed: %s", node_name, exc)
+        return {"status": "skipped", "notes": [f"{node_name} error: {exc}"]}
+
+
+def _call_planner_subnode(node_name: str, state: State) -> dict[str, Any]:
+    func = globals().get(node_name)
+    if not callable(func):
+        note = f"{node_name} not implemented"
+        return {"status": "skipped", "notes": note}
+    try:
+        result = func(state)
+        if not isinstance(result, dict):
+            raise ValueError(f"{node_name} must return a dict result.")
+        return result
+    except Exception as exc:  # pragma: no cover - defensive guardrail
+        logger.warning("Planner subnode %s failed: %s", node_name, exc)
+        return {"status": "skipped", "notes": f"{node_name} error: {exc}"}
+
+
 def _call_design_subnode(node_name: str, state: State) -> dict[str, Any]:
     func = globals().get(node_name)
     if not callable(func):
@@ -1283,6 +1464,30 @@ def _call_design_subnode(node_name: str, state: State) -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover - defensive guardrail
         logger.warning("Design subnode %s failed: %s", node_name, exc)
         return {"status": "skipped", "notes": f"{node_name} error: {exc}"}
+
+
+def _append_research_note(notes: list[str], message: Optional[str]) -> list[str]:
+    text = _coerce_str(message, max_len=160)
+    if text and text not in notes:
+        updated = notes + [text]
+        return updated[-8:]
+    return notes
+
+
+def _append_planner_note(notes: list[str], message: Optional[str]) -> list[str]:
+    text = _coerce_str(message, max_len=160)
+    if text and text not in notes:
+        updated = notes + [text]
+        return updated[-8:]
+    return notes
+
+
+def _append_eval_note(notes: list[str], message: Optional[str]) -> list[str]:
+    text = _coerce_str(message, max_len=200)
+    if text and text not in notes:
+        updated = notes + [text]
+        return updated[-8:]
+    return notes
 
 
 def _append_design_note(notes: list[str], message: Optional[str]) -> list[str]:
@@ -1683,23 +1888,379 @@ def design_agent(state: State) -> Dict[str, any]:
         "design_state": design_state,
     }
 
+def _initial_critic_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
+    data = existing if isinstance(existing, dict) else {}
+    return {
+        "status": _coerce_str(data.get("status")) or "pending",
+        "review": data.get("review") or {},
+        "hallucination": data.get("hallucination") or {},
+        "risk": data.get("risk") or {},
+        "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=200),
+    }
+
+
+def _call_critic_subnode(node_name: str, state: State) -> dict[str, Any]:
+    func = globals().get(node_name)
+    if not callable(func):
+        return {"status": "skipped", "notes": [f"{node_name} not implemented"]}
+    try:
+        result = func(state)
+        if not isinstance(result, dict):
+            raise ValueError(f"{node_name} must return a dict result.")
+        return result
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Critic subnode %s failed: %s", node_name, exc)
+        return {"status": "skipped", "notes": [f"{node_name} error: {exc}"]}
+
+
+def _append_critic_note(notes: list[str], message: Optional[str]) -> list[str]:
+    text = _coerce_str(message, max_len=200)
+    if text and text not in notes:
+        updated = notes + [text]
+        return updated[-8:]
+    return notes
+
+
+def review_node(state: State) -> Dict[str, Any]:
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+    research_state = state.get("research_state") or {}
+
+    components = design_state.get("components", {}).get("components") or []
+    comp_titles = [ _coerce_str(c.get("name"), max_len=80) or c.get("id") for c in components if isinstance(c, dict) ]
+    comp_summary = "\n".join(f"- {c}" for c in comp_titles if c)
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
+    research_summary = _coerce_str(research_state.get("summary"), max_len=600) or ""
+
+    schema_desc = json.dumps(
+        {
+            "status": "completed",
+            "notes": ["short finding or issue"],
+        },
+        ensure_ascii=False,
+    )
+    sys = SystemMessage(content=(
+        "You are a senior reviewer. Evaluate the proposed architecture for clarity, completeness, and feasibility.\n"
+        f"Return JSON only with this shape:\n{schema_desc}\n"
+        "Keep notes concise. Point out gaps, unclear parts, or missing dependencies."
+    ))
+
+    prompt_lines = []
+    if plan_summary:
+        prompt_lines.append(f"Plan summary:\n{plan_summary}")
+    if research_summary:
+        prompt_lines.append(f"\nResearch summary:\n{research_summary}")
+    if comp_summary:
+        prompt_lines.append(f"\nComponents:\n{comp_summary}")
+    prompt = "\n".join(prompt_lines) if prompt_lines else "No plan/components provided."
+
+    run_id = state.get("metadata", {}).get("run_id")
+    raw = call_brain([sys, HumanMessage(content=prompt)], state=state, run_id=run_id, node="review_node")
+    parsed = json_only(raw) or {}
+    notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
+    status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if notes else "skipped")
+
+    return {
+        "status": status,
+        "notes": notes,
+    }
+
+
+def hallucination_check_node(state: State) -> Dict[str, Any]:
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+    research_state = state.get("research_state") or {}
+
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
+    research_summary = _coerce_str(research_state.get("summary"), max_len=600) or ""
+    design_notes = _coerce_str_list(design_state.get("notes"), max_items=8, max_len=200)
+
+    schema_desc = json.dumps(
+        {
+            "status": "completed",
+            "notes": ["hallucination or inconsistency observed"],
+        },
+        ensure_ascii=False,
+    )
+    sys = SystemMessage(content=(
+        "You are checking for hallucinations/inconsistencies. Compare the design against plan and research context.\n"
+        f"Return JSON only with this shape:\n{schema_desc}\n"
+        "Flag contradictions, ungrounded claims, or missing support. Keep notes brief."
+    ))
+
+    prompt_lines = []
+    if plan_summary:
+        prompt_lines.append(f"Plan summary:\n{plan_summary}")
+    if research_summary:
+        prompt_lines.append(f"\nResearch summary:\n{research_summary}")
+    if design_notes:
+        prompt_lines.append("\nDesign notes:\n" + "\n".join(f"- {n}" for n in design_notes))
+    prompt = "\n".join(prompt_lines) if prompt_lines else "No context provided."
+
+    run_id = state.get("metadata", {}).get("run_id")
+    raw = call_brain([sys, HumanMessage(content=prompt)], state=state, run_id=run_id, node="hallucination_check_node")
+    parsed = json_only(raw) or {}
+    notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
+    status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if notes else "skipped")
+
+    return {
+        "status": status,
+        "notes": notes,
+    }
+
+
+def risk_node(state: State) -> Dict[str, Any]:
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
+    components = design_state.get("components", {}).get("components") or []
+    comp_titles = [ _coerce_str(c.get("name"), max_len=80) or c.get("id") for c in components if isinstance(c, dict) ]
+    comp_summary = "\n".join(f"- {c}" for c in comp_titles if c)
+
+    schema_desc = json.dumps(
+        {
+            "status": "completed",
+            "notes": ["risk description"],
+        },
+        ensure_ascii=False,
+    )
+    sys = SystemMessage(content=(
+        "You assess architecture risks (scaling, reliability, data, security). Return JSON only:\n"
+        f"{schema_desc}\n"
+        "List concise risks; note major blockers explicitly."
+    ))
+
+    prompt_lines = []
+    if plan_summary:
+        prompt_lines.append(f"Plan summary:\n{plan_summary}")
+    if comp_summary:
+        prompt_lines.append(f"\nComponents:\n{comp_summary}")
+    prompt = "\n".join(prompt_lines) if prompt_lines else "No plan/components provided."
+
+    run_id = state.get("metadata", {}).get("run_id")
+    raw = call_brain([sys, HumanMessage(content=prompt)], state=state, run_id=run_id, node="risk_node")
+    parsed = json_only(raw) or {}
+    notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
+    status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if notes else "skipped")
+
+    return {
+        "status": status,
+        "notes": notes,
+    }
+
 
 def critic_agent(state: State) -> Dict[str, any]:
-    """Placeholder critic agent."""
+    existing = state.get("critic_state")
+    critic_state = _initial_critic_state(existing)
+
+    order = ["review_node", "hallucination_check_node", "risk_node"]
+    field_map = {
+        "review_node": "review",
+        "hallucination_check_node": "hallucination",
+        "risk_node": "risk",
+    }
+    node_outputs: dict[str, dict[str, Any]] = {}
+
+    for node_name in order:
+        result = _call_critic_subnode(node_name, state)
+        node_outputs[node_name] = result
+        target = field_map.get(node_name)
+        if target:
+            critic_state[target] = result
+        # collect notes
+        note_hint = result.get("notes") or result.get("status")
+        if isinstance(note_hint, list):
+            for n in note_hint:
+                critic_state["notes"] = _append_critic_note(critic_state.get("notes", []), n)
+        else:
+            critic_state["notes"] = _append_critic_note(critic_state.get("notes", []), note_hint)
+
+    statuses = [
+        _coerce_str(res.get("status"), max_len=16) or "" for res in node_outputs.values()
+    ]
+    lowered = [s.lower() for s in statuses if s]
+    if any(s == "completed" for s in lowered):
+        overall = "completed"
+    elif any(s == "pending" for s in lowered):
+        overall = "pending"
+    elif lowered:
+        overall = "skipped"
+    else:
+        overall = critic_state.get("status") or "pending"
+    critic_state["status"] = overall
+
     return {
-        "critic_state": {
-            "status": "pending",
-            "notes": "Critic agent not yet implemented.",
+        "critic_state": critic_state,
+    }
+
+
+def telemetry_node(state: State) -> Dict[str, Any]:
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+    research_state = state.get("research_state") or {}
+    critic_state = state.get("critic_state") or {}
+
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
+    research_summary = _coerce_str(research_state.get("summary"), max_len=600) or ""
+    design_notes = _coerce_str_list(design_state.get("notes"), max_items=8, max_len=200)
+    critic_notes = _coerce_str_list(critic_state.get("notes"), max_items=8, max_len=200)
+
+    schema_desc = json.dumps(
+        {
+            "status": "completed",
+            "telemetry": {
+                "latency": {"p50_ms": 120, "p95_ms": 400},
+                "error_rate": 0.02,
+                "failures": {"recent": 0, "notes": "none"},
+                "resource_util": {"cpu": 0.55, "memory": 0.60},
+                "throughput": {"rps": 5},
+                "cost": {"monthly_usd": 120.0},
+            },
+            "notes": ["brief telemetry rationale"],
         },
+        ensure_ascii=False,
+    )
+    sys = SystemMessage(content=(
+        "You infer runtime telemetry from the described system. Return JSON only:\n"
+        f"{schema_desc}\n"
+        "If uncertain, provide reasonable estimates; keep notes concise."
+    ))
+
+    prompt_lines = []
+    if plan_summary:
+        prompt_lines.append(f"Plan summary:\n{plan_summary}")
+    if research_summary:
+        prompt_lines.append(f"\nResearch summary:\n{research_summary}")
+    if design_notes:
+        prompt_lines.append("\nDesign notes:\n" + "\n".join(f"- {n}" for n in design_notes))
+    if critic_notes:
+        prompt_lines.append("\nCritic notes:\n" + "\n".join(f"- {n}" for n in critic_notes))
+    prompt = "\n".join(prompt_lines) if prompt_lines else "No context provided."
+
+    run_id = state.get("metadata", {}).get("run_id")
+    raw = call_brain([sys, HumanMessage(content=prompt)], state=state, run_id=run_id, node="telemetry_node")
+    parsed = json_only(raw) or {}
+    telemetry = parsed.get("telemetry") if isinstance(parsed.get("telemetry"), dict) else {}
+    notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
+    status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if telemetry else "skipped")
+
+    return {
+        "status": status,
+        "telemetry": telemetry,
+        "notes": notes,
+    }
+
+
+def scores_node(state: State) -> Dict[str, Any]:
+    eval_state = state.get("eval_state") or {}
+    telemetry = eval_state.get("telemetry") or {}
+    plan_state = state.get("plan_state") or {}
+    design_state = state.get("design_state") or {}
+    critic_state = state.get("critic_state") or {}
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
+    design_notes = _coerce_str_list(design_state.get("notes"), max_items=8, max_len=200)
+    critic_notes = _coerce_str_list(critic_state.get("notes"), max_items=8, max_len=200)
+    schema_desc = json.dumps(
+        {
+            "status": "completed",
+            "scores": {
+                "latency": 0.8,
+                "error_rate": 0.9,
+                "failures": 0.95,
+                "resource_util": 0.75,
+                "throughput": 0.7,
+                "cost": 0.6,
+            },
+            "notes": ["brief scoring rationale"],
+        },
+        ensure_ascii=False,
+    )
+    sys = SystemMessage(content=(
+        "You score process/operational metrics using provided telemetry.\n"
+        f"Return JSON only:\n{schema_desc}\n"
+        "Scores are 0-1 (higher is better). Keep notes concise."
+    ))
+
+    prompt_lines = []
+    prompt_lines.append("Telemetry (may be empty):")
+    prompt_lines.append(json.dumps(telemetry or {}, ensure_ascii=False))
+    if plan_summary:
+        prompt_lines.append(f"\nPlan summary:\n{plan_summary}")
+    if design_notes:
+        prompt_lines.append("\nDesign notes:\n" + "\n".join(f"- {n}" for n in design_notes))
+    if critic_notes:
+        prompt_lines.append("\nCritic notes:\n" + "\n".join(f"- {n}" for n in critic_notes))
+    prompt = "\n".join(prompt_lines)
+    run_id = state.get("metadata", {}).get("run_id")
+    raw = call_brain([sys, HumanMessage(content=prompt)], state=state, run_id=run_id, node="scores_node")
+    parsed = json_only(raw) or {}
+    scores = parsed.get("scores") if isinstance(parsed.get("scores"), dict) else {}
+    notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
+    status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if scores else "skipped")
+    needs_attention = False
+    for val in scores.values():
+        try:
+            if float(val) < 0.5:
+                needs_attention = True
+                break
+        except (TypeError, ValueError):
+            continue
+
+    return {
+        "status": status,
+        "scores": scores,
+        "needs_attention": needs_attention,
+        "notes": notes,
     }
 
 
 def evals_agent(state: State) -> Dict[str, any]:
-    """Placeholder evals agent."""
+    existing = state.get("eval_state")
+    eval_state = _initial_eval_state(existing)
+
+    order = ["telemetry_node", "scores_node"]
+    field_map = {
+        "telemetry_node": "telemetry",
+        "scores_node": "scores",
+    }
+    node_outputs: dict[str, dict[str, Any]] = {}
+
+    working_state: Dict[str, Any] = dict(state)
+    working_state["eval_state"] = eval_state
+
+    for node_name in order:
+        result = _call_eval_subnode(node_name, working_state)
+        node_outputs[node_name] = result
+        target = field_map.get(node_name)
+        if target:
+            eval_state[target] = result.get(target) or {}
+        if node_name == "scores_node":
+            eval_state["needs_attention"] = bool(result.get("needs_attention"))
+        note_hint = result.get("notes") or result.get("reason") or result.get("status")
+        if isinstance(note_hint, list):
+            for n in note_hint:
+                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), n)
+        else:
+            eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note_hint)
+        # propagate updated eval_state to the next subnode invocation
+        working_state["eval_state"] = eval_state
+
+    statuses = [
+        _coerce_str(res.get("status"), max_len=16) or "" for res in node_outputs.values()
+    ]
+    lowered = [s.lower() for s in statuses if s]
+    if any(s == "completed" for s in lowered):
+        overall = "completed"
+    elif any(s == "pending" for s in lowered):
+        overall = "pending"
+    elif lowered:
+        overall = "skipped"
+    else:
+        overall = eval_state.get("status") or "pending"
+    eval_state["status"] = overall
+
     return {
-        "eval_state": {
-            "status": "pending",
-            "notes": "Evals agent not yet implemented.",
-        },
+        "eval_state": eval_state,
         "run_phase": "done",
     }
