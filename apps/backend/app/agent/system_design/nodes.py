@@ -717,16 +717,32 @@ def planner_agent(state: State) -> Dict[str, any]:
     }
     node_outputs: dict[str, dict[str, Any]] = {}
     
+    working_state: Dict[str, Any] = dict(state)
+    working_state["planner_state"] = planner_state
+    
     subnode_order = ["planner_scope", "planner_steps"]
     
     for node_name in subnode_order:
-        result = _call_planner_subnode(node_name, state)
+        result = _call_planner_subnode(node_name, working_state)
         node_outputs[node_name] = result
         target_field = node_field_map.get(node_name)
         if target_field:
             planner_state[target_field] = result
         note_hint = result.get("notes") or result.get("reason") or result.get("status")
         planner_state["notes"] = _append_planner_note(planner_state.get("notes", []), note_hint)
+        
+        # propagate relevant outputs to subsequent subnodes
+        if "plan_scope" in result:
+            working_state["plan_scope"] = result.get("plan_scope")
+        elif "scope" in result:
+            working_state["plan_scope"] = result.get("scope")
+        
+        if "plan_state" in result:
+            working_state["plan_state"] = result.get("plan_state")
+        elif "steps" in result:
+            working_state["plan_state"] = result.get("steps")
+        
+        working_state["planner_state"] = planner_state
     
     statuses = [
         _coerce_str(result.get("status"), max_len=16) or ""
