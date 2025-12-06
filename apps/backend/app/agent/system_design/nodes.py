@@ -1341,6 +1341,7 @@ def research_agent(state: State) -> Dict[str, any]:
     research_state["status"] = overall_status
     
     summary = _summarise_highlights(highlights)
+    research_state["summary"] = summary
     
     return {
         "research_state": research_state,
@@ -1902,6 +1903,7 @@ def design_agent(state: State) -> Dict[str, any]:
 
     return {
         "design_state": design_state,
+        "run_phase": "critic",
     }
 
 def _initial_critic_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
@@ -2108,6 +2110,7 @@ def critic_agent(state: State) -> Dict[str, any]:
 
     return {
         "critic_state": critic_state,
+        "run_phase": "evals",
     }
 
 
