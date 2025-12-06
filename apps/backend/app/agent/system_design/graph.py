@@ -103,15 +103,15 @@ builder.add_edge("orchestrator", END)
 def _route_from_orchestrator(state: State) -> Literal["planner_agent", "research_agent", "design_agent", "critic_agent", "evals_agent", "DONE"]:
     phase = (state.get("run_phase") or "planner").lower()
     if phase == "planner":
-        return "planner_agent"
+        return "planner"
     if phase == "research":
-        return "research_agent"
+        return "research"
     if phase == "design":
-        return "design_agent"
+        return "design"
     if phase == "critic":
-        return "critic_agent"
+        return "critic"
     if phase == "evals":
-        return "evals_agent"
+        return "evals"
     return "DONE"
 
 
