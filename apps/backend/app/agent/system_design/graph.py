@@ -1,15 +1,7 @@
 from __future__ import annotations
-import os
-import atexit
-from functools import lru_cache
-from contextlib import ExitStack
-import logging
-from urllib.parse import urlparse
-
 from typing import Literal
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.postgres import PostgresSaver  # pyright: ignore[reportMissingImports]
 
 from .state import State
 from .nodes import (
@@ -128,27 +120,4 @@ builder.add_conditional_edges(
     },
 )
 
-_CHECKPOINTER_STACK = ExitStack()
-atexit.register(_CHECKPOINTER_STACK.close)
-logger = logging.getLogger("app.agent.system_design.graph")
-
-
-@lru_cache(maxsize=1)
-def _load_checkpointer() -> PostgresSaver:
-    conn = os.getenv("LANGGRAPH_PG_URL")
-    if not conn:
-        raise RuntimeError("LANGGRAPH_PG_URL not configured")
-    parsed = urlparse(conn)
-    host = parsed.hostname or "unknown"
-    logger.info("Initialising LangGraph Postgres checkpointer", {"host": host})
-    try:
-        saver = _CHECKPOINTER_STACK.enter_context(PostgresSaver.from_conn_string(conn))
-        saver.setup()
-        logger.info("LangGraph checkpointer ready", {"host": host})
-        return saver
-    except Exception:
-        logger.exception("Failed to initialise LangGraph checkpointer", {"host": host})
-        raise
-
-
-graph = builder.compile() # for production, use checkpointer=_load_checkpointer()
+graph = builder.compile()
