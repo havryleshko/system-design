@@ -676,6 +676,29 @@ def orchestrator(state: State) -> Dict[str, any]:
     updates: Dict[str, any] = {}
     orchestrator_state = dict(state.get("orchestrator") or {})
 
+    # Ensure metadata is initialized and populated
+    existing_metadata = state.get("metadata") or {}
+    metadata_updates: Dict[str, Any] = {}
+    
+    # Preserve existing metadata
+    if existing_metadata:
+        metadata_updates.update(existing_metadata)
+    
+    # Log if user_id/thread_id are missing (they should be set by run config)
+    # When using LangGraph Studio, users can set metadata in the run config
+    # When using the web app, metadata is automatically set via buildRunMetadata
+    if not metadata_updates.get("user_id") and not metadata_updates.get("thread_id"):
+        logger.debug(
+            "orchestrator: metadata missing user_id/thread_id - memory features may be limited. "
+            "Set metadata in run config when using Studio, or ensure web app passes metadata."
+        )
+    elif metadata_updates.get("user_id"):
+        logger.debug("orchestrator: user_id found in metadata - memory features enabled")
+    
+    # Only update metadata if we have changes
+    if metadata_updates != existing_metadata:
+        updates["metadata"] = metadata_updates
+
     phase = (state.get("run_phase") or "planner").lower()
     updates.setdefault("run_phase", phase)
 
@@ -711,59 +734,53 @@ def planner_agent(state: State) -> Dict[str, any]:
     existing = state.get("planner_state")
     planner_state = _initial_planner_state(existing)
     
-    node_field_map = {
-        "planner_scope": "scope",
-        "planner_steps": "steps",
-    }
-    node_outputs: dict[str, dict[str, Any]] = {}
+    # Get results from subnodes (they update state directly via graph edges)
+    plan_scope = state.get("plan_scope") or {}
+    plan_state = state.get("plan_state") or {}
     
-    working_state: Dict[str, Any] = dict(state)
-    working_state["planner_state"] = planner_state
+    # Check status of subnodes
+    scope_status = plan_scope.get("status", "").lower()
+    steps_status = plan_state.get("status", "").lower()
+    scope_completed = scope_status == "completed"
+    steps_completed = steps_status == "completed"
     
-    subnode_order = ["planner_scope", "planner_steps"]
-    
-    for node_name in subnode_order:
-        result = _call_planner_subnode(node_name, working_state)
-        node_outputs[node_name] = result
-        target_field = node_field_map.get(node_name)
-        if target_field:
-            planner_state[target_field] = result
-        note_hint = result.get("notes") or result.get("reason") or result.get("status")
-        planner_state["notes"] = _append_planner_note(planner_state.get("notes", []), note_hint)
+    # If subnodes are not both complete, routing will handle it
+    # This function only aggregates when both are done
+    if not (scope_completed and steps_completed):
+        # Still update planner_state with what we have
+        if scope_completed:
+            planner_state["scope"] = plan_scope
+        if steps_completed:
+            planner_state["steps"] = plan_state
         
-        # propagate relevant outputs to subsequent subnodes
-        if "plan_scope" in result:
-            working_state["plan_scope"] = result.get("plan_scope")
-        elif "scope" in result:
-            working_state["plan_scope"] = result.get("scope")
-        
-        if "plan_state" in result:
-            working_state["plan_state"] = result.get("plan_state")
-        elif "steps" in result:
-            working_state["plan_state"] = result.get("steps")
-        
-        working_state["planner_state"] = planner_state
+        # Return minimal updates - routing will handle next step
+        return {
+            "planner_state": planner_state,
+        }
     
-    statuses = [
-        _coerce_str(result.get("status"), max_len=16) or ""
-        for result in node_outputs.values()
-    ]
-    lowered = [status.lower() for status in statuses if status]
-    if any(status == "completed" for status in lowered):
+    # Both subnodes are complete - aggregate and check quality/clarifier
+    planner_state["scope"] = plan_scope
+    planner_state["steps"] = plan_state
+    
+    # Aggregate status
+    statuses = [scope_status, steps_status]
+    if any(status == "completed" for status in statuses):
         overall_status = "completed"
-    elif any(status == "pending" for status in lowered):
+    elif any(status == "pending" for status in statuses):
         overall_status = "pending"
-    elif lowered:
-        overall_status = "skipped"
     else:
         overall_status = planner_state.get("status") or "pending"
     planner_state["status"] = overall_status
     
-    # Extract plan_scope and plan_state for backward compatibility
-    scope_result = node_outputs.get("planner_scope", {})
-    steps_result = node_outputs.get("planner_steps", {})
-    plan_scope = scope_result.get("plan_scope") or scope_result.get("scope") or {}
-    plan_state = steps_result.get("plan_state") or steps_result.get("steps") or {}
+    # Aggregate notes
+    scope_notes = plan_scope.get("notes") or []
+    steps_notes = plan_state.get("notes") or []
+    if isinstance(scope_notes, list):
+        for note in scope_notes:
+            planner_state["notes"] = _append_planner_note(planner_state.get("notes", []), note)
+    if isinstance(steps_notes, list):
+        for note in steps_notes:
+            planner_state["notes"] = _append_planner_note(planner_state.get("notes", []), note)
     
     # Handle clarifier check
     if plan_scope.get("needs_clarifier"):
@@ -790,10 +807,11 @@ def planner_agent(state: State) -> Dict[str, any]:
         if quality < min_quality and not already_retried:
             updated_meta = dict(metadata)
             updated_meta["planner_quality_retry"] = True
+            # Reset subnode statuses to allow retry
             return {
                 "planner_state": planner_state,
-                "plan_scope": plan_scope,
-                "plan_state": plan_state,
+                "plan_scope": {**plan_scope, "status": "pending"},  # Reset to allow retry
+                "plan_state": {**plan_state, "status": "pending"},  # Reset to allow retry
                 "metadata": updated_meta,
                 "run_phase": "planner",
             }
@@ -1130,7 +1148,7 @@ def knowledge_base_node(state: State) -> Dict[str, Any]:
 
     status = "completed" if highlights or citations else "skipped"
     reason = None if status == "completed" else "No knowledge base entries returned"
-    return _research_payload(
+    result = _research_payload(
         "knowledge_base",
         status,
         highlights=_limit_strings(highlights),
@@ -1139,6 +1157,18 @@ def knowledge_base_node(state: State) -> Dict[str, Any]:
         notes=note,
         reason=reason,
     )
+    
+    # Store result in research_state.nodes for research_agent to aggregate
+    existing_research_state = state.get("research_state") or {}
+    existing_nodes = existing_research_state.get("nodes") or {}
+    existing_nodes["knowledge_base"] = result
+    
+    return {
+        "research_state": {
+            **existing_research_state,
+            "nodes": existing_nodes,
+        }
+    }
 
 
 def github_api_node(state: State) -> Dict[str, Any]:
@@ -1153,19 +1183,37 @@ def github_api_node(state: State) -> Dict[str, Any]:
     else:
         repo = _coerce_str(repo, max_len=120)
         if not repo:
-            return _research_payload(
+            result = _research_payload(
                 "github_api",
                 "skipped",
                 notes="github_repo metadata missing",
                 reason="github_repo not set in metadata",
             )
+            existing_research_state = state.get("research_state") or {}
+            existing_nodes = existing_research_state.get("nodes") or {}
+            existing_nodes["github_api"] = result
+            return {
+                "research_state": {
+                    **existing_research_state,
+                    "nodes": existing_nodes,
+                }
+            }
         if requests is None:
-            return _research_payload(
+            result = _research_payload(
                 "github_api",
                 "skipped",
                 notes="requests library unavailable",
                 reason="requests dependency missing",
             )
+            existing_research_state = state.get("research_state") or {}
+            existing_nodes = existing_research_state.get("nodes") or {}
+            existing_nodes["github_api"] = result
+            return {
+                "research_state": {
+                    **existing_research_state,
+                    "nodes": existing_nodes,
+                }
+            }
         token = _coerce_str(metadata.get("github_token"), max_len=200) or _coerce_str(
             os.getenv("GITHUB_TOKEN"), max_len=200
         )
@@ -1212,7 +1260,7 @@ def github_api_node(state: State) -> Dict[str, Any]:
 
     status = "completed" if highlights or citations else "skipped"
     reason = None if status == "completed" else "GitHub data unavailable"
-    return _research_payload(
+    result = _research_payload(
         "github_api",
         status,
         highlights=_limit_strings(highlights),
@@ -1221,6 +1269,18 @@ def github_api_node(state: State) -> Dict[str, Any]:
         notes=note,
         reason=reason,
     )
+    
+    # Store result in research_state.nodes for research_agent to aggregate
+    existing_research_state = state.get("research_state") or {}
+    existing_nodes = existing_research_state.get("nodes") or {}
+    existing_nodes["github_api"] = result
+    
+    return {
+        "research_state": {
+            **existing_research_state,
+            "nodes": existing_nodes,
+        }
+    }
 
 
 def web_search_node(state: State) -> Dict[str, Any]:
@@ -1233,12 +1293,21 @@ def web_search_node(state: State) -> Dict[str, Any]:
         note = "metadata results"
     else:
         if not query:
-            return _research_payload(
+            result = _research_payload(
                 "web_search",
                 "skipped",
                 notes="No query available",
                 reason="goal and search_query missing",
             )
+            existing_research_state = state.get("research_state") or {}
+            existing_nodes = existing_research_state.get("nodes") or {}
+            existing_nodes["web_search"] = result
+            return {
+                "research_state": {
+                    **existing_research_state,
+                    "nodes": existing_nodes,
+                }
+            }
         results = _tavily_search(query)
         note = "tavily" if results else None
 
@@ -1256,7 +1325,7 @@ def web_search_node(state: State) -> Dict[str, Any]:
 
     status = "completed" if highlights or citations else "skipped"
     reason = None if status == "completed" else "No web results returned"
-    return _research_payload(
+    result = _research_payload(
         "web_search",
         status,
         highlights=_limit_strings(highlights),
@@ -1265,38 +1334,82 @@ def web_search_node(state: State) -> Dict[str, Any]:
         notes=note,
         reason=reason,
     )
+    
+    # Store result in research_state.nodes for research_agent to aggregate
+    existing_research_state = state.get("research_state") or {}
+    existing_nodes = existing_research_state.get("nodes") or {}
+    existing_nodes["web_search"] = result
+    
+    return {
+        "research_state": {
+            **existing_research_state,
+            "nodes": existing_nodes,
+        }
+    }
 
 
 def research_agent(state: State) -> Dict[str, any]:
     existing = state.get("research_state")
     research_state = _initial_research_state(existing)
     
-    node_field_map = {
-        "knowledge_base_node": "knowledge_base",
-        "github_api_node": "github_api",
-        "web_search_node": "web_search",
+    # Get results from subnodes (they update state directly via graph edges)
+    nodes = research_state.get("nodes") or {}
+    
+    # Check status of subnodes
+    kb_result = nodes.get("knowledge_base", {})
+    github_result = nodes.get("github_api", {})
+    web_result = nodes.get("web_search", {})
+    
+    kb_status = kb_result.get("status", "").lower() if isinstance(kb_result, dict) else ""
+    github_status = github_result.get("status", "").lower() if isinstance(github_result, dict) else ""
+    web_status = web_result.get("status", "").lower() if isinstance(web_result, dict) else ""
+    
+    kb_completed = kb_status == "completed" or kb_status == "skipped"
+    github_completed = github_status == "completed" or github_status == "skipped"
+    web_completed = web_status == "completed" or web_status == "skipped"
+    
+    # If subnodes are not all complete, routing will handle it
+    # This function only aggregates when all are done
+    if not (kb_completed and github_completed and web_completed):
+        # Still update research_state with what we have
+        if kb_completed:
+            research_state["nodes"]["knowledge_base"] = kb_result
+        if github_completed:
+            research_state["nodes"]["github_api"] = github_result
+        if web_completed:
+            research_state["nodes"]["web_search"] = web_result
+        
+        # Return minimal updates - routing will handle next step
+        return {
+            "research_state": research_state,
+        }
+    
+    # All subnodes are complete - aggregate results
+    node_outputs = {
+        "knowledge_base_node": kb_result,
+        "github_api_node": github_result,
+        "web_search_node": web_result,
     }
-    node_outputs: dict[str, dict[str, Any]] = {}
     
-    subnode_order = ["knowledge_base_node", "github_api_node", "web_search_node"]
+    # Store all node outputs
+    research_state["nodes"] = {
+        "knowledge_base": kb_result,
+        "github_api": github_result,
+        "web_search": web_result,
+    }
     
-    for node_name in subnode_order:
-        result = _call_research_subnode(node_name, state)
-        node_outputs[node_name] = result
-        target_field = node_field_map.get(node_name)
-        if target_field:
-            # Store node output in research_state.nodes
-            if "nodes" not in research_state:
-                research_state["nodes"] = {}
-            research_state["nodes"][target_field] = result
-        note_hint = result.get("notes") or result.get("reason") or result.get("status")
-        research_state["notes"] = _append_research_note(research_state.get("notes", []), note_hint)
+    # Aggregate notes
+    for result in node_outputs.values():
+        if isinstance(result, dict):
+            note_hint = result.get("notes") or result.get("reason") or result.get("status")
+            research_state["notes"] = _append_research_note(research_state.get("notes", []), note_hint)
     
     # Aggregate highlights, citations, risks from all subnodes
     highlights = _limit_strings(
         [
             _coerce_str(item, max_len=320) or ""
             for result in node_outputs.values()
+            if isinstance(result, dict)
             for item in result.get("highlights", [])
         ],
         limit=12,
@@ -1305,6 +1418,7 @@ def research_agent(state: State) -> Dict[str, any]:
         [
             cite
             for result in node_outputs.values()
+            if isinstance(result, dict)
             for cite in result.get("citations", [])
             if isinstance(cite, dict)
         ],
@@ -1314,6 +1428,7 @@ def research_agent(state: State) -> Dict[str, any]:
         [
             _coerce_str(item, max_len=200) or ""
             for result in node_outputs.values()
+            if isinstance(result, dict)
             for item in result.get("risks", [])
         ],
         limit=8,
@@ -1328,6 +1443,7 @@ def research_agent(state: State) -> Dict[str, any]:
     statuses = [
         _coerce_str(result.get("status"), max_len=16) or ""
         for result in node_outputs.values()
+        if isinstance(result, dict)
     ]
     lowered = [status.lower() for status in statuses if status]
     if any(status == "completed" for status in lowered):
@@ -1530,11 +1646,16 @@ def component_library_node(state: State) -> Dict[str, Any]:
     try:
         if not os.path.exists(component_file):
             notes.append(f"Component library file not found: {component_file}")
-            return {
+            result = {
                 "status": "skipped",
                 "components": [],
                 "metadata": metadata,
                 "notes": notes,
+            }
+            existing_design_state = state.get("design_state") or {}
+            existing_design_state["components"] = result
+            return {
+                "design_state": existing_design_state,
             }
         
         with open(component_file, "r", encoding="utf-8") as f:
@@ -1542,11 +1663,16 @@ def component_library_node(state: State) -> Dict[str, Any]:
         
         if not isinstance(raw_data, list):
             notes.append("Component library file does not contain a JSON array")
-            return {
+            result = {
                 "status": "skipped",
                 "components": [],
                 "metadata": metadata,
                 "notes": notes,
+            }
+            existing_design_state = state.get("design_state") or {}
+            existing_design_state["components"] = result
+            return {
+                "design_state": existing_design_state,
             }
         
         # Normalize and validate entries
@@ -1595,27 +1721,45 @@ def component_library_node(state: State) -> Dict[str, Any]:
     except json.JSONDecodeError as exc:
         logger.warning("component_library_node: JSON parse error: %s", exc)
         notes.append(f"Failed to parse component library JSON: {exc}")
-        return {
+        result = {
             "status": "skipped",
             "components": [],
             "metadata": metadata,
             "notes": notes,
+        }
+        existing_design_state = state.get("design_state") or {}
+        existing_design_state["components"] = result
+        return {
+            "design_state": existing_design_state,
         }
     except Exception as exc:  # pragma: no cover - defensive guardrail
         logger.warning("component_library_node: unexpected error: %s", exc)
         notes.append(f"Error loading component library: {exc}")
-        return {
+        result = {
             "status": "skipped",
             "components": [],
             "metadata": metadata,
             "notes": notes,
         }
+        existing_design_state = state.get("design_state") or {}
+        existing_design_state["components"] = result
+        return {
+            "design_state": existing_design_state,
+        }
     
-    return {
+    result = {
         "status": status,
         "components": components,
         "metadata": metadata,
         "notes": notes,
+    }
+    
+    # Store result in design_state.components for design_agent to aggregate
+    existing_design_state = state.get("design_state") or {}
+    existing_design_state["components"] = result
+    
+    return {
+        "design_state": existing_design_state,
     }
 
 
@@ -1742,11 +1886,19 @@ def diagram_generator_node(state: State) -> Dict[str, Any]:
         status = "skipped"
         notes.append("No components found in design_state to generate diagram")
     
-    return {
+    result = {
         "status": status,
         "mermaid": mermaid_text,
         "graph": graph_json,
         "notes": notes,
+    }
+    
+    # Store result in design_state.diagram for design_agent to aggregate
+    existing_design_state = state.get("design_state") or {}
+    existing_design_state["diagram"] = result
+    
+    return {
+        "design_state": existing_design_state,
     }
 
 
@@ -1758,10 +1910,15 @@ def cost_est_node(state: State) -> Dict[str, Any]:
     plan_summary = _coerce_str(plan_state.get("summary"), max_len=600) or ""
     
     if not components_list:
-        return {
+        result = {
             "status": "skipped",
             "estimates": [],
             "total": {"monthly_usd": 0, "one_time_usd": 0},
+        }
+        existing_design_state = state.get("design_state") or {}
+        existing_design_state["costs"] = result
+        return {
+            "design_state": existing_design_state,
         }
     comp_summaries: list[str] = []
     for comp in components_list:
@@ -1855,13 +2012,21 @@ def cost_est_node(state: State) -> Dict[str, Any]:
     
     status = "completed" if estimates else "skipped"
     
-    return {
+    result = {
         "status": status,
         "estimates": estimates,
         "total": {
             "monthly_usd": total_monthly,
             "one_time_usd": total_one_time,
         },
+    }
+    
+    # Store result in design_state.costs for design_agent to aggregate
+    existing_design_state = state.get("design_state") or {}
+    existing_design_state["costs"] = result
+    
+    return {
+        "design_state": existing_design_state,
     }
 
 
@@ -1870,26 +2035,53 @@ def design_agent(state: State) -> Dict[str, any]:
     existing = state.get("design_state")
     design_state = _initial_design_state(existing)
 
-    node_field_map = {
-        "component_library_node": "components",
-        "diagram_generator_node": "diagram",
-        "cost_est_node": "costs",
-    }
-    node_outputs: dict[str, dict[str, Any]] = {}
-
-    for node_name in _design_subnode_order(plan_state):
-        result = _call_design_subnode(node_name, state)
-        node_outputs[node_name] = result
-        target_field = node_field_map.get(node_name)
-        if target_field:
-            design_state[target_field] = result
-        note_hint = result.get("notes") or result.get("reason") or result.get("status")
-        design_state["notes"] = _append_design_note(design_state.get("notes", []), note_hint)
-
-    statuses = [
-        _coerce_str(result.get("status"), max_len=16) or ""
-        for result in node_outputs.values()
-    ]
+    # Get results from subnodes (they update state directly via graph edges)
+    components_result = design_state.get("components", {})
+    diagram_result = design_state.get("diagram", {})
+    costs_result = design_state.get("costs", {})
+    
+    # Check status of subnodes
+    components_status = components_result.get("status", "").lower() if isinstance(components_result, dict) else ""
+    diagram_status = diagram_result.get("status", "").lower() if isinstance(diagram_result, dict) else ""
+    costs_status = costs_result.get("status", "").lower() if isinstance(costs_result, dict) else ""
+    
+    components_completed = components_status == "completed" or components_status == "skipped"
+    diagram_completed = diagram_status == "completed" or diagram_status == "skipped"
+    costs_completed = costs_status == "completed" or costs_status == "skipped"
+    
+    # If subnodes are not all complete, routing will handle it
+    # This function only aggregates when all are done
+    if not (components_completed and diagram_completed and costs_completed):
+        # Still update design_state with what we have
+        if components_completed:
+            design_state["components"] = components_result
+        if diagram_completed:
+            design_state["diagram"] = diagram_result
+        if costs_completed:
+            design_state["costs"] = costs_result
+        
+        # Return minimal updates - routing will handle next step
+        return {
+            "design_state": design_state,
+        }
+    
+    # All subnodes are complete - aggregate results
+    design_state["components"] = components_result
+    design_state["diagram"] = diagram_result
+    design_state["costs"] = costs_result
+    
+    # Aggregate notes
+    for result in [components_result, diagram_result, costs_result]:
+        if isinstance(result, dict):
+            notes = result.get("notes")
+            if isinstance(notes, list):
+                for note in notes:
+                    design_state["notes"] = _append_design_note(design_state.get("notes", []), note)
+            elif notes:
+                design_state["notes"] = _append_design_note(design_state.get("notes", []), notes)
+    
+    # Determine overall status
+    statuses = [components_status, diagram_status, costs_status]
     lowered = [status.lower() for status in statuses if status]
     if any(status == "completed" for status in lowered):
         overall_status = "completed"
@@ -1978,9 +2170,17 @@ def review_node(state: State) -> Dict[str, Any]:
     notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
     status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if notes else "skipped")
 
-    return {
+    result = {
         "status": status,
         "notes": notes,
+    }
+    
+    # Store result in critic_state.review for critic_agent to aggregate
+    existing_critic_state = state.get("critic_state") or {}
+    existing_critic_state["review"] = result
+    
+    return {
+        "critic_state": existing_critic_state,
     }
 
 
@@ -2021,9 +2221,17 @@ def hallucination_check_node(state: State) -> Dict[str, Any]:
     notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
     status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if notes else "skipped")
 
-    return {
+    result = {
         "status": status,
         "notes": notes,
+    }
+    
+    # Store result in critic_state.hallucination for critic_agent to aggregate
+    existing_critic_state = state.get("critic_state") or {}
+    existing_critic_state["hallucination"] = result
+    
+    return {
+        "critic_state": existing_critic_state,
     }
 
 
@@ -2062,9 +2270,17 @@ def risk_node(state: State) -> Dict[str, Any]:
     notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
     status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if notes else "skipped")
 
-    return {
+    result = {
         "status": status,
         "notes": notes,
+    }
+    
+    # Store result in critic_state.risk for critic_agent to aggregate
+    existing_critic_state = state.get("critic_state") or {}
+    existing_critic_state["risk"] = result
+    
+    return {
+        "critic_state": existing_critic_state,
     }
 
 
@@ -2072,31 +2288,53 @@ def critic_agent(state: State) -> Dict[str, any]:
     existing = state.get("critic_state")
     critic_state = _initial_critic_state(existing)
 
-    order = ["review_node", "hallucination_check_node", "risk_node"]
-    field_map = {
-        "review_node": "review",
-        "hallucination_check_node": "hallucination",
-        "risk_node": "risk",
-    }
-    node_outputs: dict[str, dict[str, Any]] = {}
+    # Get results from subnodes (they update state directly via graph edges)
+    review_result = critic_state.get("review", {})
+    hallucination_result = critic_state.get("hallucination", {})
+    risk_result = critic_state.get("risk", {})
+    
+    # Check status of subnodes
+    review_status = review_result.get("status", "").lower() if isinstance(review_result, dict) else ""
+    hallucination_status = hallucination_result.get("status", "").lower() if isinstance(hallucination_result, dict) else ""
+    risk_status = risk_result.get("status", "").lower() if isinstance(risk_result, dict) else ""
+    
+    review_completed = review_status == "completed" or review_status == "skipped"
+    hallucination_completed = hallucination_status == "completed" or hallucination_status == "skipped"
+    risk_completed = risk_status == "completed" or risk_status == "skipped"
+    
+    # If subnodes are not all complete, routing will handle it
+    # This function only aggregates when all are done
+    if not (review_completed and hallucination_completed and risk_completed):
+        # Still update critic_state with what we have
+        if review_completed:
+            critic_state["review"] = review_result
+        if hallucination_completed:
+            critic_state["hallucination"] = hallucination_result
+        if risk_completed:
+            critic_state["risk"] = risk_result
+        
+        # Return minimal updates - routing will handle next step
+        return {
+            "critic_state": critic_state,
+        }
+    
+    # All subnodes are complete - aggregate results
+    critic_state["review"] = review_result
+    critic_state["hallucination"] = hallucination_result
+    critic_state["risk"] = risk_result
+    
+    # Aggregate notes
+    for result in [review_result, hallucination_result, risk_result]:
+        if isinstance(result, dict):
+            notes = result.get("notes")
+            if isinstance(notes, list):
+                for note in notes:
+                    critic_state["notes"] = _append_critic_note(critic_state.get("notes", []), note)
+            elif notes:
+                critic_state["notes"] = _append_critic_note(critic_state.get("notes", []), notes)
 
-    for node_name in order:
-        result = _call_critic_subnode(node_name, state)
-        node_outputs[node_name] = result
-        target = field_map.get(node_name)
-        if target:
-            critic_state[target] = result
-        # collect notes
-        note_hint = result.get("notes") or result.get("status")
-        if isinstance(note_hint, list):
-            for n in note_hint:
-                critic_state["notes"] = _append_critic_note(critic_state.get("notes", []), n)
-        else:
-            critic_state["notes"] = _append_critic_note(critic_state.get("notes", []), note_hint)
-
-    statuses = [
-        _coerce_str(res.get("status"), max_len=16) or "" for res in node_outputs.values()
-    ]
+    # Determine overall status
+    statuses = [review_status, hallucination_status, risk_status]
     lowered = [s.lower() for s in statuses if s]
     if any(s == "completed" for s in lowered):
         overall = "completed"
@@ -2164,10 +2402,18 @@ def telemetry_node(state: State) -> Dict[str, Any]:
     notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
     status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if telemetry else "skipped")
 
-    return {
+    result = {
         "status": status,
         "telemetry": telemetry,
         "notes": notes,
+    }
+    
+    # Store result in eval_state.telemetry for evals_agent to aggregate
+    existing_eval_state = state.get("eval_state") or {}
+    existing_eval_state["telemetry"] = result
+    
+    return {
+        "eval_state": existing_eval_state,
     }
 
 
@@ -2217,6 +2463,7 @@ def scores_node(state: State) -> Dict[str, Any]:
     scores = parsed.get("scores") if isinstance(parsed.get("scores"), dict) else {}
     notes = _coerce_str_list(parsed.get("notes"), max_items=8, max_len=200)
     status = _coerce_str(parsed.get("status"), max_len=16) or ("completed" if scores else "skipped")
+
     needs_attention = False
     for val in scores.values():
         try:
@@ -2226,11 +2473,254 @@ def scores_node(state: State) -> Dict[str, Any]:
         except (TypeError, ValueError):
             continue
 
-    return {
+    result = {
         "status": status,
         "scores": scores,
         "needs_attention": needs_attention,
         "notes": notes,
+    }
+    
+    # Store result in eval_state.scores for evals_agent to aggregate
+    existing_eval_state = state.get("eval_state") or {}
+    existing_eval_state["scores"] = result
+    
+    return {
+        "eval_state": existing_eval_state,
+    }
+
+
+def _build_architecture_json(state: State) -> Dict[str, Any]:
+
+    design_state = state.get("design_state") or {}
+    plan_state = state.get("plan_state") or {}
+    diagram = {}
+    if isinstance(design_state.get("diagram"), dict):
+        diagram = design_state.get("diagram") or {}
+    if isinstance(diagram.get("diagram"), dict):
+        # Some generators may wrap diagram payload
+        diagram = diagram.get("diagram") or diagram
+
+    elements: list[dict[str, Any]] = []
+    relations: list[dict[str, Any]] = []
+
+    # Use diagram nodes/edges if they look valid
+    nodes_from_diag = diagram.get("nodes") if isinstance(diagram, dict) else None
+    edges_from_diag = diagram.get("edges") if isinstance(diagram, dict) else None
+
+    if isinstance(nodes_from_diag, list):
+        for node in nodes_from_diag:
+            if not isinstance(node, dict):
+                continue
+            node_id = _coerce_str(node.get("id"), max_len=64)
+            label = _coerce_str(node.get("label") or node.get("name"), max_len=120) or node_id
+            kind = _coerce_str(node.get("type") or node.get("kind"), max_len=32) or "Component"
+            if not node_id or not label:
+                continue
+            entry: dict[str, Any] = {"id": node_id, "label": label, "kind": kind}
+            desc = _coerce_str(node.get("description"), max_len=280)
+            if desc:
+                entry["description"] = desc
+            tech = _coerce_str(node.get("technology"), max_len=80)
+            if tech:
+                entry["technology"] = tech
+            elements.append(entry)
+
+    if isinstance(edges_from_diag, list):
+        for edge in edges_from_diag:
+            if not isinstance(edge, dict):
+                continue
+            source = _coerce_str(edge.get("source"), max_len=64)
+            target = _coerce_str(edge.get("target"), max_len=64)
+            label = _coerce_str(edge.get("label"), max_len=120)
+            if not source or not target:
+                continue
+            relations.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "label": label or "relation",
+                }
+            )
+    if not elements:
+        comps = design_state.get("components", {}).get("components") or []
+        seen_ids: set[str] = set()
+        for comp in comps:
+            if not isinstance(comp, dict):
+                continue
+            comp_id = _coerce_str(comp.get("id"), max_len=64)
+            comp_name = _coerce_str(comp.get("name"), max_len=120) or comp_id
+            comp_type = _coerce_str(comp.get("type"), max_len=32) or "Component"
+            if not comp_id or comp_id in seen_ids:
+                continue
+            seen_ids.add(comp_id)
+            elements.append(
+                {
+                    "id": comp_id,
+                    "label": comp_name,
+                    "kind": comp_type,
+                }
+            )
+
+    if not relations and elements:
+        # Create simple flow relations based on plan steps order
+        steps = plan_state.get("steps") or []
+        ids = [el.get("id") for el in elements if isinstance(el, dict)]
+        if isinstance(steps, list):
+            prev = None
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                title = _coerce_str(step.get("title"), max_len=80) or "step"
+                # Link consecutive unique elements if possible
+                if len(ids) >= 2:
+                    for idx in range(len(ids) - 1):
+                        src = ids[idx]
+                        tgt = ids[idx + 1]
+                        relations.append(
+                            {
+                                "source": src,
+                                "target": tgt,
+                                "label": title,
+                            }
+                        )
+                        break
+                elif prev:
+                    relations.append({"source": prev, "target": ids[0], "label": title})
+                prev = ids[0] if ids else prev
+
+    if not elements:
+        return {}
+
+    return {
+        "elements": elements,
+        "relations": relations,
+    }
+
+
+def final_judgement_node(state: State) -> Dict[str, Any]:
+    plan_state = state.get("plan_state") or {}
+    plan_scope = state.get("plan_scope") or {}
+    research_state = state.get("research_state") or {}
+    design_state = state.get("design_state") or {}
+    critic_state = state.get("critic_state") or {}
+    eval_state = state.get("eval_state") or {}
+
+    goal = _coerce_str(state.get("goal"), max_len=400) or "No goal provided."
+    plan_summary = _coerce_str(plan_state.get("summary"), max_len=800) or ""
+    plan_steps = plan_state.get("steps") if isinstance(plan_state.get("steps"), list) else []
+
+    # Research highlights/citations
+    nodes = research_state.get("nodes") or {}
+    def _collect(list_key: str) -> list[str]:
+        out: list[str] = []
+        for res in nodes.values():
+            if isinstance(res, dict):
+                out.extend(_coerce_str_list(res.get(list_key), max_items=12, max_len=320))
+        return _limit_strings(out, limit=12)
+    research_highlights = _collect("highlights")
+    research_risks = _collect("risks")
+    research_citations: list[dict] = []
+    for res in nodes.values():
+        if isinstance(res, dict):
+            cites = res.get("citations") or []
+            if isinstance(cites, list):
+                research_citations.extend([c for c in cites if isinstance(c, dict)])
+    research_citations = research_citations[:12]
+
+    # Design components/costs/notes
+    components = design_state.get("components", {}).get("components") or []
+    costs = design_state.get("costs", {})
+    design_notes = _coerce_str_list(design_state.get("notes"), max_items=8, max_len=200)
+
+    # Critic notes
+    critic_notes = _coerce_str_list(critic_state.get("notes"), max_items=8, max_len=200)
+
+    # Evals telemetry/scores
+    telemetry = eval_state.get("telemetry", {}).get("telemetry") if isinstance(eval_state.get("telemetry"), dict) else {}
+    scores = eval_state.get("scores", {}).get("scores") if isinstance(eval_state.get("scores"), dict) else {}
+    needs_attention = bool(eval_state.get("needs_attention") or eval_state.get("scores", {}).get("needs_attention"))
+
+    # Architecture JSON
+    architecture_json = _build_architecture_json(state)
+
+    # Design brief
+    design_brief_parts = []
+    if plan_summary:
+        design_brief_parts.append(f"Plan: {plan_summary}")
+    if components:
+        design_brief_parts.append(f"Components: {min(len(components),5)} key components identified.")
+    if costs:
+        design_brief_parts.append("Costs estimated.")
+    if critic_notes:
+        design_brief_parts.append("Critic notes captured.")
+    design_brief = " ".join(design_brief_parts) or "Design completed; see details below."
+
+    # Build markdown response
+    lines: list[str] = []
+    lines.append(f"## Goal\n{goal}")
+    if plan_summary:
+        lines.append(f"\n## Plan\n{plan_summary}")
+    if plan_steps:
+        lines.append("\n### Plan Steps")
+        for step in plan_steps[:6]:
+            if not isinstance(step, dict):
+                continue
+            title = _coerce_str(step.get("title"), max_len=120) or "Step"
+            detail = _coerce_str(step.get("detail"), max_len=200) or ""
+            lines.append(f"- **{title}**: {detail}")
+    if research_highlights:
+        lines.append("\n## Research Highlights")
+        for h in research_highlights[:8]:
+            lines.append(f"- {h}")
+    if research_citations:
+        lines.append("\n### Citations")
+        for c in research_citations[:6]:
+            url = _coerce_str(c.get("url"), max_len=160) or ""
+            title = _coerce_str(c.get("title"), max_len=120) or "Source"
+            lines.append(f"- [{title}]({url})" if url else f"- {title}")
+    if components:
+        lines.append("\n## Design Components")
+        for comp in components[:8]:
+            if not isinstance(comp, dict):
+                continue
+            name = _coerce_str(comp.get("name"), max_len=120) or _coerce_str(comp.get("id"), max_len=64) or "Component"
+            ctype = _coerce_str(comp.get("type"), max_len=32) or ""
+            lines.append(f"- {name} ({ctype})" if ctype else f"- {name}")
+    if costs:
+        lines.append("\n## Cost Estimate")
+        for k, v in costs.items():
+            lines.append(f"- {k}: {v}")
+    if critic_notes:
+        lines.append("\n## Critic Notes")
+        for n in critic_notes:
+            lines.append(f"- {n}")
+    if telemetry:
+        lines.append("\n## Telemetry (inferred)")
+        for k, v in telemetry.items():
+            lines.append(f"- {k}: {v}")
+    if scores:
+        lines.append("\n## Eval Scores")
+        for k, v in scores.items():
+            lines.append(f"- {k}: {v}")
+    if needs_attention:
+        lines.append("\nSome scores are below threshold; review recommended.")
+    if research_risks:
+        lines.append("\n## Risks")
+        for r in research_risks[:6]:
+            lines.append(f"- {r}")
+
+    markdown_output = "\n".join(lines)
+
+    # Update eval_state final_judgement for routing
+    updated_eval_state = dict(eval_state)
+    updated_eval_state["final_judgement"] = {"status": "completed"}
+
+    return {
+        "eval_state": updated_eval_state,
+        "architecture_json": architecture_json,
+        "design_brief": design_brief,
+        "output": markdown_output,
+        "messages": [AIMessage(content=markdown_output)],
     }
 
 
@@ -2238,36 +2728,55 @@ def evals_agent(state: State) -> Dict[str, any]:
     existing = state.get("eval_state")
     eval_state = _initial_eval_state(existing)
 
-    order = ["telemetry_node", "scores_node"]
-    field_map = {
-        "telemetry_node": "telemetry",
-        "scores_node": "scores",
-    }
-    node_outputs: dict[str, dict[str, Any]] = {}
+    # Get results from subnodes (they update state directly via graph edges)
+    telemetry_result = eval_state.get("telemetry", {})
+    scores_result = eval_state.get("scores", {})
+    final_result = eval_state.get("final_judgement", {})
+    
+    # Check status of subnodes
+    telemetry_status = telemetry_result.get("status", "").lower() if isinstance(telemetry_result, dict) else ""
+    scores_status = scores_result.get("status", "").lower() if isinstance(scores_result, dict) else ""
+    final_status = final_result.get("status", "").lower() if isinstance(final_result, dict) else ""
+    
+    telemetry_completed = telemetry_status == "completed" or telemetry_status == "skipped"
+    scores_completed = scores_status == "completed" or scores_status == "skipped"
+    final_completed = final_status == "completed" or final_status == "skipped"
+    
+    # If subnodes are not all complete, routing will handle it
+    # This function only aggregates when all are done
+    if not (telemetry_completed and scores_completed and final_completed):
+        # Still update eval_state with what we have
+        if telemetry_completed:
+            eval_state["telemetry"] = telemetry_result
+        if scores_completed:
+            eval_state["scores"] = scores_result
+            eval_state["needs_attention"] = bool(scores_result.get("needs_attention"))
+        if final_completed:
+            eval_state["final_judgement"] = final_result
+        
+        # Return minimal updates - routing will handle next step
+        return {
+            "eval_state": eval_state,
+        }
+    
+    # All subnodes are complete - aggregate results
+    eval_state["telemetry"] = telemetry_result
+    eval_state["scores"] = scores_result
+    eval_state["needs_attention"] = bool(scores_result.get("needs_attention"))
+    eval_state["final_judgement"] = final_result
+    
+    # Aggregate notes
+    for result in [telemetry_result, scores_result, final_result]:
+        if isinstance(result, dict):
+            notes = result.get("notes")
+            if isinstance(notes, list):
+                for note in notes:
+                    eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note)
+            elif notes:
+                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
 
-    working_state: Dict[str, Any] = dict(state)
-    working_state["eval_state"] = eval_state
-
-    for node_name in order:
-        result = _call_eval_subnode(node_name, working_state)
-        node_outputs[node_name] = result
-        target = field_map.get(node_name)
-        if target:
-            eval_state[target] = result.get(target) or {}
-        if node_name == "scores_node":
-            eval_state["needs_attention"] = bool(result.get("needs_attention"))
-        note_hint = result.get("notes") or result.get("reason") or result.get("status")
-        if isinstance(note_hint, list):
-            for n in note_hint:
-                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), n)
-        else:
-            eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note_hint)
-        # propagate updated eval_state to the next subnode invocation
-        working_state["eval_state"] = eval_state
-
-    statuses = [
-        _coerce_str(res.get("status"), max_len=16) or "" for res in node_outputs.values()
-    ]
+    # Determine overall status
+    statuses = [telemetry_status, scores_status, final_status]
     lowered = [s.lower() for s in statuses if s]
     if any(s == "completed" for s in lowered):
         overall = "completed"
