@@ -12,9 +12,13 @@ class State(TypedDict, total=False):
     goal: str
     clarifier_done: Annotated[bool, overwrite]
     plan: str
+    plan_quality: float
     plan_state: Dict[str, Any]
     plan_scope: Dict[str, Any]
     research_state: Dict[str, Any]
+    research_summary: str
+    research_highlights: Annotated[list[str], operator.add]
+    research_citations: Annotated[list[dict], operator.add]
     design_state: Dict[str, Any]
     critic_state: Dict[str, Any]
     eval_state: Dict[str, Any]

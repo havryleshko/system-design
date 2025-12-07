@@ -13,11 +13,6 @@ auth = Auth()
 
 
 def _normalise_https_url(value: str | None) -> str:
-    """
-    Ensure the provided URL is absolute and uses https://.
-    Supabase dashboard values occasionally omit the scheme; LangGraph
-    runtime needs a fully-qualified URL to reach the JWKS endpoint.
-    """
     if not value:
         return ""
     cleaned = value.strip()
@@ -31,12 +26,6 @@ def _normalise_https_url(value: str | None) -> str:
 
 
 def _compute_jwks_url() -> str:
-    """
-    Resolve the Supabase JWKS URL from environment.
-    Priority:
-      1) SUPABASE_JWKS_URL (explicit)
-      2) SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL + '/auth/v1/jwks'
-    """
     jwks_url = _normalise_https_url(os.getenv("SUPABASE_JWKS_URL"))
     if jwks_url:
         return jwks_url
@@ -120,18 +109,6 @@ def decode_token(token: str) -> Dict[str, Any]:
 
 @auth.authenticate
 async def authenticate(authorization: str | None) -> str:
-    """
-    Authenticate requests using Supabase JWT tokens.
-    
-    Args:
-        authorization: Bearer token from Authorization header
-        
-    Returns:
-        user_id: The user ID from the token's 'sub' claim
-        
-    Raises:
-        HTTPException: If token is missing or invalid
-    """
     if not authorization:
         raise Auth.exceptions.HTTPException(
             status_code=401, detail="Missing authorization header"
@@ -161,8 +138,7 @@ async def authenticate(authorization: str | None) -> str:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as exc:
-        # If configuration is missing, surface as 401 to the client so the UI
-        # can handle it gracefully instead of a generic 500.
+
         message = str(exc)
         if "JWKS" in message or "SUPABASE" in message:
             print("[auth] configuration error:", repr(exc))

@@ -115,9 +115,3 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ received: true }, { status: 200 });
 }
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
