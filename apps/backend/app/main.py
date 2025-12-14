@@ -1,7 +1,21 @@
 import logging
+import sys
 from fastapi import FastAPI, HTTPException
-from app.agent.system_design.graph import _load_checkpointer
+from app.agent.system_design.graph import _load_checkpointer_async
 from app.routes.runs import runs_router
+from app.routes.threads import threads_router
+
+# Configure logging to output to stdout
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+# Set specific loggers
+logging.getLogger("app").setLevel(logging.DEBUG)
+logging.getLogger("app.routes.threads").setLevel(logging.DEBUG)
+logging.getLogger("app.services.threads").setLevel(logging.DEBUG)
 
 app = FastAPI()
 logger = logging.getLogger("app.main")
@@ -12,15 +26,15 @@ def health():
 
 
 @app.get("/health/checkpointer")
-def checkpointer_health():
+async def checkpointer_health():
     try:
-        saver = _load_checkpointer()
+        saver = await _load_checkpointer_async()
         # setup() is idempotent and ensures the DB is reachable.
-        saver.setup()
+        await saver.setup()
         return {"status": "ok"}
     except Exception as exc:
         logger.exception("Checkpointer health failed")
         raise HTTPException(status_code=503, detail=f"checkpointer unavailable: {exc}") from exc
 
 app.include_router(runs_router)
-# Removed threads_router - LangGraph API handles thread management via its built-in routes
+app.include_router(threads_router)

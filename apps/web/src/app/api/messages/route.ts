@@ -1,20 +1,11 @@
 import { NextResponse } from "next/server"
-import { BASE } from "@/utils/langgraph"
+
+// TODO: Rebuild messages API route when frontend↔backend wiring is reimplemented
+// This route previously used BASE from langgraph utils which was removed as part of wiring reset
 
 export async function POST(req: Request) {
-  const body = await req.json()
-  const content = typeof body?.input === "string" && body.input.trim().length > 0
-    ? body.input
-    : typeof body?.content === "string"
-      ? body.content
-      : ""
-
-  const r = await fetch(`${BASE}/runs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input: content }),
-  })
-
-  const json = await r.json()
-  return NextResponse.json(json, { status: r.status })
+  return NextResponse.json(
+    { error: "Messages API route is being rebuilt as part of frontend↔backend wiring redesign" },
+    { status: 501 }
+  )
 }
