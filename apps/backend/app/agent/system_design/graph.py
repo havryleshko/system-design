@@ -1,7 +1,10 @@
 from __future__ import annotations
+import os
 from typing import Literal
+from functools import lru_cache
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from .state import State
 from .nodes import (
@@ -79,7 +82,7 @@ builder.add_edge("risk_node", "critic_agent")
 builder.add_edge("telemetry_node", "evals_agent")
 builder.add_edge("scores_node", "evals_agent")
 builder.add_edge("final_judgement_node", "evals_agent")
-builder.add_edge("orchestrator", END)
+# NOTE: Do NOT add direct edge from orchestrator to END here - conditional edges handle routing
 
 
 def _route_from_orchestrator(state: State) -> Literal["planner_agent", "research_agent", "design_agent", "critic_agent", "evals_agent", "DONE"]:
@@ -316,4 +319,34 @@ builder.add_conditional_edges(
     },
 )
 
+# Compile graph without checkpointer - will be added at runtime
 graph = builder.compile()
+
+# Export the builder so we can compile with checkpointer at runtime
+graph_builder = builder
+
+
+_checkpointer_instance = None
+_checkpointer_context = None
+
+async def _load_checkpointer_async():
+    """Load the async checkpointer for PostgreSQL."""
+    global _checkpointer_instance, _checkpointer_context
+    if _checkpointer_instance is not None:
+        return _checkpointer_instance
+    
+    conn_str = os.getenv("LANGGRAPH_PG_URL")
+    if not conn_str:
+        raise RuntimeError("LANGGRAPH_PG_URL not configured")
+    
+    # AsyncPostgresSaver.from_conn_string returns an async context manager
+    _checkpointer_context = AsyncPostgresSaver.from_conn_string(conn_str)
+    _checkpointer_instance = await _checkpointer_context.__aenter__()
+    await _checkpointer_instance.setup()
+    return _checkpointer_instance
+
+
+async def get_compiled_graph_with_checkpointer():
+    """Get a compiled graph with the async checkpointer attached."""
+    checkpointer = await _load_checkpointer_async()
+    return graph_builder.compile(checkpointer=checkpointer)

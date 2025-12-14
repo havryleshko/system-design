@@ -703,26 +703,6 @@ def orchestrator(state: State) -> Dict[str, any]:
     updates.setdefault("run_phase", phase)
 
     plan_scope = state.get("plan_scope") or {}
-    if phase == "planner" and plan_scope.get("needs_clarifier"):
-        blocking = plan_scope.get("blocking_issues") or []
-        question_lines = ["I need a bit more detail before planning:"]
-        if blocking:
-            question_lines.extend(f"- {item}" for item in blocking)
-        question_lines.append("Please clarify the missing information.")
-        payload = {
-            "type": "clarifier",
-            "question": "\n".join(question_lines),
-            "issues": blocking,
-        }
-        answer = interrupt(payload)
-        answer_text = _clarifier_answer_to_text(answer)
-        if answer_text:
-            updates["messages"] = [HumanMessage(content=answer_text)]
-        updates["plan_scope"] = {}
-        updates["run_phase"] = "planner"
-        orchestrator_state["last_phase"] = "planner_clarifier"
-        updates["orchestrator"] = orchestrator_state
-        return updates
 
     orchestrator_state["last_phase"] = phase
     updates["orchestrator"] = orchestrator_state
@@ -782,14 +762,7 @@ def planner_agent(state: State) -> Dict[str, any]:
         for note in steps_notes:
             planner_state["notes"] = _append_planner_note(planner_state.get("notes", []), note)
     
-    # Handle clarifier check
-    if plan_scope.get("needs_clarifier"):
-        return {
-            "planner_state": planner_state,
-            "plan_scope": plan_scope,
-            "plan_state": plan_state,
-            "run_phase": "planner",
-        }
+    # Clarifier pauses are disabled for now; proceed without requesting extra input
     
     # Handle quality check
     metadata = state.get("metadata") or {}
@@ -908,7 +881,8 @@ def planner_scope(state: State) -> Dict[str, any]:
     if not latest_user or latest_user.lower() == goal.lower():
         info_issues.append("Constraints or requirements not provided.")
 
-    needs_clarifier = bool(blocking_issues)
+    # Temporarily disable clarifier interruptions; keep issues for notes/risk
+    needs_clarifier = False
     risks = [(issue or "").strip()[:120] for issue in (blocking_issues + info_issues) if (issue or "").strip()]
     plan_scope = {
         "goal": goal,
@@ -1496,6 +1470,7 @@ def _initial_eval_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
         "status": _coerce_str(data.get("status")) or "pending",
         "telemetry": data.get("telemetry") or {},
         "scores": data.get("scores") or {},
+        "final_judgement": data.get("final_judgement") or {},
         "needs_attention": bool(data.get("needs_attention")) if data.get("needs_attention") is not None else False,
         "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=200),
     }
@@ -2655,59 +2630,118 @@ def final_judgement_node(state: State) -> Dict[str, Any]:
         design_brief_parts.append("Critic notes captured.")
     design_brief = " ".join(design_brief_parts) or "Design completed; see details below."
 
-    # Build markdown response
     lines: list[str] = []
-    lines.append(f"## Goal\n{goal}")
+
+    # Section 1: Plan
+    lines.append("## Plan")
     if plan_summary:
-        lines.append(f"\n## Plan\n{plan_summary}")
+        lines.append(plan_summary)
     if plan_steps:
-        lines.append("\n### Plan Steps")
-        for step in plan_steps[:6]:
+        # Condense steps into brief numbered list
+        step_items = []
+        for i, step in enumerate(plan_steps[:5], 1):
             if not isinstance(step, dict):
                 continue
-            title = _coerce_str(step.get("title"), max_len=120) or "Step"
-            detail = _coerce_str(step.get("detail"), max_len=200) or ""
-            lines.append(f"- **{title}**: {detail}")
+            title = _coerce_str(step.get("title"), max_len=80) or "Step"
+            step_items.append(f"{i}. **{title}**")
+        if step_items:
+            lines.append("\n**Key Steps:**")
+            lines.extend(step_items)
+    if not plan_summary and not plan_steps:
+        lines.append("*No plan details available.*")
+
+    # Section 2: Research Notes (critical findings only)
+    lines.append("\n## Research Notes")
+    has_research = False
     if research_highlights:
-        lines.append("\n## Research Highlights")
-        for h in research_highlights[:8]:
+        has_research = True
+        lines.append("**Key Findings:**")
+        for h in research_highlights[:4]:
             lines.append(f"- {h}")
+    if research_risks:
+        has_research = True
+        lines.append("\n**Risks Identified:**")
+        for r in research_risks[:3]:
+            lines.append(f"- {r}")
     if research_citations:
-        lines.append("\n### Citations")
-        for c in research_citations[:6]:
+        has_research = True
+        lines.append("\n**Sources:**")
+        for c in research_citations[:4]:
             url = _coerce_str(c.get("url"), max_len=160) or ""
-            title = _coerce_str(c.get("title"), max_len=120) or "Source"
+            title = _coerce_str(c.get("title"), max_len=80) or "Source"
             lines.append(f"- [{title}]({url})" if url else f"- {title}")
+    if not has_research:
+        lines.append("*No research notes available.*")
+
+    # Section 3: Design Overview (components + costs table)
+    lines.append("\n## Design Overview")
+    has_design = False
     if components:
-        lines.append("\n## Design Components")
-        for comp in components[:8]:
+        has_design = True
+        lines.append("**Components:**")
+        for comp in components[:6]:
             if not isinstance(comp, dict):
                 continue
-            name = _coerce_str(comp.get("name"), max_len=120) or _coerce_str(comp.get("id"), max_len=64) or "Component"
-            ctype = _coerce_str(comp.get("type"), max_len=32) or ""
-            lines.append(f"- {name} ({ctype})" if ctype else f"- {name}")
-    if costs:
-        lines.append("\n## Cost Estimate")
-        for k, v in costs.items():
-            lines.append(f"- {k}: {v}")
+            name = _coerce_str(comp.get("name"), max_len=80) or _coerce_str(comp.get("id"), max_len=40) or "Component"
+            ctype = _coerce_str(comp.get("type"), max_len=24) or ""
+            lines.append(f"- **{name}**" + (f" ({ctype})" if ctype else ""))
+    
+    # Format cost estimates from the structured costs dict
+    cost_estimates = costs.get("estimates", []) if isinstance(costs, dict) else []
+    cost_total = costs.get("total", {}) if isinstance(costs, dict) else {}
+    if cost_estimates:
+        has_design = True
+        lines.append("\n**Cost Estimates:**")
+        lines.append("")
+        lines.append("| Component | Monthly | One-time |")
+        lines.append("|-----------|---------|----------|")
+        for est in cost_estimates[:8]:
+            if not isinstance(est, dict):
+                continue
+            name = _coerce_str(est.get("name"), max_len=40) or "Component"
+            monthly = est.get("monthly_usd", 0)
+            one_time = est.get("one_time_usd", 0)
+            monthly_str = f"${monthly:,.0f}/mo" if monthly else "-"
+            one_time_str = f"${one_time:,.0f}" if one_time else "-"
+            lines.append(f"| {name} | {monthly_str} | {one_time_str} |")
+        # Add totals row
+        total_monthly = cost_total.get("monthly_usd", 0)
+        total_one_time = cost_total.get("one_time_usd", 0)
+        if total_monthly or total_one_time:
+            lines.append(f"| **Total** | **${total_monthly:,.0f}/mo** | **${total_one_time:,.0f}** |")
+    if not has_design:
+        lines.append("*No design details available.*")
+
+    # Section 4: Critic Notes (quality assessment)
+    lines.append("\n## Critic Notes")
     if critic_notes:
-        lines.append("\n## Critic Notes")
-        for n in critic_notes:
+        for n in critic_notes[:4]:
             lines.append(f"- {n}")
-    if telemetry:
-        lines.append("\n## Telemetry (inferred)")
-        for k, v in telemetry.items():
-            lines.append(f"- {k}: {v}")
+    else:
+        lines.append("*No critic notes available.*")
+
+    # Section 5: Evaluation Outcomes
+    lines.append("\n## Evaluation Outcomes")
+    has_evals = False
     if scores:
-        lines.append("\n## Eval Scores")
+        has_evals = True
+        lines.append("**Scores:**")
+        lines.append("")
+        lines.append("| Metric | Score |")
+        lines.append("|--------|-------|")
         for k, v in scores.items():
-            lines.append(f"- {k}: {v}")
+            score_val = f"{float(v):.2f}" if isinstance(v, (int, float)) else str(v)
+            lines.append(f"| {k} | {score_val} |")
     if needs_attention:
-        lines.append("\nSome scores are below threshold; review recommended.")
-    if research_risks:
-        lines.append("\n## Risks")
-        for r in research_risks[:6]:
-            lines.append(f"- {r}")
+        has_evals = True
+        lines.append("\n**Attention Required:** Some scores are below threshold; review recommended.")
+    if telemetry:
+        has_evals = True
+        lines.append("\n**Telemetry:**")
+        for k, v in list(telemetry.items())[:4]:
+            lines.append(f"- {k}: {v}")
+    if not has_evals:
+        lines.append("*No evaluation data available.*")
 
     markdown_output = "\n".join(lines)
 
