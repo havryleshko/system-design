@@ -1,554 +1,628 @@
-"use client"
+"use client";
 
-import { useEffect, useRef, useState, useTransition } from "react"
-import { useRouter } from "next/navigation"
+import { ReactNode, useMemo, useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
+import { useAuth } from "@/app/providers/AuthProvider";
+import { createThread, startRun } from "@/app/actions";
+import { useRunPolling } from "./useRunPolling";
+import { useRunWebSocket } from "./useRunWebSocket";
+import ReactMarkdown from "react-markdown";
+import AgentDashboard from "./components/AgentDashboard";
+import ProfilePopup from "./components/ProfilePopup";
 
-import { fetchTrace, resumeClarifier, startRunStream, type StartStreamResult } from "../actions"
-import ArchitecturePanel, { type DesignJson } from "./ArchitecturePanel"
-import TracePanel from "./TracePanel"
-import { openRunStream, type NormalizedStreamEvent } from "./useRunStream"
-import NodeStatusRibbon from "./NodeStatusRibbon"
-import MolecularLoader from "./MolecularLoader"
+type NavItem = {
+  label: string;
+  icon: ReactNode;
+  active?: boolean;
+};
 
-type TraceEvent = {
-    ts_ms: number
-    level: 'info' | 'warn' | 'error'
-    message: string
-    data?: Record<string, unknown> | null
-}
+const navItems: NavItem[] = [
+  {
+    label: "Home",
+    active: true,
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="4" y="4" width="6" height="6" rx="1.5" />
+        <rect x="14" y="4" width="6" height="6" rx="1.5" />
+        <rect x="4" y="14" width="6" height="6" rx="1.5" />
+        <rect x="14" y="14" width="6" height="6" rx="1.5" />
+      </svg>
+    ),
+  },
+  {
+    label: "Search",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M11 4a7 7 0 1 1-4.95 11.95L4 17" />
+        <circle cx="11" cy="11" r="5" />
+      </svg>
+    ),
+  },
+  {
+    label: "Projects",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5V18a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1Z" />
+        <path d="M8 9h8" />
+        <path d="M8 12h5" />
+      </svg>
+    ),
+  },
+  {
+    label: "Alerts",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 4a6 6 0 0 0-6 6v3.8l-1.2 2.1A1 1 0 0 0 5.7 17h12.6a1 1 0 0 0 .9-1.1L18 13.8V10a6 6 0 0 0-6-6Z" />
+        <path d="M10.5 19a1.5 1.5 0 0 0 3 0" />
+      </svg>
+    ),
+  },
+  {
+    label: "Docs",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M7 4h7l4 4v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+        <path d="M14 4v4h4" />
+      </svg>
+    ),
+  },
+  {
+    label: "Feedback",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M6 7h12" />
+        <path d="M6 12h12" />
+        <path d="M6 17h7" />
+        <path d="M4 4h16v14H8l-4 4Z" />
+      </svg>
+    ),
+  },
+  {
+    label: "Data Storage",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <ellipse cx="12" cy="6" rx="6" ry="2.5" />
+        <path d="M6 6v6c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" />
+        <path d="M6 12v6c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-6" />
+      </svg>
+    ),
+  },
+  {
+    label: "Profile",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M6 19c0-3 2.7-5 6-5s6 2 6 5" />
+      </svg>
+    ),
+  },
+];
 
-type RunTrace = {
-    id: string
-    events: TraceEvent[]
-}
+const footerNav: NavItem = {
+  label: "Settings",
+  icon: (
+    <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z" />
+      <path d="M19.4 15a1 1 0 0 0 .2-1.1l-.6-1a1 1 0 0 1 0-.9l.6-1a1 1 0 0 0-.2-1.1l-1.1-1.1a1 1 0 0 0-1.1-.2l-1 .6a1 1 0 0 1-.9 0l-1-.6a1 1 0 0 0-1.1.2L10 8.6a1 1 0 0 0-.2 1.1l.6 1a1 1 0 0 1 0 .9l-.6 1a1 1 0 0 0 .2 1.1l1.1 1.1a1 1 0 0 0 1.1.2l1-.6a1 1 0 0 1 .9 0l1 .6a1 1 0 0 0 1.1-.2Z" />
+    </svg>
+  ),
+};
 
-type ChatMessage = {
-    role: 'user' | 'assistant' | 'system'
-    content: string
-}
+export default function ChatClient() {
+  const { session } = useAuth();
+  const { connect, disconnect } = useRunWebSocket();
+  const polling = useRunPolling();
+  const [collapsed, setCollapsed] = useState(false);
+  const [contextInput, setContextInput] = useState("");
+  const [questionInput, setQuestionInput] = useState("");
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [streamText, setStreamText] = useState("");
+  const [finalMarkdown, setFinalMarkdown] = useState<string | null>(null);
+  const [runValues, setRunValues] = useState<Record<string, unknown> | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPollingActive, setIsPollingActive] = useState(false);
+  
+  // New state for dashboard
+  const [startedAt, setStartedAt] = useState<Date | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [submittedQuestion, setSubmittedQuestion] = useState("");
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-type ChatClientProps = {
-  initialMessages: ChatMessage[]
-  runId: string | null
-  threadId: string | null
-  userId?: string | null
-  designJson?: DesignJson | null
-}
+  // Profile popup state
+  const [showProfilePopup, setShowProfilePopup] = useState(false);
+  const profileButtonRef = useRef<HTMLButtonElement>(null);
 
-type StreamFailure = Extract<StartStreamResult, { ok: false }>
+  const themeVars = useMemo(
+    () => ({
+      "--background": "#1b1d26",
+      "--surface": "#23252f",
+      "--foreground": "#d7d7d7",
+      "--foreground-muted": "#8c8c8c",
+      "--accent": "#9ab6c2",
+      "--border": "#333746",
+      "--app-font": "var(--font-ibm-plex-mono)",
+    }),
+    []
+  );
 
-function formatStreamFailure(failure: StreamFailure): string {
-  const detail = typeof failure.detail === "string" && failure.detail.trim() ? failure.detail.trim() : null
-  const hints: string[] = []
-  if (failure.status === 404) {
-    hints.push("We couldn't find the existing thread. Please try again to create a fresh session.")
-  } else if (typeof failure.status === "number" && failure.status >= 500) {
-    hints.push("The backend is temporarily unavailable. Please retry in a moment.")
-  }
-  const segments = [failure.error]
-  if (detail && detail !== failure.error) segments.push(detail)
-  if (hints.length > 0) segments.push(hints.join(" "))
-  return segments.filter(Boolean).join(" — ")
-}
+  const stopAll = useCallback(() => {
+    disconnect();
+    polling.stop();
+    setIsPollingActive(false);
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+  }, [disconnect, polling]);
 
-const TOKEN_DEBUG_ENABLED = process.env.NEXT_PUBLIC_SUPABASE_TOKEN_DEBUG === "true"
+  // Store stopAll in a ref so cleanup only runs on unmount
+  const stopAllRef = useRef(stopAll);
+  stopAllRef.current = stopAll;
 
-export default function ChatClient({
-  initialMessages,
-  runId,
-  threadId,
-  designJson,
-}: ChatClientProps) {
   useEffect(() => {
-    if (!TOKEN_DEBUG_ENABLED) return
-    fetch("/api/debug/supabase-token")
-      .then(async (res) => {
-        if (!res.ok) return null
-        try {
-          return await res.json()
-        } catch {
-          return null
-        }
-      })
-      .then((data) => {
-        if (data?.token) {
-          console.log("[debug] Supabase access_token", data.token)
-        }
-      })
-      .catch(() => {
-        // swallow errors – this is a debug helper
-      })
-  }, [])
-  const router = useRouter()
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
-  const [input, setInput] = useState("")
-  const [trace, setTrace] = useState<RunTrace | null>(null)
-  const [traceError, setTraceError] = useState<string | null>(null)
-  const [isPending, startTransition] = useTransition()
-  const [currentRunId, setCurrentRunId] = useState<string | null>(runId)
-  const [currentThreadId, setCurrentThreadId] = useState<string | null>(threadId ?? null)
-  const [architecture, setArchitecture] = useState<DesignJson | null>(designJson ?? null)
-  const [streamingContent, setStreamingContent] = useState("")
-  const [isStreaming, setIsStreaming] = useState(false)
-  const streamHandleRef = useRef<{ close: () => void } | null>(null)
-  const [clarifier, setClarifier] = useState<{ question: string; interruptId: string | null; runId: string | null; threadId: string | null } | null>(null)
-  const [nodeStatuses, setNodeStatuses] = useState<Array<{ name: string; status: 'idle' | 'running' | 'done' }>>([])
-  const [streamError, setStreamError] = useState<string | null>(null)
+    return () => {
+      stopAllRef.current();
+    };
+  }, []); // Empty deps - only run cleanup on unmount
 
-  console.log('[chat] render', messages.length)
-
-  const extractContent = (value: unknown): string => {
-    if (!value) return ""
-    if (typeof value === "string") return value
-    if (Array.isArray(value)) {
-      return value
-        .map((part) => {
-          if (typeof part === "string") return part
-          if (part && typeof part === "object") {
-            const segment = part as Record<string, unknown>
-            if (typeof segment.text === "string") return segment.text
-            if (typeof segment.content === "string") return segment.content
-          }
-          return ""
-        })
-        .filter(Boolean)
-        .join("\n")
-    }
-    if (value && typeof value === "object") {
-      const record = value as Record<string, unknown>
-      if (typeof record.text === "string") return record.text
-      if (typeof record.content === "string") return record.content
-    }
-    return ""
-  }
-
-  const normalizeMessages = (raw: unknown): ChatMessage[] | null => {
-    if (!Array.isArray(raw)) return null
-    const normalized: ChatMessage[] = []
-    for (const entry of raw) {
-      if (!entry || typeof entry !== "object") continue
-      const record = entry as Record<string, unknown>
-      const rawRole = typeof record.role === "string" ? record.role.toLowerCase() : undefined
-      const rawType = typeof record.type === "string" ? record.type.toLowerCase() : undefined
-      let role: ChatMessage["role"] = "assistant"
-      if (rawRole === "assistant" || rawRole === "user" || rawRole === "system") role = rawRole
-      else if (rawType === "ai") role = "assistant"
-      else if (rawType === "human") role = "user"
-      const content = extractContent(record.content).trim()
-      if (content) normalized.push({ role, content })
-    }
-    return normalized
-  }
-
-  function getValuesFromStateLike(input: unknown): Record<string, unknown> | null {
-    if (typeof input !== "object" || input === null) return null
-    const rec = input as Record<string, unknown>
-    const values = rec.values
-    if (typeof values === "object" && values !== null) return values as Record<string, unknown>
-    return null
-  }
-
-  const loadTrace = () => {
-    if (!currentRunId) {
-      setTraceError("Run ID not available yet")
-      return
-    }
-    if (trace || isPending) return
-    startTransition(async () => {
-      try {
-        const data = await fetchTrace(currentRunId)
-        setTrace(data)
-        setTraceError(null)
-      } catch (err) {
-        setTrace(null)
-        setTraceError(err instanceof Error ? err.message : "Failed to load trace")
+  // Simulated progress (since backend may not provide real progress)
+  useEffect(() => {
+    if (isRunning && !progressIntervalRef.current) {
+      setProgress(1);
+      progressIntervalRef.current = setInterval(() => {
+        setProgress((prev) => {
+          // Slow down as we approach 95% (never reach 100 until actually complete)
+          if (prev >= 95) return prev;
+          const increment = Math.max(0.5, (95 - prev) * 0.02);
+          return Math.min(95, prev + increment);
+        });
+      }, 500);
+    } else if (!isRunning && progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+      if (finalMarkdown) {
+        setProgress(100);
       }
-    })
-  }
-
-  const refreshTrace = () => {
-    if (!currentRunId) return
-    startTransition(async () => {
-      try {
-        const data = await fetchTrace(currentRunId)
-        setTrace(data)
-        setTraceError(null)
-      } catch (err) {
-        setTrace(null)
-        setTraceError(err instanceof Error ? err.message : "Failed to load trace")
-      }
-    })
-  }
-
-  const attachStream = (threadId: string, runId: string, resetStatuses: boolean) => {
-    setStreamingContent("")
-    streamingContentRef.current = ""
-    setIsStreaming(true)
-    setStreamError(null)
-    if (resetStatuses) setNodeStatuses([])
-
-    if (streamHandleRef.current) {
-      try {
-        streamHandleRef.current.close()
-      } catch {}
-      streamHandleRef.current = null
     }
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [isRunning, finalMarkdown]);
 
-    const handle = openRunStream({
-        threadId,
-        runId,
-        onEvent: (evt: NormalizedStreamEvent) => {
-          console.log("[chat] stream event", evt);
-          if (evt.type === 'message-delta') {
-            setStreamError(null)
-            setStreamingContent((prev) => {
-              const next = prev + evt.text
-              streamingContentRef.current = next
-              return next
-            })
-            return
-          }
-          if (evt.type === 'message-completed') {
-            setStreamError(null)
-            const content = streamingContentRef.current?.trim() ?? ''
-            if (content.length > 0) {
-              setMessages((prev) => [...prev, { role: 'assistant', content }])
-            }
-            setStreamingContent("")
-            streamingContentRef.current = ""
-            setIsStreaming(false)
-            return
-          }
-          if (evt.type === 'node-started') {
-            setStreamError(null)
-            const node = evt.node
-            setNodeStatuses((prev) => {
-              const existing = prev.find((p) => p.name === node)
-              if (existing) return prev.map((p) => (p.name === node ? { ...p, status: 'running' } : p))
-              return [...prev, { name: node, status: 'running' }]
-            })
-            return
-          }
-          if (evt.type === 'node-completed') {
-            setStreamError(null)
-            const node = evt.node
-            setNodeStatuses((prev) => prev.map((p) => (p.name === node ? { ...p, status: 'done' } : p)))
-            return
-          }
-          if (evt.type === 'interrupt') {
-            setStreamError(null)
-            const first = evt.interrupts[0]
-            if (first) {
-              const payload = (first.value ?? {}) as Record<string, unknown>
-              const question =
-                typeof payload?.question === 'string'
-                  ? payload.question
-                  : 'The agent needs a bit more context before proceeding.'
-              setClarifier({
-                question,
-                interruptId: first.id,
-                runId,
-                threadId,
-              })
-              setMessages((prev) => {
-                const last = prev[prev.length - 1]
-                if (last && last.role === 'assistant' && last.content === question) {
-                  return prev
-                }
-                return [...prev, { role: 'assistant', content: question }]
-              })
-              setIsStreaming(false)
-            }
-            return
-          }
-          if (evt.type === 'values-updated') {
-            setStreamError(null)
-            const values = getValuesFromStateLike(evt.values)
-            if (values) {
-              const arch = (values["architecture_json"] || values["design_json"]) as unknown
-              if (arch && typeof arch === "object") setArchitecture(arch as DesignJson)
-              const normalized = normalizeMessages(values["messages"])
-              if (normalized && normalized.length > 0) {
-                console.log('[chat] normalized messages', normalized.length)
-                setMessages(normalized)
-                setIsStreaming(false)
-                setStreamingContent("")
-                streamingContentRef.current = ""
-              }
-              const output = typeof values["output"] === "string" ? values["output"].trim() : ""
-              if (output) {
-                setIsStreaming(false)
-                setStreamingContent("")
-                streamingContentRef.current = ""
-              }
-              setClarifier((prev) => {
-                if (!prev) return prev
-                if (prev.runId && prev.runId !== runId) return prev
-                return null
-              })
-            }
-            return
-          }
-          if (evt.type === 'run-completed') {
-            setIsStreaming(false)
-            setClarifier(null)
-            setStreamError(null)
-            startTransition(async () => {
-              try {
-                const data = await fetchTrace(runId)
-                setTrace(data)
-                setTraceError(null)
-              } catch (err) {
-                setTrace(null)
-                setTraceError(err instanceof Error ? err.message : "Failed to load trace")
-              }
-            })
-            return
-          }
-          if (evt.type === 'error') {
-            setIsStreaming(false)
-            setStreamError(evt.message || 'Stream connection error')
-          }
+  const handleValuesUpdated = useCallback(
+    (payload: { finalJudgement?: string; output?: string; values?: Record<string, unknown> }) => {
+      // Store full values object for tab content
+      if (payload.values) {
+        setRunValues(payload.values);
+      }
+      if (payload.finalJudgement) {
+        setFinalMarkdown(payload.finalJudgement);
+        setIsRunning(false);
+        setProgress(100);
+        stopAll();
+        return;
+      }
+      if (payload.output) {
+        setFinalMarkdown((prev) => prev ?? payload.output ?? null);
+      }
+    },
+    [stopAll]
+  );
+
+  const startPollingFallback = useCallback(
+    (activeThreadId: string, token: string) => {
+      setIsPollingActive(true);
+      polling.start({
+        threadId: activeThreadId,
+        token,
+        handlers: {
+          onValuesUpdated: handleValuesUpdated,
+          onCompleted: () => {
+            setIsRunning(false);
+            setIsPollingActive(false);
+            setProgress(100);
+          },
+          onError: (message) => {
+            setError(message);
+            setIsPollingActive(false);
+          },
         },
-      })
-      streamHandleRef.current = handle
-  }
+      });
+    },
+    [handleValuesUpdated, polling]
+  );
 
-  async function send() {
-    const trimmed = input.trim()
-    if (!trimmed) return
+  const attachWebSocket = useCallback(
+    (activeThreadId: string, activeRunId: string, token: string) => {
+      connect({
+        threadId: activeThreadId,
+        runId: activeRunId,
+        token,
+        handlers: {
+          onDelta: (chunk) => {
+            setStreamText((prev) => prev + chunk);
+          },
+          onValuesUpdated: handleValuesUpdated,
+          onCompleted: () => {
+            setIsRunning(false);
+            setIsPollingActive(false);
+            setProgress(100);
+            polling.stop();
+          },
+          onError: (message) => {
+            setError(message);
+            setIsRunning(false);
+            stopAll();
+            startPollingFallback(activeThreadId, token);
+          },
+        },
+      });
+    },
+    [connect, handleValuesUpdated, polling, startPollingFallback, stopAll]
+  );
 
-    const userMessage: ChatMessage = { role: "user", content: trimmed }
-    setMessages((prev) => [...prev, userMessage])
-    setInput("")
-    setStreamError(null)
-
-    if (clarifier && clarifier.runId && clarifier.threadId) {
-      try {
-        await resumeClarifier({
-          threadId: clarifier.threadId,
-          runId: clarifier.runId,
-          interruptId: clarifier.interruptId,
-          answer: trimmed,
-        })
-        setCurrentThreadId(clarifier.threadId)
-        setCurrentRunId(clarifier.runId)
-        setClarifier(null)
-        attachStream(clarifier.threadId, clarifier.runId, false)
-        return
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to resume clarifier"
-        setStreamError(message)
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `Sorry, something went wrong: ${message}` },
-        ])
-        setIsStreaming(false)
-        return
-      }
+  const handleSubmit = async () => {
+    const question = questionInput.trim();
+    const context = contextInput.trim();
+    if (!question) {
+      setError("Please enter a question to start a run.");
+      return;
     }
+
+    if (!session?.access_token) {
+      setError("Not authenticated");
+      return;
+    }
+
+    const token = session.access_token;
 
     try {
-      const result = await startRunStream(trimmed)
-      if (!result.ok) {
-        if (result.status === 401) {
-          setStreamError("Your session expired. Redirecting to login…")
-          router.replace(`/login?redirect=${encodeURIComponent("/chat")}`)
-          return
-        }
-        const errorMessage = formatStreamFailure(result)
-        setStreamError(errorMessage)
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: `Sorry, something went wrong: ${errorMessage}` },
-        ])
-        return
+      setError(null);
+      setStreamText("");
+      setFinalMarkdown(null);
+      setRunValues(null);
+      setIsPollingActive(false);
+      setIsRunning(true);
+      setStartedAt(new Date());
+      setProgress(0);
+      setSubmittedQuestion(context ? `${context}\n\n${question}` : question);
+
+      // Create thread if needed
+      let currentThreadId = threadId;
+      if (!currentThreadId) {
+        currentThreadId = await createThread(token);
+        setThreadId(currentThreadId);
       }
-      if (!result.runId) {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: 'Run created but no run ID was returned' },
-        ])
-        return
-      }
-      const { runId: newRunId, threadId: newThreadId } = result
-      setCurrentRunId(newRunId)
-      setCurrentThreadId(newThreadId)
-      setClarifier(null)
-      attachStream(newThreadId, newRunId, true)
+
+      const prompt = context ? `${context}\n\n${question}` : question;
+      const newRunId = await startRun(currentThreadId, prompt, token);
+      setRunId(newRunId);
+
+      attachWebSocket(currentThreadId, newRunId, token);
     } catch (err) {
-      console.error("Run failed", err)
-      const message = err instanceof Error ? err.message : "Unknown error"
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Sorry, something went wrong: ${message}` },
-      ])
+      console.error("Submit error:", err);
+      setError(err instanceof Error ? err.message : "Failed to start run");
+      setIsRunning(false);
+      setStartedAt(null);
+      stopAll();
     }
-  }
+  };
 
-  // track latest streaming content for completion
-  const streamingContentRef = useRef(streamingContent)
-  if (streamingContentRef.current !== streamingContent) streamingContentRef.current = streamingContent
+  const handleCancel = useCallback(() => {
+    setIsRunning(false);
+    setStartedAt(null);
+    setProgress(0);
+    stopAll();
+  }, [stopAll]);
 
-return (
-    <div className="relative flex h-screen flex-col text-[var(--foreground)]" style={{ background: 'var(--background)', overflow: 'hidden', fontFamily: 'var(--font-ibm-plex-mono)' }}>
-      {/* Particle background */}
-      <div className="particle-background">
-        <div className="particle" style={{ top: '10%', left: '15%' }}></div>
-        <div className="particle"></div>
-        <div className="particle"></div>
-        <div className="particle"></div>
-        <div className="particle"></div>
-      </div>
+  const handleShare = useCallback(() => {
+    // TODO: Implement share functionality
+    console.log("Share clicked");
+  }, []);
 
-      {/* Header */}
-      <div className="relative z-10 flex items-center justify-between border-b px-6 py-3 shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--surface)', backdropFilter: 'blur(18px)' }}>
-        <div>
-          <h2 className="text-base font-semibold tracking-tight" style={{ fontFamily: 'var(--font-ibm-plex-mono)' }}>System Design Agent</h2>
-          <p className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--foreground-muted)' }}>Autonomous system architecture</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            className="border px-4 py-1.5 text-[11px] font-medium uppercase tracking-wider transition-all duration-200"
-            style={{ 
-              borderColor: 'var(--border)',
-              background: 'rgba(35, 37, 47, 0.3)',
-              color: 'var(--accent)'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--accent)';
-              e.currentTarget.style.color = 'var(--surface)';
-              e.currentTarget.style.boxShadow = '0 0 20px rgba(154, 182, 194, 0.2)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(35, 37, 47, 0.3)';
-              e.currentTarget.style.color = 'var(--accent)';
-              e.currentTarget.style.boxShadow = 'none';
-            }}
-            onClick={async () => {
-              const res = await fetch("/api/stripe/checkout", { method: "POST" })
-              if (!res.ok) {
-                console.error("Checkout failed", res.status)
-                return
-              }
-              const data = await res.json()
-              if (data?.url) {
-                window.location.href = data.url as string
-              }
-            }}
-          >
-            Upgrade to Pro
-          </button>
-        </div>
-      </div>
+  // Handler to go back to input screen (start new analysis)
+  const handleNewAnalysis = useCallback(() => {
+    setRunValues(null);
+    setFinalMarkdown(null);
+    setStreamText("");
+    setProgress(0);
+    setStartedAt(null);
+    setSubmittedQuestion("");
+    setError(null); // Clear any previous errors
+    // Keep threadId for conversation continuity, but reset runId
+    setRunId(null);
+  }, []);
 
-      {/* 3-panel layout */}
-      <div className="relative z-10 grid flex-1 min-h-0 grid-cols-12">
-        {/* Left: Architecture */}
-        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderRight: '1px solid var(--border)', overflow: 'hidden' }}>
-          <ArchitecturePanel designJson={architecture ?? null} />
-        </div>
-
-        {/* Center: Chat */}
-        <div className="col-span-6 flex min-w-0 flex-col min-h-0">
-          <div className="flex-1 min-h-0 overflow-y-auto p-6" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
-              <NodeStatusRibbon nodes={nodeStatuses} />
-              {streamError && (
-                <div className="glass-panel rounded px-4 py-2 text-xs" style={{ borderColor: 'rgba(255, 100, 100, 0.4)', color: '#ffaaaa' }}>
-                  {streamError} — attempting to reconnect…
-                </div>
-              )}
-              {messages.length === 0 ? (
-                <p className="text-sm" style={{ color: 'var(--foreground-muted)', lineHeight: '1.6' }}>
-                  No messages yet. Ask the assistant anything about system design.
-                </p>
-              ) : (
-                messages.map((m, i) => (
-                  <div key={i} className="glass-panel rounded px-5 py-4" style={{ gap: 'var(--spacing-xs)' }}>
-                    <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>
-                      {m.role === 'assistant' ? 'agent' : m.role}
-                    </div>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--foreground)', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{m.content}</div>
-                  </div>
-                ))
-              )}
-              {isStreaming && (
-                <div className="glass-panel rounded px-5 py-4">
-                  <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent</div>
-                  {streamingContent ? (
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--foreground)', lineHeight: '1.7', marginTop: 'var(--spacing-xs)' }}>{streamingContent}</div>
-                  ) : (
-                    <div className="flex items-center" style={{ marginTop: 'var(--spacing-sm)' }}>
-                      <MolecularLoader />
-                      <span className="ml-3 text-xs" style={{ color: 'var(--foreground-muted)' }}>Analyzing request...</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              {clarifier && (
-                <div className="glass-panel rounded px-5 py-3" style={{ border: "1px solid rgba(154,182,194,0.25)", background: "rgba(9,12,15,0.6)" }}>
-                  <div className="text-xs uppercase tracking-wider" style={{ color: 'var(--foreground-muted)', fontFamily: 'var(--font-ibm-plex-mono)' }}>agent requires clarification</div>
-                  <p className="text-sm" style={{ color: 'var(--foreground)', marginTop: 'var(--spacing-xs)' }}>
-                    Answer the question above using the chat box to continue.
-                  </p>
-                </div>
-              )}
+  // Show dashboard when running OR when we have completed results
+  // Use startedAt to prevent flash - if we started a run, stay on dashboard until explicitly reset
+  const hasStartedRun = startedAt !== null;
+  const hasCompletedRun = progress >= 100 && (runValues !== null || finalMarkdown !== null);
+  const showDashboard = isRunning || hasStartedRun || hasCompletedRun;
+  
+  if (showDashboard) {
+    return (
+      <div
+        className="flex min-h-screen bg-[var(--background)] text-[var(--foreground)]"
+        style={{ ...(themeVars as CSSProperties), fontFamily: "var(--app-font)" }}
+      >
+        {/* Sidebar */}
+        <aside
+          className={`sticky top-0 z-10 flex h-screen flex-col border-r border-[var(--border)] bg-[var(--surface)] px-3 py-4 transition-[width] duration-150 ${
+            collapsed ? "w-[80px]" : "w-[240px]"
+          }`}
+        >
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm font-semibold tracking-tight text-[var(--foreground)]">
+              S
             </div>
-          <div
-            className="flex items-center px-4 py-2.5 shrink-0"
-            style={{
-              gap: 'var(--spacing-sm)',
-              borderTop: '1px solid var(--border)',
-              background: 'var(--surface)',
-            }}
-          >
-            <input
-              className="flex-1 bg-transparent text-sm focus:outline-none"
-              style={{ color: 'var(--foreground)', caretColor: 'var(--accent)' }}
-              placeholder={clarifier ? "Answer the clarifier question…" : "Type your message"}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-            />
             <button
-              className="border px-4 py-1.5 text-xs font-medium uppercase tracking-wider transition-all duration-200"
-              style={{ 
-                borderColor: 'var(--border)',
-                background: 'rgba(35, 37, 47, 0.3)',
-                color: 'var(--accent)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--accent)';
-                e.currentTarget.style.color = 'var(--surface)';
-                e.currentTarget.style.boxShadow = '0 0 20px rgba(154, 182, 194, 0.2)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(35, 37, 47, 0.3)';
-                e.currentTarget.style.color = 'var(--accent)';
-                e.currentTarget.style.boxShadow = 'none';
-              }}
-              onClick={send}
+              type="button"
+              aria-label="Toggle sidebar"
+              onClick={() => setCollapsed((c) => !c)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground-muted)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)]"
             >
-              Send
+              <svg
+                viewBox="0 0 24 24"
+                className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <path d="m10 8 4 4-4 4" />
+              </svg>
             </button>
           </div>
+
+          <nav className="mt-auto flex flex-col gap-1.5">
+            {["Profile", "Data Storage", "Feedback", "Docs"].map((label) => {
+              const item = navItems.find((it) => it.label === label);
+              if (!item) return null;
+              const isProfile = label === "Profile";
+              return (
+                <div key={item.label} className="relative">
+                  <button
+                    ref={isProfile ? profileButtonRef : undefined}
+                    type="button"
+                    onClick={isProfile ? () => setShowProfilePopup((v) => !v) : undefined}
+                    className={`group flex w-full items-center gap-3 rounded-xl border text-[var(--foreground-muted)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)] ${
+                      item.active
+                        ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface))] text-[var(--foreground)]"
+                        : "border-[var(--border)] bg-[var(--background)]"
+                    } ${collapsed ? "h-9 w-9 justify-center" : "h-10 px-3 justify-start"}`}
+                    aria-label={item.label}
+                  >
+                    <span className="flex h-3 w-3 items-center justify-center">{item.icon}</span>
+                    {!collapsed && <span className="text-sm font-semibold tracking-tight">{item.label}</span>}
+                  </button>
+                  {isProfile && showProfilePopup && (
+                    <ProfilePopup
+                      onClose={() => setShowProfilePopup(false)}
+                      anchorRef={profileButtonRef}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* Main Dashboard */}
+        <AgentDashboard
+          question={submittedQuestion}
+          progress={progress}
+          startedAt={startedAt}
+          runId={runId}
+          values={runValues}
+          finalMarkdown={finalMarkdown}
+          onCancel={handleCancel}
+          onShare={handleShare}
+          onNewAnalysis={handleNewAnalysis}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex min-h-screen bg-[var(--background)] text-[var(--foreground)]"
+      style={{ ...(themeVars as CSSProperties), fontFamily: "var(--app-font)" }}
+    >
+      <aside
+        className={`sticky top-0 z-10 flex h-screen flex-col border-r border-[var(--border)] bg-[var(--surface)] px-3 py-4 transition-[width] duration-150 ${
+          collapsed ? "w-[80px]" : "w-[240px]"
+        }`}
+      >
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm font-semibold tracking-tight text-[var(--foreground)]">
+            S
+          </div>
+          <button
+            type="button"
+            aria-label="Toggle sidebar"
+            onClick={() => setCollapsed((c) => !c)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground-muted)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <path d="m10 8 4 4-4 4" />
+            </svg>
+          </button>
         </div>
 
-        {/* Right: Trace */}
-        <div className="col-span-3 min-w-0 flex flex-col min-h-0" style={{ borderLeft: '1px solid var(--border)', overflow: 'hidden' }}>
-          <TracePanel
-            trace={trace}
-            isLoading={isPending && !trace}
-            error={traceError}
-            onRefresh={() => (trace ? refreshTrace() : loadTrace())}
-          />
+        <nav className="mt-auto flex flex-col gap-1.5">
+          {["Profile", "Data Storage", "Feedback", "Docs"].map((label) => {
+            const item = navItems.find((it) => it.label === label);
+            if (!item) return null;
+            const isProfile = label === "Profile";
+            return (
+              <div key={item.label} className="relative">
+                <button
+                  ref={isProfile ? profileButtonRef : undefined}
+                  type="button"
+                  onClick={isProfile ? () => setShowProfilePopup((v) => !v) : undefined}
+                  className={`group flex w-full items-center gap-3 rounded-xl border text-[var(--foreground-muted)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)] ${
+                    item.active
+                      ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface))] text-[var(--foreground)]"
+                      : "border-[var(--border)] bg-[var(--background)]"
+                  } ${collapsed ? "h-9 w-9 justify-center" : "h-10 px-3 justify-start"}`}
+                  aria-label={item.label}
+                >
+                  <span className="flex h-3 w-3 items-center justify-center">{item.icon}</span>
+                  {!collapsed && <span className="text-sm font-semibold tracking-tight">{item.label}</span>}
+                </button>
+                {isProfile && showProfilePopup && (
+                  <ProfilePopup
+                    onClose={() => setShowProfilePopup(false)}
+                    anchorRef={profileButtonRef}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </nav>
+      </aside>
+
+      <div className="flex min-h-screen flex-1 flex-col">
+        <header className="flex items-center justify-end gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-6 py-4">
+          <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-sm text-[var(--foreground-muted)]">
+            <span>Remaining Credits:</span>
+            <span className="font-semibold text-[var(--foreground)]">10</span>
+          </div>
+          <button className="rounded-full border border-[var(--border)] bg-[var(--background)] px-4 py-2 text-sm font-semibold text-[var(--accent)] transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,var(--background))]">
+            Get more
+          </button>
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--background)] text-sm font-semibold text-[var(--foreground)]">
+            U
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto flex max-w-5xl flex-col gap-5 px-6 pb-12 pt-8">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-3xl font-semibold tracking-tight text-[var(--foreground)]">Analysis</h1>
+              <span className="inline-flex items-center rounded-md border border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground)]">
+                Explain the system you need in details to start research
+              </span>
+            </div>
+
+            {(finalMarkdown || streamText) && (
+              <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_18px_40px_rgba(0,0,0,0.2)]">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[var(--foreground)]">
+                      {finalMarkdown ? "Run completed" : "Waiting for output"}
+                    </span>
+                  </div>
+                  {runId && <span className="text-[var(--foreground-muted)]">Run ID: {runId}</span>}
+                </div>
+
+                {streamText && !finalMarkdown && (
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-3 text-sm text-[var(--foreground)]">
+                    <div className="mb-2 text-xs font-semibold uppercase text-[var(--foreground-muted)]">Live output</div>
+                    <div className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed">{streamText}</div>
+                  </div>
+                )}
+
+                {finalMarkdown && (
+                  <div className="prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown components={{
+                      h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-4 text-[var(--foreground)]" {...props} />,
+                      h2: ({node, ...props}) => <h2 className="text-xl font-bold mb-3 mt-4 text-[var(--foreground)]" {...props} />,
+                      h3: ({node, ...props}) => <h3 className="text-lg font-semibold mb-2 mt-3 text-[var(--foreground)]" {...props} />,
+                      p: ({node, ...props}) => <p className="mb-2 text-[var(--foreground)]" {...props} />,
+                      ul: ({node, ...props}) => <ul className="list-disc list-inside mb-2 text-[var(--foreground)]" {...props} />,
+                      li: ({node, ...props}) => <li className="mb-1 text-[var(--foreground)]" {...props} />,
+                      code: ({node, ...props}) => <code className="bg-[var(--background)] px-1 rounded text-[var(--accent)]" {...props} />,
+                      a: ({node, ...props}) => <a className="text-[var(--accent)] underline" {...props} />,
+                    }}>{finalMarkdown}</ReactMarkdown>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {error && (
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-400">
+                Error: {error}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_18px_40px_rgba(0,0,0,0.2)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--background)] px-6 py-4">
+                <div className="flex flex-col gap-1 text-sm">
+                  <span className="text-[var(--foreground)]">Systesign is here!</span>
+                  <span className="text-[var(--foreground-muted)]">
+                    Build agentic architectures with Systesign - Agentic system researcher!
+                  </span>
+                </div>
+                <button className="rounded-lg border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--accent)_22%,transparent)]">
+                  Try Systesign:
+                </button>
+              </div>
+
+              <div className="space-y-5 px-6 py-6">
+                <label className="block rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3">
+                  <div className="mb-2 text-sm font-semibold text-[var(--foreground)]">Context / Data</div>
+                  <textarea
+                    value={contextInput}
+                    onChange={(e) => setContextInput(e.target.value)}
+                    aria-label="Context input"
+                    className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
+                    rows={4}
+                    placeholder=""
+                  />
+                </label>
+
+                <label className="block rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3">
+                  <div className="mb-2 text-sm font-semibold text-[var(--foreground)]">Question</div>
+                  <textarea
+                    value={questionInput}
+                    onChange={(e) => setQuestionInput(e.target.value)}
+                    aria-label="Question input"
+                    className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
+                    rows={6}
+                    placeholder=""
+                  />
+                </label>
+
+                <div className="flex flex-col gap-4 border-t border-[var(--border)] pt-4 md:flex-row md:items-center md:justify-between">
+                  <div className="flex flex-1 items-center gap-3 rounded-xl border border-dashed border-[color-mix(in_srgb,var(--accent)_55%,var(--border))] bg-[var(--background)] px-4 py-4 text-sm text-[var(--foreground)]">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[color-mix(in_srgb,var(--accent)_55%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-base font-semibold text-[var(--foreground)]">
+                      ↑
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="font-semibold">Drag Here or Click to Upload</span>
+                      <span className="text-[var(--foreground-muted)]">Max 100MB</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-start gap-2 md:items-end">
+                    <div className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-sm text-[var(--foreground-muted)]">
+                      Cost <span className="font-semibold text-[var(--foreground)]">1 Credit</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSubmit}
+                      disabled={isRunning}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--background)] transition-transform duration-150 hover:-translate-y-0.5 hover:shadow-[0_0_16px_rgba(154,182,194,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isRunning ? "Running..." : "Start →"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

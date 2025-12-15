@@ -34,7 +34,7 @@ def _compute_jwks_url() -> str:
         os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     )
     if base_url:
-        return base_url.rstrip("/") + "/auth/v1/jwks"
+        return base_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
     # Keep a clear message to aid debugging if all fallbacks are missing
     raise RuntimeError("SUPABASE_JWKS_URL not configured (and SUPABASE_URL missing)")
 
@@ -67,8 +67,23 @@ def get_jwks_client():
 def decode_token(token: str) -> Dict[str, Any]:
     """Decode and validate Supabase JWT token."""
     options = {"verify_aud": False}
-    jwks_error: Exception | None = None
 
+    # Try JWT secret first (Supabase access tokens use HS256)
+    secret = os.getenv("SUPABASE_JWT_SECRET")
+    if secret:
+        try:
+            return jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                audience=None,
+                options=options,
+            )
+        except jwt.PyJWTError:
+            pass  # Fall through to JWKS
+
+    # Fallback to JWKS for other token types (e.g., ES256)
+    jwks_error: Exception | None = None
     try:
         jwks_client = get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token)
@@ -86,25 +101,9 @@ def decode_token(token: str) -> Dict[str, Any]:
             status_code=401, detail=f"Invalid token: {exc}"
         ) from exc
 
-    # Fallback to verifying with the Supabase JWT secret if JWKS lookup fails.
-    secret = os.getenv("SUPABASE_JWT_SECRET")
-    if not secret:
-        raise Auth.exceptions.HTTPException(
-            status_code=401, detail="Authentication not configured"
-        ) from jwks_error
-
-    try:
-        return jwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            audience=None,
-            options=options,
-        )
-    except jwt.PyJWTError as exc:
-        raise Auth.exceptions.HTTPException(
-            status_code=401, detail=f"Invalid token: {exc}"
-        ) from exc
+    raise Auth.exceptions.HTTPException(
+        status_code=401, detail="Authentication not configured - set SUPABASE_JWT_SECRET"
+    ) from jwks_error
 
 
 @auth.authenticate
