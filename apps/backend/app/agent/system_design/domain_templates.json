@@ -1,0 +1,251 @@
+{
+  "templates": [
+    {
+      "id": "productivity",
+      "name": "Productivity (Email/Calendar)",
+      "description": "Agents for managing emails, calendars, tasks, and personal productivity workflows.",
+      "primary_patterns": ["react", "tool-use"],
+      "keywords": ["email", "calendar", "gmail", "outlook", "schedule", "meeting", "task", "todo", "productivity", "assistant"],
+      "typical_architecture": {
+        "agents": [
+          {
+            "name_template": "InboxManager",
+            "responsibility": "Triage, categorize, and prioritize incoming emails",
+            "tools": ["email_read", "email_search", "label_apply"]
+          },
+          {
+            "name_template": "CalendarCoordinator",
+            "responsibility": "Manage calendar events, find availability, schedule meetings",
+            "tools": ["calendar_read", "calendar_write", "availability_check"]
+          },
+          {
+            "name_template": "DraftComposer",
+            "responsibility": "Generate email drafts based on context and instructions",
+            "tools": ["email_draft", "template_lookup", "contact_lookup"]
+          }
+        ],
+        "memory": {
+          "short_term": "Current email thread context, meeting details",
+          "long_term": "Contact preferences, common responses, scheduling patterns"
+        },
+        "bounded_autonomy": {
+          "permission_gates": ["send_email", "create_meeting", "delete_email"],
+          "max_actions_per_run": 10
+        }
+      },
+      "example_goals": [
+        "Build an email assistant that auto-categorizes and drafts responses",
+        "Create a calendar bot that finds meeting times across timezones",
+        "Design a task manager that syncs with email and calendar"
+      ]
+    },
+    {
+      "id": "coding-assistant",
+      "name": "Coding Assistant",
+      "description": "Agents for code generation, review, debugging, and software development workflows.",
+      "primary_patterns": ["plan-and-execute", "reflection"],
+      "keywords": ["code", "coding", "programming", "developer", "debug", "refactor", "test", "git", "github", "software", "engineer"],
+      "typical_architecture": {
+        "agents": [
+          {
+            "name_template": "CodePlanner",
+            "responsibility": "Analyze requirements and create implementation plan",
+            "tools": ["codebase_search", "file_read", "dependency_check"]
+          },
+          {
+            "name_template": "CodeWriter",
+            "responsibility": "Generate code based on plan and specifications",
+            "tools": ["file_write", "code_execute", "test_run"]
+          },
+          {
+            "name_template": "CodeReviewer",
+            "responsibility": "Review generated code for quality, bugs, and improvements",
+            "tools": ["lint", "static_analysis", "security_scan"]
+          }
+        ],
+        "memory": {
+          "short_term": "Current file context, recent changes, error messages",
+          "long_term": "Codebase patterns, past fixes, team conventions"
+        },
+        "bounded_autonomy": {
+          "permission_gates": ["git_push", "deploy", "delete_file"],
+          "max_actions_per_run": 50
+        }
+      },
+      "example_goals": [
+        "Build a coding assistant that can implement features from descriptions",
+        "Create a PR review bot that catches bugs and suggests improvements",
+        "Design a debugging agent that diagnoses and fixes errors"
+      ]
+    },
+    {
+      "id": "research-analysis",
+      "name": "Research/Analysis",
+      "description": "Agents for research, data analysis, report generation, and knowledge synthesis.",
+      "primary_patterns": ["mrkl", "chain-of-thought", "self-ask"],
+      "keywords": ["research", "analysis", "report", "data", "investigate", "study", "survey", "compare", "evaluate", "synthesize"],
+      "typical_architecture": {
+        "agents": [
+          {
+            "name_template": "QueryDecomposer",
+            "responsibility": "Break complex research questions into sub-queries",
+            "tools": ["query_parser", "topic_classifier"]
+          },
+          {
+            "name_template": "SourceResearcher",
+            "responsibility": "Search and retrieve information from multiple sources",
+            "tools": ["web_search", "academic_search", "database_query"]
+          },
+          {
+            "name_template": "AnalysisSynthesizer",
+            "responsibility": "Analyze findings and synthesize into coherent report",
+            "tools": ["text_analysis", "data_viz", "report_generator"]
+          }
+        ],
+        "memory": {
+          "short_term": "Current research context, gathered sources, partial findings",
+          "long_term": "Past research topics, trusted sources, domain knowledge"
+        },
+        "bounded_autonomy": {
+          "permission_gates": ["publish_report", "external_api_calls"],
+          "max_actions_per_run": 100
+        }
+      },
+      "example_goals": [
+        "Build a research agent that compares products/services",
+        "Create a market analysis bot that tracks competitors",
+        "Design a literature review agent for academic research"
+      ]
+    },
+    {
+      "id": "customer-support",
+      "name": "Customer Support",
+      "description": "Agents for handling customer inquiries, support tickets, and service workflows.",
+      "primary_patterns": ["react", "supervisor"],
+      "keywords": ["support", "customer", "help", "ticket", "service", "chat", "inquiry", "complaint", "escalate", "resolve"],
+      "typical_architecture": {
+        "agents": [
+          {
+            "name_template": "TicketTriager",
+            "responsibility": "Classify incoming tickets and route to appropriate handler",
+            "tools": ["ticket_read", "sentiment_analysis", "category_classifier"]
+          },
+          {
+            "name_template": "KnowledgeResolver",
+            "responsibility": "Search knowledge base and provide solutions",
+            "tools": ["kb_search", "faq_lookup", "doc_retrieve"]
+          },
+          {
+            "name_template": "EscalationHandler",
+            "responsibility": "Handle complex cases and escalate to humans when needed",
+            "tools": ["human_handoff", "ticket_update", "priority_set"]
+          }
+        ],
+        "memory": {
+          "short_term": "Current conversation context, customer history",
+          "long_term": "Common issues, resolution patterns, customer preferences"
+        },
+        "bounded_autonomy": {
+          "permission_gates": ["refund_issue", "account_modify", "escalate_human"],
+          "max_actions_per_run": 20
+        }
+      },
+      "example_goals": [
+        "Build a support chatbot that resolves common issues",
+        "Create a ticket routing system with intelligent escalation",
+        "Design a customer service agent with CRM integration"
+      ]
+    },
+    {
+      "id": "content-creation",
+      "name": "Content Creation",
+      "description": "Agents for writing, editing, and publishing content across various formats.",
+      "primary_patterns": ["plan-and-execute", "tree-of-thought"],
+      "keywords": ["content", "write", "blog", "article", "social", "marketing", "copy", "creative", "publish", "edit"],
+      "typical_architecture": {
+        "agents": [
+          {
+            "name_template": "ContentStrategist",
+            "responsibility": "Plan content structure, outline, and key messages",
+            "tools": ["topic_research", "keyword_analysis", "outline_generator"]
+          },
+          {
+            "name_template": "ContentWriter",
+            "responsibility": "Generate content based on outline and style guidelines",
+            "tools": ["text_generate", "tone_adjust", "format_apply"]
+          },
+          {
+            "name_template": "ContentEditor",
+            "responsibility": "Review, edit, and polish content for publication",
+            "tools": ["grammar_check", "seo_optimize", "readability_score"]
+          }
+        ],
+        "memory": {
+          "short_term": "Current article context, draft versions",
+          "long_term": "Brand voice, past content, audience preferences"
+        },
+        "bounded_autonomy": {
+          "permission_gates": ["publish", "social_post", "email_send"],
+          "max_actions_per_run": 30
+        }
+      },
+      "example_goals": [
+        "Build a blog writing assistant with SEO optimization",
+        "Create a social media content generator",
+        "Design a marketing copy agent with A/B testing"
+      ]
+    },
+    {
+      "id": "data-processing",
+      "name": "Data Processing",
+      "description": "Agents for ETL, data transformation, and automated data pipeline workflows.",
+      "primary_patterns": ["tool-use", "supervisor"],
+      "keywords": ["data", "etl", "pipeline", "transform", "process", "extract", "load", "database", "csv", "api", "integration"],
+      "typical_architecture": {
+        "agents": [
+          {
+            "name_template": "DataExtractor",
+            "responsibility": "Extract data from various sources (APIs, files, databases)",
+            "tools": ["api_fetch", "file_read", "db_query"]
+          },
+          {
+            "name_template": "DataTransformer",
+            "responsibility": "Clean, transform, and validate data",
+            "tools": ["data_clean", "schema_validate", "format_convert"]
+          },
+          {
+            "name_template": "DataLoader",
+            "responsibility": "Load processed data into target destinations",
+            "tools": ["db_write", "file_write", "api_push"]
+          }
+        ],
+        "memory": {
+          "short_term": "Current batch context, transformation state",
+          "long_term": "Schema mappings, data quality rules, past job results"
+        },
+        "bounded_autonomy": {
+          "permission_gates": ["db_write", "file_delete", "schema_modify"],
+          "max_actions_per_run": 1000
+        }
+      },
+      "example_goals": [
+        "Build an ETL agent that syncs data between systems",
+        "Create a data quality monitor with auto-correction",
+        "Design a report generator from multiple data sources"
+      ]
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "last_updated": "2024-12-18",
+    "pattern_combinations": {
+      "productivity": "ReAct + Tool-Use for dynamic tool selection",
+      "coding-assistant": "Plan-and-Execute + Reflection for quality code",
+      "research-analysis": "MRKL + Chain-of-Thought for multi-domain reasoning",
+      "customer-support": "ReAct + Supervisor for routing and escalation",
+      "content-creation": "Plan-and-Execute + Tree-of-Thought for creative exploration",
+      "data-processing": "Tool-Use + Supervisor for parallel ETL"
+    }
+  }
+}
+

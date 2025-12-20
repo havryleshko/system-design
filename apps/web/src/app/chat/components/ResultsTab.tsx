@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 
 type ResultsTabProps = {
   output: string | null;
@@ -8,6 +11,9 @@ type ResultsTabProps = {
 };
 
 export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
+  const [copied, setCopied] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
   const formatDate = (date: Date | null) => {
     if (!date) return "";
     return date.toLocaleDateString("en-US", {
@@ -15,6 +21,14 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
       day: "2-digit",
       year: "numeric",
     });
+  };
+
+  const handleCopy = async () => {
+    if (output) {
+      await navigator.clipboard.writeText(output);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   if (!output) {
@@ -30,7 +44,7 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
       {/* Results Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="inline-flex items-center rounded-md border border-[#22c55e]/30 bg-[#22c55e]/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-[#22c55e]">
+          <span className="inline-flex items-center rounded-sm border border-[#22c55e]/30 bg-[#22c55e]/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-[#22c55e]">
             SUCCESS
           </span>
           {startedAt && (
@@ -42,7 +56,7 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+            className="flex items-center gap-1.5 rounded-sm border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
           >
             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7" />
@@ -53,7 +67,8 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
           </button>
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 rounded-sm border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
           >
             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -62,15 +77,17 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
               <path d="M16 17H8" />
               <path d="M10 9H8" />
             </svg>
-            Copy
+            {copied ? "Copied!" : "Copy"}
           </button>
         </div>
       </div>
 
       {/* Markdown Content */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
+      <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-6">
         <div className="prose prose-sm prose-invert max-w-none">
           <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeRaw]}
             components={{
               h1: ({ node, ...props }) => (
                 <h1
@@ -110,6 +127,8 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
               ),
               code: ({ node, className, children, ...props }) => {
                 const isInline = !className;
+                const isMermaid = className?.includes("language-mermaid");
+                
                 if (isInline) {
                   return (
                     <code
@@ -120,9 +139,22 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
                     </code>
                   );
                 }
+                
+                // Special styling for mermaid code blocks
+                if (isMermaid) {
+                  return (
+                    <code
+                      className="block overflow-x-auto rounded-sm bg-[#1a1a2e] p-4 font-mono text-sm text-[#a8dadc]"
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  );
+                }
+                
                 return (
                   <code
-                    className="block overflow-x-auto rounded-lg bg-[var(--background)] p-4 font-mono text-sm text-[var(--foreground)]"
+                    className="block overflow-x-auto rounded-sm bg-[var(--background)] p-4 font-mono text-sm text-[var(--foreground)]"
                     {...props}
                   >
                     {children}
@@ -131,7 +163,7 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
               },
               pre: ({ node, ...props }) => (
                 <pre
-                  className="mb-4 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--background)] p-0"
+                  className="mb-4 overflow-x-auto rounded-sm border border-[var(--border)] bg-[var(--background)] p-0"
                   {...props}
                 />
               ),
@@ -177,6 +209,40 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
               ),
               hr: ({ node, ...props }) => (
                 <hr className="my-6 border-[var(--border)]" {...props} />
+              ),
+              // Architecture diagram image with fallback
+              img: ({ node, src, alt, ...props }) => {
+                if (imageError || !src) {
+                  return (
+                    <div className="my-4 flex items-center justify-center rounded border border-[var(--border)] bg-[var(--background)] p-8 text-[var(--foreground-muted)]">
+                      <span>Diagram image unavailable</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="my-4">
+                    <img
+                      src={src}
+                      alt={alt || "Architecture Diagram"}
+                      className="max-w-full rounded border border-[var(--border)] bg-white"
+                      onError={() => setImageError(true)}
+                      {...props}
+                    />
+                  </div>
+                );
+              },
+              // Style details/summary for collapsible diagram code
+              details: ({ node, ...props }) => (
+                <details
+                  className="my-4 rounded border border-[var(--border)] bg-[var(--background)]"
+                  {...props}
+                />
+              ),
+              summary: ({ node, ...props }) => (
+                <summary
+                  className="cursor-pointer px-4 py-2 font-semibold text-[var(--foreground)] hover:bg-[var(--surface)]"
+                  {...props}
+                />
               ),
             }}
           >

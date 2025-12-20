@@ -16,18 +16,17 @@ from .nodes import (
     design_agent,
     critic_agent,
     evals_agent,
-    final_judgement_node,
+    pattern_selector_node,
     knowledge_base_node,
     github_api_node,
     web_search_node,
-    component_library_node,
+    architecture_generator_node,
     diagram_generator_node,
-    cost_est_node,
+    output_formatter_node,
     review_node,
     hallucination_check_node,
     risk_node,
     telemetry_node,
-    scores_node,
 )
 
 builder = StateGraph(State)
@@ -40,49 +39,46 @@ builder.add_node("research_agent", research_agent)
 builder.add_node("design_agent", design_agent)
 builder.add_node("critic_agent", critic_agent)
 builder.add_node("evals_agent", evals_agent)
-builder.add_node("final_judgement_node", final_judgement_node)
+# Research phase subnodes
+builder.add_node("pattern_selector_node", pattern_selector_node)
 builder.add_node("knowledge_base_node", knowledge_base_node)
 builder.add_node("github_api_node", github_api_node)
 builder.add_node("web_search_node", web_search_node)
-builder.add_node("component_library_node", component_library_node)
+# Design phase subnodes
+builder.add_node("architecture_generator_node", architecture_generator_node)
 builder.add_node("diagram_generator_node", diagram_generator_node)
-builder.add_node("cost_est_node", cost_est_node)
+builder.add_node("output_formatter_node", output_formatter_node)
+# Critic phase subnodes
 builder.add_node("review_node", review_node)
 builder.add_node("hallucination_check_node", hallucination_check_node)
 builder.add_node("risk_node", risk_node)
+# Evals phase subnodes
 builder.add_node("telemetry_node", telemetry_node)
-builder.add_node("scores_node", scores_node)
 builder.add_edge(START, "orchestrator")
 
 # Planner sequencing: planner_agent -> planner_scope -> planner_agent -> planner_steps -> planner_agent -> orchestrator
-# Remove concurrent edges to avoid InvalidUpdateError
 builder.add_edge("planner_scope", "planner_agent")
 builder.add_edge("planner_steps", "planner_agent")
 
-# Research sequencing: research_agent -> knowledge_base_node -> research_agent -> github_api_node -> research_agent -> web_search_node -> research_agent -> orchestrator
-# Remove concurrent edges to avoid InvalidUpdateError
+# Research sequencing: research_agent -> pattern_selector_node -> research_agent -> knowledge_base_node -> research_agent -> github_api_node -> research_agent -> web_search_node -> research_agent -> orchestrator
+builder.add_edge("pattern_selector_node", "research_agent")
 builder.add_edge("knowledge_base_node", "research_agent")
 builder.add_edge("github_api_node", "research_agent")
 builder.add_edge("web_search_node", "research_agent")
 
-# Design sequencing: design_agent -> component_library_node -> design_agent -> diagram_generator_node -> design_agent -> cost_est_node -> design_agent -> orchestrator
-# Remove concurrent edges to avoid InvalidUpdateError
-builder.add_edge("component_library_node", "design_agent")
+# Design sequencing: design_agent -> architecture_generator_node -> design_agent -> diagram_generator_node -> design_agent -> output_formatter_node -> design_agent -> orchestrator
+builder.add_edge("architecture_generator_node", "design_agent")
 builder.add_edge("diagram_generator_node", "design_agent")
-builder.add_edge("cost_est_node", "design_agent")
+builder.add_edge("output_formatter_node", "design_agent")
 
 # Critic sequencing: critic_agent -> review_node -> critic_agent -> hallucination_check_node -> critic_agent -> risk_node -> critic_agent -> orchestrator
-# Remove concurrent edges to avoid InvalidUpdateError
 builder.add_edge("review_node", "critic_agent")
 builder.add_edge("hallucination_check_node", "critic_agent")
 builder.add_edge("risk_node", "critic_agent")
 
-# Evals sequencing: evals_agent -> telemetry_node -> evals_agent -> scores_node -> evals_agent -> orchestrator
-# Remove concurrent edges to avoid InvalidUpdateError
+# Evals sequencing (simplified): evals_agent -> telemetry_node -> evals_agent -> orchestrator -> END
 builder.add_edge("telemetry_node", "evals_agent")
-builder.add_edge("scores_node", "evals_agent")
-builder.add_edge("final_judgement_node", "evals_agent")
-# NOTE: Do NOT add direct edge from orchestrator to END here - conditional edges handle routing
+
 
 
 def _route_from_orchestrator(state: State) -> Literal["planner_agent", "research_agent", "design_agent", "critic_agent", "evals_agent", "DONE"]:
@@ -130,67 +126,64 @@ def _route_from_planner_agent(state: State) -> Literal["planner_scope", "planner
     return "orchestrator"
 
 
-def _route_from_research_agent(state: State) -> Literal["knowledge_base_node", "github_api_node", "web_search_node", "orchestrator"]:
-
+def _route_from_research_agent(state: State) -> Literal["pattern_selector_node", "knowledge_base_node", "github_api_node", "web_search_node", "orchestrator"]:
     research_state = state.get("research_state") or {}
     nodes = research_state.get("nodes") or {}
     
     # Check status of each subnode
+    pattern_status = nodes.get("pattern_selector", {}).get("status", "").lower() if isinstance(nodes.get("pattern_selector"), dict) else ""
     kb_status = nodes.get("knowledge_base", {}).get("status", "").lower() if isinstance(nodes.get("knowledge_base"), dict) else ""
     github_status = nodes.get("github_api", {}).get("status", "").lower() if isinstance(nodes.get("github_api"), dict) else ""
     web_status = nodes.get("web_search", {}).get("status", "").lower() if isinstance(nodes.get("web_search"), dict) else ""
     
+    pattern_completed = pattern_status == "completed" or pattern_status == "skipped"
     kb_completed = kb_status == "completed" or kb_status == "skipped"
     github_completed = github_status == "completed" or github_status == "skipped"
     web_completed = web_status == "completed" or web_status == "skipped"
     
-    # Route to knowledge_base_node first if not completed
-    if not kb_completed:
+    # Route to pattern_selector_node first if not completed
+    if not pattern_completed:
+        return "pattern_selector_node"
+    
+    # Route to knowledge_base_node if pattern is done but kb is not
+    if pattern_completed and not kb_completed:
         return "knowledge_base_node"
     
     # Route to github_api_node if kb is done but github is not
-    if kb_completed and not github_completed:
+    if pattern_completed and kb_completed and not github_completed:
         return "github_api_node"
     
-    # Route to web_search_node if kb and github are done but web is not
-    if kb_completed and github_completed and not web_completed:
+    # Route to web_search_node if github is done but web is not
+    if pattern_completed and kb_completed and github_completed and not web_completed:
         return "web_search_node"
     
     # All are done, route to orchestrator
     return "orchestrator"
 
 
-def _route_from_design_agent(state: State) -> Literal["component_library_node", "diagram_generator_node", "cost_est_node", "orchestrator"]:
-
+def _route_from_design_agent(state: State) -> Literal["architecture_generator_node", "diagram_generator_node", "output_formatter_node", "orchestrator"]:
     design_state = state.get("design_state") or {}
-    plan_state = state.get("plan_state") or {}
-    
-    # Get subnode order (same logic as _design_subnode_order)
-    from .nodes import _plan_has_component_hints
-    component_first = _plan_has_component_hints(plan_state)
-    if component_first:
-        subnode_order = ["component_library_node", "diagram_generator_node", "cost_est_node"]
-    else:
-        subnode_order = ["diagram_generator_node", "component_library_node", "cost_est_node"]
     
     # Check status of each subnode
-    components_status = design_state.get("components", {}).get("status", "").lower() if isinstance(design_state.get("components"), dict) else ""
+    architecture_status = design_state.get("architecture", {}).get("status", "").lower() if isinstance(design_state.get("architecture"), dict) else ""
     diagram_status = design_state.get("diagram", {}).get("status", "").lower() if isinstance(design_state.get("diagram"), dict) else ""
-    costs_status = design_state.get("costs", {}).get("status", "").lower() if isinstance(design_state.get("costs"), dict) else ""
+    output_status = design_state.get("output", {}).get("status", "").lower() if isinstance(design_state.get("output"), dict) else ""
     
-    # Map node names to their status
-    status_map = {
-        "component_library_node": components_status,
-        "diagram_generator_node": diagram_status,
-        "cost_est_node": costs_status,
-    }
+    architecture_completed = architecture_status == "completed" or architecture_status == "skipped"
+    diagram_completed = diagram_status == "completed" or diagram_status == "skipped"
+    output_completed = output_status == "completed" or output_status == "skipped"
     
-    # Route to first incomplete subnode in order
-    for node_name in subnode_order:
-        node_status = status_map.get(node_name, "").lower()
-        node_completed = node_status == "completed" or node_status == "skipped"
-        if not node_completed:
-            return node_name
+    # Route to architecture_generator_node first if not completed
+    if not architecture_completed:
+        return "architecture_generator_node"
+    
+    # Route to diagram_generator_node if architecture is done but diagram is not
+    if architecture_completed and not diagram_completed:
+        return "diagram_generator_node"
+    
+    # Route to output_formatter_node if diagram is done but output is not
+    if architecture_completed and diagram_completed and not output_completed:
+        return "output_formatter_node"
     
     # All are done, route to orchestrator
     return "orchestrator"
@@ -224,31 +217,22 @@ def _route_from_critic_agent(state: State) -> Literal["review_node", "hallucinat
     return "orchestrator"
 
 
-def _route_from_evals_agent(state: State) -> Literal["telemetry_node", "scores_node", "final_judgement_node", "orchestrator"]:
+def _route_from_evals_agent(state: State) -> Literal["telemetry_node", "orchestrator"]:
+    """
+    Route evals_agent to subnodes sequentially (simplified - telemetry only):
+    evals_agent -> telemetry_node -> evals_agent -> orchestrator -> END
+    """
     eval_state = state.get("eval_state") or {}
     
-    # Check status of each subnode
+    # Check status of telemetry subnode
     telemetry_status = eval_state.get("telemetry", {}).get("status", "").lower() if isinstance(eval_state.get("telemetry"), dict) else ""
-    scores_status = eval_state.get("scores", {}).get("status", "").lower() if isinstance(eval_state.get("scores"), dict) else ""
-    final_status = eval_state.get("final_judgement", {}).get("status", "").lower() if isinstance(eval_state.get("final_judgement"), dict) else ""
-    
     telemetry_completed = telemetry_status == "completed" or telemetry_status == "skipped"
-    scores_completed = scores_status == "completed" or scores_status == "skipped"
-    final_completed = final_status == "completed" or final_status == "skipped"
     
     # Route to telemetry_node first if not completed
     if not telemetry_completed:
         return "telemetry_node"
     
-    # Route to scores_node if telemetry is done but scores are not
-    if telemetry_completed and not scores_completed:
-        return "scores_node"
-
-    # Route to final_judgement_node after telemetry and scores are done
-    if telemetry_completed and scores_completed and not final_completed:
-        return "final_judgement_node"
-    
-    # All are done, route to orchestrator
+    # Done, route to orchestrator
     return "orchestrator"
 
 
@@ -279,6 +263,7 @@ builder.add_conditional_edges(
     "research_agent",
     _route_from_research_agent,
     {
+        "pattern_selector_node": "pattern_selector_node",
         "knowledge_base_node": "knowledge_base_node",
         "github_api_node": "github_api_node",
         "web_search_node": "web_search_node",
@@ -290,9 +275,9 @@ builder.add_conditional_edges(
     "design_agent",
     _route_from_design_agent,
     {
-        "component_library_node": "component_library_node",
+        "architecture_generator_node": "architecture_generator_node",
         "diagram_generator_node": "diagram_generator_node",
-        "cost_est_node": "cost_est_node",
+        "output_formatter_node": "output_formatter_node",
         "orchestrator": "orchestrator",
     },
 )
@@ -313,8 +298,6 @@ builder.add_conditional_edges(
     _route_from_evals_agent,
     {
         "telemetry_node": "telemetry_node",
-        "scores_node": "scores_node",
-        "final_judgement_node": "final_judgement_node",
         "orchestrator": "orchestrator",
     },
 )

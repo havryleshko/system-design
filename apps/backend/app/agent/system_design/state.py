@@ -19,6 +19,7 @@ class State(TypedDict, total=False):
     research_summary: str
     research_highlights: Annotated[list[str], operator.add]
     research_citations: Annotated[list[dict], operator.add]
+    selected_patterns: list[dict]
     design_state: Dict[str, Any]
     critic_state: Dict[str, Any]
     eval_state: Dict[str, Any]
@@ -36,7 +37,10 @@ class State(TypedDict, total=False):
     critic_iterations: int
     critic_fixes: list[str]
     architecture_json: dict
+    agentic_architecture: Dict[str, Any]
+    architecture_output: Dict[str, Any]
+    diagram_image_url: str
     metadata: Dict[str, Any]
 
-CRITIC_TARGET = 0.85
+CRITIC_TARGET = 0.8
 MAX_CRITIC_PASSES = 1

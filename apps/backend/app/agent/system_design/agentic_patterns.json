@@ -1,0 +1,344 @@
+{
+  "patterns": [
+    {
+      "id": "react",
+      "name": "ReAct (Reasoning + Acting)",
+      "source": "LangGraph",
+      "description": "Agent alternates between reasoning about the situation and taking actions. Each step: Thought -> Action -> Observation -> Thought...",
+      "when_to_use": [
+        "Tasks requiring dynamic decision-making",
+        "Multi-step problems where next action depends on previous results",
+        "Tool-heavy workflows (APIs, databases, search)"
+      ],
+      "when_not_to_use": [
+        "Simple, deterministic tasks",
+        "Tasks with fixed workflows",
+        "When latency is critical (multiple LLM calls)"
+      ],
+      "real_world_examples": [
+        "Customer support agent that searches knowledge base, then CRM, then escalates",
+        "Research assistant that queries multiple sources and synthesizes",
+        "DevOps agent that diagnoses issues by checking logs, metrics, then applying fixes"
+      ],
+      "recommended_tools": ["search", "api_calls", "database_queries", "file_operations"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Agent",
+          "responsibility": "Reason about current state and decide next action"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> REASON[Reason about task]\n    REASON --> DECIDE{Need more info?}\n    DECIDE -->|Yes| ACT[Take Action]\n    ACT --> OBSERVE[Observe Result]\n    OBSERVE --> REASON\n    DECIDE -->|No| RESPOND[Generate Response]\n    RESPOND --> END([End])"
+    },
+    {
+      "id": "plan-and-execute",
+      "name": "Plan-and-Execute",
+      "source": "LangGraph",
+      "description": "First create a complete plan, then execute each step. Separates planning from execution for complex multi-step tasks.",
+      "when_to_use": [
+        "Complex tasks with multiple dependent steps",
+        "When you need to track progress against a plan",
+        "Code generation, document creation, multi-file edits"
+      ],
+      "when_not_to_use": [
+        "Simple single-step tasks",
+        "Highly dynamic situations where plan becomes invalid quickly",
+        "Real-time interactive tasks"
+      ],
+      "real_world_examples": [
+        "Coding assistant that plans implementation, then writes each file",
+        "Content pipeline that outlines article, writes sections, edits, publishes",
+        "Migration tool that plans schema changes, then executes in order"
+      ],
+      "recommended_tools": ["code_execution", "file_operations", "version_control"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Planner",
+          "responsibility": "Analyze goal and create step-by-step plan"
+        },
+        {
+          "name_template": "{Domain}Executor",
+          "responsibility": "Execute each plan step and report results"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> PLAN[Create Plan]\n    PLAN --> STEPS[Plan Steps]\n    STEPS --> EXEC[Execute Step]\n    EXEC --> CHECK{More steps?}\n    CHECK -->|Yes| EXEC\n    CHECK -->|No| REVIEW[Review Results]\n    REVIEW --> END([End])"
+    },
+    {
+      "id": "reflection",
+      "name": "Reflection",
+      "source": "LangGraph",
+      "description": "Agent generates output, then critiques its own output, then improves. Iterative self-improvement loop.",
+      "when_to_use": [
+        "Quality-critical outputs (code, writing, analysis)",
+        "When first attempts are often suboptimal",
+        "Tasks where self-review improves results"
+      ],
+      "when_not_to_use": [
+        "Simple factual queries",
+        "Time-sensitive tasks",
+        "When human review is already in place"
+      ],
+      "real_world_examples": [
+        "Code review agent that writes code, critiques it, then refactors",
+        "Essay writer that drafts, self-edits, then finalizes",
+        "SQL generator that writes query, checks for issues, optimizes"
+      ],
+      "recommended_tools": ["code_analysis", "linting", "testing"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Generator",
+          "responsibility": "Generate initial output"
+        },
+        {
+          "name_template": "{Domain}Critic",
+          "responsibility": "Review output and identify improvements"
+        },
+        {
+          "name_template": "{Domain}Refiner",
+          "responsibility": "Apply improvements to output"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> GEN[Generate Output]\n    GEN --> CRIT[Critique Output]\n    CRIT --> DECIDE{Good enough?}\n    DECIDE -->|No| IMPROVE[Improve Output]\n    IMPROVE --> CRIT\n    DECIDE -->|Yes| END([End])"
+    },
+    {
+      "id": "tool-use",
+      "name": "Tool-Use",
+      "source": "LangGraph",
+      "description": "Agent has access to a set of tools and decides which to use based on the task. Core building block for most agents.",
+      "when_to_use": [
+        "Tasks requiring external data or actions",
+        "API integrations",
+        "Database operations",
+        "File system access"
+      ],
+      "when_not_to_use": [
+        "Pure reasoning tasks",
+        "When tools aren't available or reliable"
+      ],
+      "real_world_examples": [
+        "Calendar assistant that reads/writes Google Calendar",
+        "Data analyst that queries databases and creates visualizations",
+        "Email agent that searches, reads, drafts, and sends emails"
+      ],
+      "recommended_tools": ["api_calls", "database_queries", "file_operations", "web_search"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Agent",
+          "responsibility": "Select and invoke appropriate tools"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> ANALYZE[Analyze Request]\n    ANALYZE --> SELECT{Select Tool}\n    SELECT --> TOOL1[Tool A]\n    SELECT --> TOOL2[Tool B]\n    SELECT --> TOOL3[Tool C]\n    TOOL1 --> PROCESS[Process Result]\n    TOOL2 --> PROCESS\n    TOOL3 --> PROCESS\n    PROCESS --> END([End])"
+    },
+    {
+      "id": "supervisor",
+      "name": "Supervisor (Hierarchical)",
+      "source": "LangGraph",
+      "description": "A supervisor agent delegates tasks to specialized worker agents. Enables divide-and-conquer for complex problems.",
+      "when_to_use": [
+        "Complex tasks with distinct subtasks",
+        "When different expertise is needed for different parts",
+        "Parallel execution opportunities",
+        "Team-like collaboration scenarios"
+      ],
+      "when_not_to_use": [
+        "Simple tasks that don't benefit from delegation",
+        "When coordination overhead exceeds benefits",
+        "Tightly coupled tasks that can't be parallelized"
+      ],
+      "real_world_examples": [
+        "Project manager agent delegating to coder, tester, documenter agents",
+        "Research coordinator distributing queries to domain-specific researchers",
+        "Customer service supervisor routing to billing, technical, sales agents"
+      ],
+      "recommended_tools": ["agent_delegation", "task_queue", "result_aggregation"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Supervisor",
+          "responsibility": "Decompose task and delegate to workers"
+        },
+        {
+          "name_template": "{Specialty}Worker",
+          "responsibility": "Handle specialized subtask"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> SUP[Supervisor]\n    SUP --> ROUTE{Route Task}\n    ROUTE --> W1[Worker A]\n    ROUTE --> W2[Worker B]\n    ROUTE --> W3[Worker C]\n    W1 --> AGG[Aggregate Results]\n    W2 --> AGG\n    W3 --> AGG\n    AGG --> SUP\n    SUP --> END([End])"
+    },
+    {
+      "id": "mrkl",
+      "name": "MRKL (Modular Reasoning, Knowledge, Language)",
+      "source": "IBM/Community",
+      "description": "Routes to specialized expert modules based on query type. Each module is optimized for specific knowledge domain.",
+      "when_to_use": [
+        "Multi-domain knowledge tasks",
+        "When different queries need different expertise",
+        "Enterprise knowledge management"
+      ],
+      "when_not_to_use": [
+        "Single-domain tasks",
+        "When routing overhead is too high",
+        "Simple Q&A"
+      ],
+      "real_world_examples": [
+        "Enterprise assistant routing to HR, IT, Finance, Legal experts",
+        "Medical triage routing to symptom checker, drug interactions, appointment scheduler",
+        "Legal research routing to case law, statutes, regulations modules"
+      ],
+      "recommended_tools": ["knowledge_base", "expert_systems", "semantic_routing"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Router",
+          "responsibility": "Classify query and route to appropriate expert"
+        },
+        {
+          "name_template": "{Specialty}Expert",
+          "responsibility": "Handle domain-specific queries"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> ROUTER[Query Router]\n    ROUTER --> CLASSIFY{Classify Query}\n    CLASSIFY -->|Domain A| EXPERT1[Expert A]\n    CLASSIFY -->|Domain B| EXPERT2[Expert B]\n    CLASSIFY -->|Domain C| EXPERT3[Expert C]\n    EXPERT1 --> COMBINE[Combine Response]\n    EXPERT2 --> COMBINE\n    EXPERT3 --> COMBINE\n    COMBINE --> END([End])"
+    },
+    {
+      "id": "self-ask",
+      "name": "Self-Ask",
+      "source": "IBM/Community",
+      "description": "Agent decomposes complex questions into simpler sub-questions, answers each, then synthesizes final answer.",
+      "when_to_use": [
+        "Multi-hop reasoning questions",
+        "Questions requiring information from multiple sources",
+        "Complex analysis tasks"
+      ],
+      "when_not_to_use": [
+        "Simple factual questions",
+        "When decomposition adds unnecessary complexity"
+      ],
+      "real_world_examples": [
+        "Research agent breaking down 'Compare X and Y' into individual research tasks",
+        "Due diligence agent decomposing company analysis into financials, market, team",
+        "Competitive analysis breaking down into product, pricing, market share queries"
+      ],
+      "recommended_tools": ["search", "knowledge_base", "reasoning"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Decomposer",
+          "responsibility": "Break complex question into sub-questions"
+        },
+        {
+          "name_template": "{Domain}Researcher",
+          "responsibility": "Answer individual sub-questions"
+        },
+        {
+          "name_template": "{Domain}Synthesizer",
+          "responsibility": "Combine answers into final response"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> DECOMPOSE[Decompose Question]\n    DECOMPOSE --> Q1[Sub-question 1]\n    DECOMPOSE --> Q2[Sub-question 2]\n    DECOMPOSE --> Q3[Sub-question 3]\n    Q1 --> A1[Answer 1]\n    Q2 --> A2[Answer 2]\n    Q3 --> A3[Answer 3]\n    A1 --> SYNTH[Synthesize]\n    A2 --> SYNTH\n    A3 --> SYNTH\n    SYNTH --> END([End])"
+    },
+    {
+      "id": "chain-of-thought",
+      "name": "Chain-of-Thought",
+      "source": "IBM/Community",
+      "description": "Agent explicitly reasons through problem step-by-step before answering. Improves accuracy on complex reasoning.",
+      "when_to_use": [
+        "Math and logic problems",
+        "Multi-step reasoning",
+        "When transparency of reasoning is important"
+      ],
+      "when_not_to_use": [
+        "Simple factual queries",
+        "When speed is more important than accuracy",
+        "Creative tasks"
+      ],
+      "real_world_examples": [
+        "Math tutor showing work step by step",
+        "Legal reasoning walking through precedents and arguments",
+        "Financial analysis showing calculation methodology"
+      ],
+      "recommended_tools": ["calculator", "logic_engine", "knowledge_base"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Reasoner",
+          "responsibility": "Work through problem step by step"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> READ[Read Problem]\n    READ --> STEP1[Reasoning Step 1]\n    STEP1 --> STEP2[Reasoning Step 2]\n    STEP2 --> STEP3[Reasoning Step 3]\n    STEP3 --> CONCLUDE[Draw Conclusion]\n    CONCLUDE --> END([End])"
+    },
+    {
+      "id": "tree-of-thought",
+      "name": "Tree-of-Thought",
+      "source": "IBM/Community",
+      "description": "Explores multiple reasoning paths in parallel, evaluates each, and selects the best. Good for creative/strategic tasks.",
+      "when_to_use": [
+        "Creative problem solving",
+        "Strategic planning with multiple options",
+        "When best approach is unclear upfront"
+      ],
+      "when_not_to_use": [
+        "Simple deterministic tasks",
+        "When there's a clear single approach",
+        "Resource-constrained environments"
+      ],
+      "real_world_examples": [
+        "Marketing campaign generator exploring multiple angles",
+        "Architecture designer considering multiple approaches",
+        "Game AI evaluating multiple move sequences"
+      ],
+      "recommended_tools": ["parallel_execution", "evaluation_metrics", "pruning"],
+      "typical_agents": [
+        {
+          "name_template": "{Domain}Explorer",
+          "responsibility": "Generate multiple solution paths"
+        },
+        {
+          "name_template": "{Domain}Evaluator",
+          "responsibility": "Score and rank solution paths"
+        },
+        {
+          "name_template": "{Domain}Selector",
+          "responsibility": "Choose best path and refine"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> GEN[Generate Options]\n    GEN --> OPT1[Path A]\n    GEN --> OPT2[Path B]\n    GEN --> OPT3[Path C]\n    OPT1 --> EVAL1[Evaluate A]\n    OPT2 --> EVAL2[Evaluate B]\n    OPT3 --> EVAL3[Evaluate C]\n    EVAL1 --> SELECT[Select Best]\n    EVAL2 --> SELECT\n    EVAL3 --> SELECT\n    SELECT --> REFINE[Refine Selected]\n    REFINE --> END([End])"
+    },
+    {
+      "id": "multi-agent-debate",
+      "name": "Multi-Agent Debate",
+      "source": "IBM/Community",
+      "description": "Multiple agents with different perspectives debate to reach consensus. Reduces individual agent biases.",
+      "when_to_use": [
+        "High-stakes decisions requiring multiple viewpoints",
+        "Reducing hallucination/bias",
+        "Complex analysis benefiting from debate"
+      ],
+      "when_not_to_use": [
+        "Simple factual tasks",
+        "When speed is critical",
+        "Low-stakes decisions"
+      ],
+      "real_world_examples": [
+        "Investment committee with bull/bear analysts debating",
+        "Code review with security, performance, maintainability perspectives",
+        "Product decisions with user, business, technical advocates"
+      ],
+      "recommended_tools": ["consensus_mechanism", "voting", "argument_tracking"],
+      "typical_agents": [
+        {
+          "name_template": "{Perspective}Advocate",
+          "responsibility": "Argue from specific perspective"
+        },
+        {
+          "name_template": "{Domain}Moderator",
+          "responsibility": "Facilitate debate and synthesize consensus"
+        }
+      ],
+      "mermaid_template": "flowchart TD\n    START([Start]) --> PRESENT[Present Problem]\n    PRESENT --> AGENT1[Agent A Position]\n    PRESENT --> AGENT2[Agent B Position]\n    PRESENT --> AGENT3[Agent C Position]\n    AGENT1 --> DEBATE[Debate Round]\n    AGENT2 --> DEBATE\n    AGENT3 --> DEBATE\n    DEBATE --> CONSENSUS{Consensus?}\n    CONSENSUS -->|No| DEBATE\n    CONSENSUS -->|Yes| SYNTH[Synthesize Decision]\n    SYNTH --> END([End])"
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "last_updated": "2024-12-18",
+    "sources": [
+      "LangGraph Documentation",
+      "IBM/agentic-patterns",
+      "nibzard/awesome-agentic-patterns"
+    ]
+  }
+}
+

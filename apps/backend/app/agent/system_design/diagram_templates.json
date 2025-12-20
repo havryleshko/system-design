@@ -1,0 +1,141 @@
+{
+  "templates": {
+    "flowchart": {
+      "description": "Best for showing agent flow, decision points, and control loops",
+      "when_to_use": [
+        "Showing agent decision flow",
+        "Visualizing conditional routing",
+        "Displaying tool selection logic"
+      ],
+      "syntax_notes": [
+        "Use TD (top-down) or LR (left-right) direction",
+        "Use ([text]) for start/end nodes",
+        "Use [text] for process nodes",
+        "Use {text} for decision nodes",
+        "Use -->|label| for labeled edges"
+      ],
+      "examples": [
+        {
+          "name": "ReAct Loop",
+          "code": "flowchart TD\n    START([User Query]) --> REASON[Reason about task]\n    REASON --> DECIDE{Need tool?}\n    DECIDE -->|Yes| SELECT[Select Tool]\n    SELECT --> EXECUTE[Execute Tool]\n    EXECUTE --> OBSERVE[Observe Result]\n    OBSERVE --> REASON\n    DECIDE -->|No| RESPOND[Generate Response]\n    RESPOND --> END([Return to User])"
+        },
+        {
+          "name": "Supervisor Pattern",
+          "code": "flowchart TD\n    START([Task]) --> SUP[Supervisor]\n    SUP --> ROUTE{Route to Worker}\n    ROUTE -->|Research| W1[Research Worker]\n    ROUTE -->|Analysis| W2[Analysis Worker]\n    ROUTE -->|Writing| W3[Writing Worker]\n    W1 --> AGG[Aggregate Results]\n    W2 --> AGG\n    W3 --> AGG\n    AGG --> SUP\n    SUP --> CHECK{Complete?}\n    CHECK -->|No| ROUTE\n    CHECK -->|Yes| END([Final Output])"
+        },
+        {
+          "name": "Plan and Execute",
+          "code": "flowchart TD\n    START([Goal]) --> PLAN[Create Plan]\n    PLAN --> STEPS[(Plan Steps)]\n    STEPS --> EXEC[Execute Step]\n    EXEC --> UPDATE[Update Progress]\n    UPDATE --> CHECK{More Steps?}\n    CHECK -->|Yes| EXEC\n    CHECK -->|No| REVIEW[Review Results]\n    REVIEW --> REPLAN{Replan Needed?}\n    REPLAN -->|Yes| PLAN\n    REPLAN -->|No| END([Complete])"
+        }
+      ]
+    },
+    "sequence": {
+      "description": "Best for showing message flow between agents/components over time",
+      "when_to_use": [
+        "Multi-agent communication",
+        "API call sequences",
+        "Showing temporal ordering"
+      ],
+      "syntax_notes": [
+        "Use participant to define actors",
+        "Use ->> for solid arrows (sync)",
+        "Use -->> for dotted arrows (async)",
+        "Use Note over/left of/right of for annotations",
+        "Use loop/alt/opt for control structures"
+      ],
+      "examples": [
+        {
+          "name": "Multi-Agent Collaboration",
+          "code": "sequenceDiagram\n    participant User\n    participant Supervisor\n    participant Researcher\n    participant Writer\n    participant Reviewer\n\n    User->>Supervisor: Submit Task\n    Supervisor->>Researcher: Research Topic\n    Researcher-->>Supervisor: Research Results\n    Supervisor->>Writer: Write Content\n    Writer-->>Supervisor: Draft\n    Supervisor->>Reviewer: Review Draft\n    Reviewer-->>Supervisor: Feedback\n    Supervisor->>Writer: Apply Feedback\n    Writer-->>Supervisor: Final Version\n    Supervisor-->>User: Deliver Result"
+        },
+        {
+          "name": "Tool Execution Flow",
+          "code": "sequenceDiagram\n    participant Agent\n    participant ToolRouter\n    participant SearchTool\n    participant DatabaseTool\n    participant LLM\n\n    Agent->>ToolRouter: Select Tool\n    ToolRouter->>SearchTool: Execute Search\n    SearchTool-->>ToolRouter: Search Results\n    ToolRouter->>DatabaseTool: Query Database\n    DatabaseTool-->>ToolRouter: DB Results\n    ToolRouter-->>Agent: Combined Results\n    Agent->>LLM: Generate Response\n    LLM-->>Agent: Final Answer"
+        }
+      ]
+    },
+    "state": {
+      "description": "Best for showing agent states and transitions",
+      "when_to_use": [
+        "State machine representations",
+        "Workflow status tracking",
+        "Agent lifecycle management"
+      ],
+      "syntax_notes": [
+        "Use [*] for start/end states",
+        "Use state name for states",
+        "Use --> for transitions",
+        "Use : for transition labels"
+      ],
+      "examples": [
+        {
+          "name": "Agent Lifecycle",
+          "code": "stateDiagram-v2\n    [*] --> Idle\n    Idle --> Processing: Receive Task\n    Processing --> Reasoning: Analyze\n    Reasoning --> ToolExecution: Need Tool\n    Reasoning --> Responding: Have Answer\n    ToolExecution --> Reasoning: Tool Result\n    ToolExecution --> Error: Tool Failed\n    Error --> Reasoning: Retry\n    Error --> Idle: Max Retries\n    Responding --> Idle: Complete\n    Idle --> [*]: Shutdown"
+        },
+        {
+          "name": "Task Processing States",
+          "code": "stateDiagram-v2\n    [*] --> Queued\n    Queued --> InProgress: Worker Assigned\n    InProgress --> UnderReview: Work Complete\n    UnderReview --> InProgress: Revision Needed\n    UnderReview --> Approved: Review Passed\n    Approved --> Published: Publish\n    InProgress --> Failed: Error\n    Failed --> Queued: Retry\n    Failed --> Cancelled: Max Retries\n    Published --> [*]\n    Cancelled --> [*]"
+        }
+      ]
+    },
+    "class": {
+      "description": "Best for showing agent/component structure and relationships",
+      "when_to_use": [
+        "Showing agent capabilities",
+        "Tool interfaces",
+        "Component dependencies"
+      ],
+      "syntax_notes": [
+        "Use class ClassName for class definition",
+        "Use +method() for public methods",
+        "Use -attribute for private attributes",
+        "Use <|-- for inheritance",
+        "Use *-- for composition"
+      ],
+      "examples": [
+        {
+          "name": "Agent Structure",
+          "code": "classDiagram\n    class BaseAgent {\n        +name: string\n        +tools: Tool[]\n        +process(input)\n        +selectTool(context)\n    }\n    class ResearchAgent {\n        +searchWeb(query)\n        +summarize(docs)\n    }\n    class WritingAgent {\n        +generateDraft(outline)\n        +editContent(draft)\n    }\n    class Supervisor {\n        +workers: Agent[]\n        +delegate(task)\n        +aggregate(results)\n    }\n    BaseAgent <|-- ResearchAgent\n    BaseAgent <|-- WritingAgent\n    Supervisor *-- BaseAgent"
+        }
+      ]
+    }
+  },
+  "selection_rules": [
+    {
+      "condition": "Multiple agents communicating in sequence",
+      "recommended": "sequence",
+      "reason": "Shows temporal flow and message passing clearly"
+    },
+    {
+      "condition": "Decision points and conditional routing",
+      "recommended": "flowchart",
+      "reason": "Diamond shapes clearly show branching logic"
+    },
+    {
+      "condition": "Agent has multiple states with transitions",
+      "recommended": "state",
+      "reason": "State diagrams excel at showing lifecycle"
+    },
+    {
+      "condition": "Showing agent capabilities and structure",
+      "recommended": "class",
+      "reason": "Class diagrams show structure and relationships"
+    },
+    {
+      "condition": "Simple linear flow",
+      "recommended": "flowchart",
+      "reason": "Flowcharts are most universally understood"
+    }
+  ],
+  "mermaid_ink_config": {
+    "base_url": "https://mermaid.ink/img/",
+    "encoding": "base64",
+    "theme": "default",
+    "background": "transparent"
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "last_updated": "2024-12-18"
+  }
+}
+
