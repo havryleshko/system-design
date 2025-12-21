@@ -1372,7 +1372,7 @@ def web_search_node(state: State) -> Dict[str, Any]:
 
 
 def pattern_selector_node(state: State) -> Dict[str, Any]:
-    run_id = state.get("run_id") or ""
+    run_id = (state.get("metadata") or {}).get("run_id") or ""
     goal = _coerce_str(state.get("goal"), max_len=500) or ""
     plan_state = state.get("plan_state") or {}
     plan_summary = _coerce_str(plan_state.get("summary"), max_len=500) or ""
@@ -1727,7 +1727,6 @@ def _initial_eval_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
         "status": _coerce_str(data.get("status")) or "pending",
         "telemetry": data.get("telemetry") or {},
         "scores": data.get("scores") or {},
-        "final_judgement": data.get("final_judgement") or {},
         "needs_attention": bool(data.get("needs_attention")) if data.get("needs_attention") is not None else False,
         "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=200),
     }
@@ -1837,9 +1836,7 @@ def _append_design_note(notes: list[str], message: Optional[str]) -> list[str]:
 
 
 def architecture_generator_node(state: State) -> Dict[str, Any]:
-   
-    
-    run_id = state.get("run_id") or ""
+    run_id = (state.get("metadata") or {}).get("run_id") or ""
     goal = _coerce_str(state.get("goal"), max_len=500) or "System"
     plan_state = state.get("plan_state") or {}
     research_state = state.get("research_state") or {}
@@ -2113,7 +2110,7 @@ def diagram_generator_node(state: State) -> Dict[str, Any]:
     import base64
     import urllib.parse
     
-    run_id = state.get("run_id") or ""
+    run_id = (state.get("metadata") or {}).get("run_id") or ""
     goal = _coerce_str(state.get("goal"), max_len=300) or "System"
     design_state = state.get("design_state") or {}
     

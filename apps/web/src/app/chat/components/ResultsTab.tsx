@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -13,6 +13,10 @@ type ResultsTabProps = {
 export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
   const [copied, setCopied] = useState(false);
   const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [output]);
 
   const formatDate = (date: Date | null) => {
     if (!date) return "";
