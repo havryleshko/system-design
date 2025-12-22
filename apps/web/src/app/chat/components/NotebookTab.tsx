@@ -5,7 +5,7 @@ export default function NotebookTab() {
     <div className="notebook-tab flex flex-1 flex-col items-center justify-center py-16">
       <div className="flex flex-col items-center gap-4 text-center">
         {/* Notebook Icon */}
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--surface)] border border-[var(--border)]">
+        <div className="flex h-16 w-16 items-center justify-center rounded bg-[var(--surface)] border border-[var(--border)]">
           <svg viewBox="0 0 24 24" className="h-8 w-8 text-[var(--accent)]" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M3 3v18h18" />
             <path d="M7 14l4-4 4 4 5-5" />

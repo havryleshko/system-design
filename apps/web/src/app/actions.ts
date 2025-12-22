@@ -19,9 +19,15 @@ type SessionInfo = {
 
 type ThreadState = {
   status?: string;
-  final_judgement?: string;
   output?: string;
   values?: Record<string, unknown>;
+};
+
+type ThreadListItem = {
+  thread_id: string;
+  title: string;
+  status: "running" | "completed" | "failed" | "queued";
+  created_at: string | null;
 };
 
 function makeRequestId(prefix: string): string {
@@ -117,4 +123,20 @@ export async function getThreadState(threadId: string, token: string): Promise<T
   }
 
   return (await response.json()) as ThreadState | null;
+}
+
+export async function listThreads(token: string): Promise<ThreadListItem[]> {
+  const response = await fetch(backendUrl("/threads"), {
+    headers: backendHeaders(token),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      return [];
+    }
+    throw new Error(`Failed to list threads: ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as { threads?: ThreadListItem[] };
+  return data.threads ?? [];
 }

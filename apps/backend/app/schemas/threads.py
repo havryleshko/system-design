@@ -24,5 +24,15 @@ class ThreadStateResponse(BaseModel):
     run_id: Optional[str] = None
     status: Literal["running", "completed", "failed", "queued"]
     values: Optional[Dict[str, Any]] = None
-    final_judgement: Optional[str] = None
     output: Optional[str] = None
+
+
+class ThreadListItem(BaseModel):
+    thread_id: str
+    title: str
+    status: Literal["running", "completed", "failed", "queued"]
+    created_at: Optional[str] = None
+
+
+class ThreadListResponse(BaseModel):
+    threads: list[ThreadListItem]
