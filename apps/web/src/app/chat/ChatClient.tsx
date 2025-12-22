@@ -384,26 +384,6 @@ export default function ChatClient() {
     console.log("Share clicked");
   }, []);
 
-  // Reset local run/session state (used for errors or new analysis)
-  const resetSession = useCallback((options?: { message?: string; clearThread?: boolean }) => {
-    if (options?.message) {
-      setError(options.message);
-    }
-    setRunValues(null);
-    setFinalMarkdown(null);
-    setStreamText("");
-    setProgress(0);
-    setStartedAt(null);
-    setSubmittedQuestion("");
-    setIsComplete(false);
-    setIsRunning(false);
-    setIsPollingActive(false);
-    if (options?.clearThread) {
-      setThreadId(null);
-    }
-    setRunId(null);
-  }, []);
-
   // Handler to go back to input screen (start new analysis)
   const handleNewAnalysis = useCallback(() => {
     resetSession();
