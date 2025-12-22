@@ -16,8 +16,6 @@ from app.storage.memory import add_event, record_node_tokens
 
 logger = logging.getLogger(__name__)
 
-# ----------------------------- DB Helpers ----------------------------- #
-
 def _pg_url() -> str:
     url = os.getenv("LANGGRAPH_PG_URL")
     if not url:
@@ -45,7 +43,6 @@ def _serialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
     result = {}
     for key, value in state.items():
         if key == "messages" and isinstance(value, list):
-            # Convert LangChain messages to serializable dicts
             result[key] = [
                 {"role": getattr(msg, "type", "unknown"), "content": getattr(msg, "content", str(msg))}
                 if isinstance(msg, BaseMessage)
@@ -53,7 +50,6 @@ def _serialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
                 for msg in value
             ]
         elif key == "stream_messages" and isinstance(value, list):
-            # Same for stream_messages
             result[key] = [
                 {"role": getattr(msg, "type", "unknown"), "content": getattr(msg, "content", str(msg))}
                 if isinstance(msg, BaseMessage)
@@ -142,8 +138,6 @@ async def execute_run(
                 "thread_id": thread_id,
                 "run_id": run_id,
             },
-            # Increase recursion limit for complex multi-agent graph
-            # Default is 25, but our graph has 5 phases with multiple subnodes each
             "recursion_limit": 100,
         }
         
@@ -156,14 +150,11 @@ async def execute_run(
                 "run_id": run_id,
             },
         }
-        
-        # Update status to running
         _run_execute(
             "update runs set status = 'running', updated_at = now() where run_id = %s",
             (run_id,),
         )
         
-        # Stream events from graph execution
         print(f"[EXEC] Starting graph execution with astream_events...", flush=True)
         try:
             async for event in compiled_graph.astream_events(
@@ -192,16 +183,12 @@ async def execute_run(
             import traceback
             traceback.print_exc()
             logger.warning(f"astream_events failed: {stream_exc}")
-        
-        # Always get the final state from the checkpointer after streaming completes
-        # astream_events doesn't reliably capture the full accumulated state
         print(f"[EXEC] Getting final state from checkpointer...", flush=True)
         final_state = await compiled_graph.aget_state(config)
         if final_state and hasattr(final_state, 'values'):
             final_state = final_state.values
             print(f"[EXEC] Got final state with keys: {list(final_state.keys()) if isinstance(final_state, dict) else 'not a dict'}", flush=True)
         else:
-            # Fallback to ainvoke if aget_state fails
             print(f"[EXEC] aget_state returned no values, falling back to ainvoke...", flush=True)
             final_state = await compiled_graph.ainvoke(initial_state, config=config)
         
@@ -237,7 +224,6 @@ async def execute_run(
                         elif isinstance(last_msg, dict) and "content" in last_msg:
                             output = str(last_msg["content"])
                             print(f"[EXEC] Using last message dict content: {len(output)} chars", flush=True)
-        # Serialize state for JSON (convert LangChain messages to dicts)
         serialized_values = _serialize_state(values)
         
         _run_execute(
@@ -343,3 +329,38 @@ def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
         "values": final_state,
         "output": output,
     }
+
+
+def list_user_threads(user_id: str) -> list[Dict[str, Any]]:
+    rows = _run_select(
+        """
+        SELECT DISTINCT ON (t.thread_id)
+            t.thread_id,
+            t.created_at,
+            r.user_input,
+            r.status
+        FROM threads t
+        LEFT JOIN runs r ON r.thread_id = t.thread_id
+        WHERE t.user_id = %s
+        ORDER BY t.thread_id, r.created_at DESC
+        """,
+        (user_id,),
+    )
+    sorted_rows = sorted(rows, key=lambda x: x.get("created_at") or "", reverse=True)
+    
+    result = []
+    for row in sorted_rows:
+        thread_id = row.get("thread_id")
+        user_input = row.get("user_input") or ""
+        title = user_input.split("\n")[0][:50]
+        if len(user_input) > 50 or "\n" in user_input:
+            title += "..."
+        
+        result.append({
+            "thread_id": str(thread_id) if thread_id is not None else "",
+            "title": title if title else "Untitled",
+            "status": row.get("status") or "queued",
+            "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+        })
+    
+    return result
