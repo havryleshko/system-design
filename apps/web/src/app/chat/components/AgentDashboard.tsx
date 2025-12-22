@@ -16,6 +16,7 @@ type AgentDashboardProps = {
   runId: string | null;
   values: Record<string, unknown> | null;
   finalMarkdown: string | null;
+  isComplete: boolean;
   onCancel: () => void;
   onShare?: () => void;
   onNewAnalysis?: () => void;
@@ -28,6 +29,7 @@ export default function AgentDashboard({
   runId,
   values,
   finalMarkdown,
+  isComplete,
   onCancel,
   onShare,
   onNewAnalysis,
@@ -49,8 +51,21 @@ export default function AgentDashboard({
     });
   };
 
-  const isComplete = progress >= 100;
-  const statusLabel = isComplete ? "SUCCESS" : progress < 5 ? "QUEUED" : "RUNNING";
+
+  const getOutput = (): string | null => {
+    if (finalMarkdown) return finalMarkdown;
+    const valuesOutput = typeof (values as any)?.output === "string" ? ((values as any).output as string) : null;
+    if (valuesOutput) return valuesOutput;
+    const designOutput = (values?.design_state as any)?.output?.formatted_output;
+    if (typeof designOutput === "string") return designOutput;
+    
+    return null;
+  };
+  
+  const output = getOutput();
+  const roundedProgress = Math.round(progress);
+  const displayProgress = isComplete ? 100 : roundedProgress;
+  const statusLabel = isComplete ? "SUCCESS" : roundedProgress < 5 ? "QUEUED" : "RUNNING";
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     {
@@ -113,11 +128,10 @@ export default function AgentDashboard({
 
     switch (activeTab) {
       case "results":
-        // Use values.output first, fall back to finalMarkdown
-        const resultOutput = (values?.output as string) || finalMarkdown || null;
+
         return (
           <ResultsTab
-            output={resultOutput}
+            output={output}
             startedAt={startedAt}
           />
         );
@@ -136,29 +150,29 @@ export default function AgentDashboard({
     <div className="agent-dashboard flex flex-1 flex-col bg-[var(--background)]">
       {/* Notification Banner */}
       {showBanner && !isComplete && (
-        <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[#3d3526] px-6 py-3">
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface)] px-6 py-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#5c4d2e]">
-              <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#d4a853]" fill="none" stroke="currentColor" strokeWidth="2">
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent)]/20">
+              <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--accent)]" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 9v4m0 4h.01" />
                 <circle cx="12" cy="12" r="9" />
               </svg>
             </div>
-            <span className="text-sm text-[#e8dcc4]">
+            <span className="text-sm text-[var(--foreground)]">
               Agents often take a few minutes to research, analyze, and respond. We will display results as soon as the agent has processed some data.
             </span>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="rounded-md border border-[#5c4d2e] bg-[#4a3f28] px-3 py-1.5 text-xs font-semibold text-[#e8dcc4] transition-colors hover:bg-[#5c4d2e]"
+              className="rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[var(--accent)]/90"
             >
               Notify me
             </button>
             <button
               type="button"
               onClick={() => setShowBanner(false)}
-              className="rounded-md border border-[#5c4d2e] bg-transparent px-3 py-1.5 text-xs font-semibold text-[#a89878] transition-colors hover:bg-[#4a3f28] hover:text-[#e8dcc4]"
+              className="rounded-sm border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:bg-[var(--background)] hover:text-[var(--foreground)]"
             >
               Dismiss
             </button>
@@ -211,14 +225,14 @@ export default function AgentDashboard({
             </span>
           </div>
 
-          {/* Progress (only show when not complete) */}
+          {/* Progress (only show when waiting on results) */}
           {!isComplete && (
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-[var(--foreground)]">{Math.round(progress)}%</span>
+              <span className="text-sm font-medium text-[var(--foreground)]">{displayProgress}%</span>
               <div className="h-2 w-16 overflow-hidden rounded-full bg-[var(--surface)]">
                 <div
                   className="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
-                  style={{ width: `${progress}%` }}
+                  style={{ width: `${displayProgress}%` }}
                 />
               </div>
             </div>
@@ -229,7 +243,7 @@ export default function AgentDashboard({
             <button
               type="button"
               onClick={onCancel}
-              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400"
+              className="flex items-center gap-1.5 rounded-sm border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400"
             >
               <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="9" />
@@ -250,7 +264,7 @@ export default function AgentDashboard({
           <button
             type="button"
             onClick={onShare}
-            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+            className="flex items-center gap-1.5 rounded-sm border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
           >
             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7" />
@@ -260,12 +274,12 @@ export default function AgentDashboard({
             Share
           </button>
 
-          {/* New Analysis Button (only show when complete) */}
+          {/* New Analysis Button (only show when results are ready) */}
           {isComplete && onNewAnalysis && (
             <button
               type="button"
               onClick={onNewAnalysis}
-              className="flex items-center gap-1.5 rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--background)] transition-all hover:shadow-[0_0_12px_rgba(154,182,194,0.3)]"
+              className="flex items-center gap-1.5 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition-all hover:shadow-[0_0_12px_rgba(139,90,43,0.3)]"
             >
               <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 5v14" />
@@ -308,10 +322,10 @@ export default function AgentDashboard({
           {renderTabContent()}
         </div>
 
-        {/* Follow-up Input (only show when complete) */}
+        {/* Follow-up Input (only show when results are available) */}
         {isComplete && (
           <div className="mt-6 border-t border-[var(--border)] pt-6">
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+            <div className="flex items-center gap-3 rounded border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
               <input
                 type="text"
                 value={followUpInput}
@@ -328,7 +342,7 @@ export default function AgentDashboard({
                 type="button"
                 onClick={handleFollowUpSubmit}
                 disabled={!followUpInput.trim()}
-                className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--background)] transition-all hover:shadow-[0_0_12px_rgba(154,182,194,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-8 w-8 items-center justify-center rounded-sm bg-[var(--accent)] text-white transition-all hover:shadow-[0_0_12px_rgba(139,90,43,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M5 12h14" />

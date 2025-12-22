@@ -27,7 +27,7 @@ Backend LangGraph system-design agent that runs in LangGraph Studio. Agents exec
 ## Agent Flow
 - Planner: scope → steps  
 - Research: knowledge_base → github_api → web_search  
-- Design: component_library → diagram_generator → cost_est  
+- Design: architecture_generator → diagram_generator → output_formatter
 - Critic: review → hallucination_check → risk  
 - Evals: telemetry → scores → final_judgement  
 - Final_judgement: emits user-facing markdown in `messages` and `output`, plus `architecture_json` and `design_brief`.
