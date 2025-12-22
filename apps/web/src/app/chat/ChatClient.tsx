@@ -208,6 +208,26 @@ export default function ChatClient() {
     []
   );
 
+  // Reset local run/session state (used for errors or new analysis)
+  const resetSession = useCallback((options?: { message?: string; clearThread?: boolean }) => {
+    if (options?.message) {
+      setError(options.message);
+    }
+    setRunValues(null);
+    setFinalMarkdown(null);
+    setStreamText("");
+    setProgress(0);
+    setStartedAt(null);
+    setSubmittedQuestion("");
+    setIsComplete(false);
+    setIsRunning(false);
+    setIsPollingActive(false);
+    if (options?.clearThread) {
+      setThreadId(null);
+    }
+    setRunId(null);
+  }, []);
+
   const startPollingFallback = useCallback(
     (activeThreadId: string, token: string) => {
       // Prevent starting polling if already active
@@ -232,13 +252,13 @@ export default function ChatClient() {
           },
           onError: (message) => {
             console.error("[ChatClient] Polling error:", message);
-            setError(message);
-            setIsPollingActive(false);
+            // If polling cannot find state, likely the thread/run was lost on the backend
+            resetSession({ message, clearThread: true });
           },
         },
       });
     },
-    [handleValuesUpdated, polling]
+    [handleValuesUpdated, polling, resetSession]
   );
 
   // Store thread/token for polling fallback
@@ -279,8 +299,13 @@ export default function ChatClient() {
             
             if (isAuthError) {
               console.log("[ChatClient] Auth error detected, not falling back to polling");
-              setError(message);
-              setIsRunning(false);
+              resetSession({ message, clearThread: true });
+              return;
+            }
+            
+            // Handle missing thread (e.g., backend restarted and lost in-memory state)
+            if (message.toLowerCase().includes("thread not found")) {
+              resetSession({ message: "Session expired on the backend. Please start again.", clearThread: true });
               return;
             }
             
@@ -290,8 +315,7 @@ export default function ChatClient() {
               console.log("[ChatClient] WebSocket failed after retries, falling back to polling");
               startPollingFallback(fallbackParamsRef.current.threadId, fallbackParamsRef.current.token);
             } else {
-              setError(message);
-              setIsRunning(false);
+              resetSession({ message });
             }
           },
         },
@@ -316,12 +340,8 @@ export default function ChatClient() {
     const token = session.access_token;
 
     try {
+      resetSession();
       setError(null);
-      setStreamText("");
-      setFinalMarkdown(null);
-      setRunValues(null);
-      setIsPollingActive(false);
-      setIsComplete(false);
       setIsRunning(true);
       setStartedAt(new Date());
       setProgress(0);
@@ -341,9 +361,13 @@ export default function ChatClient() {
       attachWebSocket(currentThreadId, newRunId, token);
     } catch (err) {
       console.error("Submit error:", err);
-      setError(err instanceof Error ? err.message : "Failed to start run");
-      setIsRunning(false);
-      setStartedAt(null);
+      const message = err instanceof Error ? err.message : "Failed to start run";
+      // If the backend lost in-memory state, clear the thread so the next attempt creates a new one
+      if (message.toLowerCase().includes("thread") || message.includes("404")) {
+        resetSession({ message: "Session expired on the backend. Please start again.", clearThread: true });
+      } else {
+        resetSession({ message });
+      }
       stopAll();
     }
   };
@@ -360,19 +384,31 @@ export default function ChatClient() {
     console.log("Share clicked");
   }, []);
 
-  // Handler to go back to input screen (start new analysis)
-  const handleNewAnalysis = useCallback(() => {
+  // Reset local run/session state (used for errors or new analysis)
+  const resetSession = useCallback((options?: { message?: string; clearThread?: boolean }) => {
+    if (options?.message) {
+      setError(options.message);
+    }
     setRunValues(null);
     setFinalMarkdown(null);
     setStreamText("");
     setProgress(0);
     setStartedAt(null);
     setSubmittedQuestion("");
-    setError(null); // Clear any previous errors
     setIsComplete(false);
-    // Keep threadId for conversation continuity, but reset runId
+    setIsRunning(false);
+    setIsPollingActive(false);
+    if (options?.clearThread) {
+      setThreadId(null);
+    }
     setRunId(null);
   }, []);
+
+  // Handler to go back to input screen (start new analysis)
+  const handleNewAnalysis = useCallback(() => {
+    resetSession();
+    setError(null); // Clear any previous errors
+  }, [resetSession]);
 
   // Show dashboard when running OR when we have completed results
   // Use startedAt to prevent flash - if we started a run, stay on dashboard until explicitly reset
