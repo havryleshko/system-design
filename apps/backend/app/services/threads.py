@@ -324,7 +324,7 @@ def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
 
     return {
         "thread_id": thread_id,
-        "run_id": row.get("run_id"),
+        "run_id": str(row.get("run_id")) if row.get("run_id") is not None else "",
         "status": row.get("status", "queued"),
         "values": final_state,
         "output": output,
