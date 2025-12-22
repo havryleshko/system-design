@@ -218,13 +218,13 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
               img: ({ node, src, alt, ...props }) => {
                 if (imageError || !src) {
                   return (
-                    <div className="my-4 flex items-center justify-center rounded border border-[var(--border)] bg-[var(--background)] p-8 text-[var(--foreground-muted)]">
+                    <span className="my-4 flex items-center justify-center rounded border border-[var(--border)] bg-[var(--background)] p-8 text-[var(--foreground-muted)] block">
                       <span>Diagram image unavailable</span>
-                    </div>
+                    </span>
                   );
                 }
                 return (
-                  <div className="my-4">
+                  <span className="my-4 block">
                     <img
                       src={src}
                       alt={alt || "Architecture Diagram"}
@@ -232,7 +232,7 @@ export default function ResultsTab({ output, startedAt }: ResultsTabProps) {
                       onError={() => setImageError(true)}
                       {...props}
                     />
-                  </div>
+                  </span>
                 );
               },
               // Style details/summary for collapsible diagram code

@@ -122,6 +122,7 @@ export default function ChatClient() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPollingActive, setIsPollingActive] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
   
   // New state for dashboard
   const [startedAt, setStartedAt] = useState<Date | null>(null);
@@ -135,12 +136,12 @@ export default function ChatClient() {
 
   const themeVars = useMemo(
     () => ({
-      "--background": "#1b1d26",
-      "--surface": "#23252f",
-      "--foreground": "#d7d7d7",
-      "--foreground-muted": "#8c8c8c",
-      "--accent": "#9ab6c2",
-      "--border": "#333746",
+      "--background": "#eee7d7",
+      "--surface": "#e5dccb",
+      "--foreground": "#333333",
+      "--foreground-muted": "#666666",
+      "--accent": "#8b5a2b",
+      "--border": "#d4c9b5",
       "--app-font": "var(--font-ibm-plex-mono)",
     }),
     []
@@ -194,39 +195,43 @@ export default function ChatClient() {
   }, [isRunning, finalMarkdown]);
 
   const handleValuesUpdated = useCallback(
-    (payload: { finalJudgement?: string; output?: string; values?: Record<string, unknown> }) => {
+    (payload: { output?: string; values?: Record<string, unknown> }) => {
       // Store full values object for tab content
       if (payload.values) {
         setRunValues(payload.values);
       }
-      if (payload.finalJudgement) {
-        setFinalMarkdown(payload.finalJudgement);
-        setIsRunning(false);
-        setProgress(100);
-        stopAll();
-        return;
-      }
+      // Store output regardless of length
       if (payload.output) {
-        setFinalMarkdown((prev) => prev ?? payload.output ?? null);
+        setFinalMarkdown(payload.output);
       }
     },
-    [stopAll]
+    []
   );
 
   const startPollingFallback = useCallback(
     (activeThreadId: string, token: string) => {
+      // Prevent starting polling if already active
+      if (polling.isPolling()) {
+        console.log("[ChatClient] startPollingFallback called but already polling, ignoring");
+        return;
+      }
+      console.log("[ChatClient] Starting polling fallback for thread:", activeThreadId);
       setIsPollingActive(true);
       polling.start({
         threadId: activeThreadId,
         token,
+        intervalMs: 3000, // Slightly longer interval to reduce load
         handlers: {
           onValuesUpdated: handleValuesUpdated,
           onCompleted: () => {
+            console.log("[ChatClient] Polling completed");
             setIsRunning(false);
             setIsPollingActive(false);
+            setIsComplete(true);
             setProgress(100);
           },
           onError: (message) => {
+            console.error("[ChatClient] Polling error:", message);
             setError(message);
             setIsPollingActive(false);
           },
@@ -236,8 +241,15 @@ export default function ChatClient() {
     [handleValuesUpdated, polling]
   );
 
+  // Store thread/token for polling fallback
+  const fallbackParamsRef = useRef<{ threadId: string; token: string } | null>(null);
+  
   const attachWebSocket = useCallback(
     (activeThreadId: string, activeRunId: string, token: string) => {
+      // Store params for potential polling fallback
+      fallbackParamsRef.current = { threadId: activeThreadId, token };
+      
+      console.log("[ChatClient] Attaching WebSocket for thread:", activeThreadId, "run:", activeRunId);
       connect({
         threadId: activeThreadId,
         runId: activeRunId,
@@ -248,21 +260,44 @@ export default function ChatClient() {
           },
           onValuesUpdated: handleValuesUpdated,
           onCompleted: () => {
+            console.log("[ChatClient] WebSocket completed");
             setIsRunning(false);
             setIsPollingActive(false);
+            setIsComplete(true);
             setProgress(100);
             polling.stop();
           },
           onError: (message) => {
-            setError(message);
-            setIsRunning(false);
-            stopAll();
-            startPollingFallback(activeThreadId, token);
+            console.error("[ChatClient] WebSocket error:", message);
+            
+            // Don't fall back to polling for auth errors - it won't help
+            // Auth errors indicate the backend can't process the request at all
+            const isAuthError = message.toLowerCase().includes("authentication") || 
+                               message.toLowerCase().includes("token") ||
+                               message.toLowerCase().includes("401") ||
+                               message.toLowerCase().includes("supabase");
+            
+            if (isAuthError) {
+              console.log("[ChatClient] Auth error detected, not falling back to polling");
+              setError(message);
+              setIsRunning(false);
+              return;
+            }
+            
+            // Only fall back to polling for transient errors
+            // The WebSocket hook will have already retried before calling onError
+            if (fallbackParamsRef.current) {
+              console.log("[ChatClient] WebSocket failed after retries, falling back to polling");
+              startPollingFallback(fallbackParamsRef.current.threadId, fallbackParamsRef.current.token);
+            } else {
+              setError(message);
+              setIsRunning(false);
+            }
           },
         },
       });
     },
-    [connect, handleValuesUpdated, polling, startPollingFallback, stopAll]
+    [connect, handleValuesUpdated, polling, startPollingFallback]
   );
 
   const handleSubmit = async () => {
@@ -286,6 +321,7 @@ export default function ChatClient() {
       setFinalMarkdown(null);
       setRunValues(null);
       setIsPollingActive(false);
+      setIsComplete(false);
       setIsRunning(true);
       setStartedAt(new Date());
       setProgress(0);
@@ -333,6 +369,7 @@ export default function ChatClient() {
     setStartedAt(null);
     setSubmittedQuestion("");
     setError(null); // Clear any previous errors
+    setIsComplete(false);
     // Keep threadId for conversation continuity, but reset runId
     setRunId(null);
   }, []);
@@ -340,8 +377,8 @@ export default function ChatClient() {
   // Show dashboard when running OR when we have completed results
   // Use startedAt to prevent flash - if we started a run, stay on dashboard until explicitly reset
   const hasStartedRun = startedAt !== null;
-  const hasCompletedRun = progress >= 100 && (runValues !== null || finalMarkdown !== null);
-  const showDashboard = isRunning || hasStartedRun || hasCompletedRun;
+  const hasResults = runValues !== null || finalMarkdown !== null;
+  const showDashboard = isRunning || hasStartedRun || hasResults;
   
   if (showDashboard) {
     return (
@@ -356,14 +393,14 @@ export default function ChatClient() {
           }`}
         >
           <div className="mb-4 flex items-center justify-between gap-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm font-semibold tracking-tight text-[var(--foreground)]">
+            <div className="flex h-10 w-10 items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--background)] text-sm font-semibold tracking-tight text-[var(--foreground)]">
               S
             </div>
             <button
               type="button"
               aria-label="Toggle sidebar"
               onClick={() => setCollapsed((c) => !c)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground-muted)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+              className="flex h-8 w-8 items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--background)] text-[var(--foreground-muted)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)]"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -388,7 +425,7 @@ export default function ChatClient() {
                     ref={isProfile ? profileButtonRef : undefined}
                     type="button"
                     onClick={isProfile ? () => setShowProfilePopup((v) => !v) : undefined}
-                    className={`group flex w-full items-center gap-3 rounded-xl border text-[var(--foreground-muted)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)] ${
+                    className={`group flex w-full items-center gap-3 rounded border text-[var(--foreground-muted)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)] ${
                       item.active
                         ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface))] text-[var(--foreground)]"
                         : "border-[var(--border)] bg-[var(--background)]"
@@ -418,6 +455,7 @@ export default function ChatClient() {
           runId={runId}
           values={runValues}
           finalMarkdown={finalMarkdown}
+          isComplete={isComplete}
           onCancel={handleCancel}
           onShare={handleShare}
           onNewAnalysis={handleNewAnalysis}
@@ -437,14 +475,14 @@ export default function ChatClient() {
         }`}
       >
         <div className="mb-4 flex items-center justify-between gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm font-semibold tracking-tight text-[var(--foreground)]">
+          <div className="flex h-10 w-10 items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--background)] text-sm font-semibold tracking-tight text-[var(--foreground)]">
             S
           </div>
           <button
             type="button"
             aria-label="Toggle sidebar"
             onClick={() => setCollapsed((c) => !c)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground-muted)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+            className="flex h-8 w-8 items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--background)] text-[var(--foreground-muted)] transition-colors duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)]"
           >
             <svg
               viewBox="0 0 24 24"
@@ -469,7 +507,7 @@ export default function ChatClient() {
                   ref={isProfile ? profileButtonRef : undefined}
                   type="button"
                   onClick={isProfile ? () => setShowProfilePopup((v) => !v) : undefined}
-                  className={`group flex w-full items-center gap-3 rounded-xl border text-[var(--foreground-muted)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)] ${
+                  className={`group flex w-full items-center gap-3 rounded border text-[var(--foreground-muted)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--foreground)] ${
                     item.active
                       ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface))] text-[var(--foreground)]"
                       : "border-[var(--border)] bg-[var(--background)]"
@@ -509,13 +547,13 @@ export default function ChatClient() {
           <div className="mx-auto flex max-w-5xl flex-col gap-5 px-6 pb-12 pt-8">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-3xl font-semibold tracking-tight text-[var(--foreground)]">Analysis</h1>
-              <span className="inline-flex items-center rounded-md border border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground)]">
+              <span className="inline-flex items-center rounded-sm border border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground)]">
                 Explain the system you need in details to start research
               </span>
             </div>
 
             {(finalMarkdown || streamText) && (
-              <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_18px_40px_rgba(0,0,0,0.2)]">
+              <div className="space-y-4 rounded-sm border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_18px_40px_rgba(0,0,0,0.08)]">
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-[var(--foreground)]">
@@ -526,7 +564,7 @@ export default function ChatClient() {
                 </div>
 
                 {streamText && !finalMarkdown && (
-                  <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-3 text-sm text-[var(--foreground)]">
+                  <div className="rounded border border-[var(--border)] bg-[var(--background)] p-3 text-sm text-[var(--foreground)]">
                     <div className="mb-2 text-xs font-semibold uppercase text-[var(--foreground-muted)]">Live output</div>
                     <div className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed">{streamText}</div>
                   </div>
@@ -550,12 +588,12 @@ export default function ChatClient() {
             )}
 
             {error && (
-              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-400">
+              <div className="rounded-sm border border-red-500/30 bg-red-500/10 p-4 text-red-400">
                 Error: {error}
               </div>
             )}
 
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_18px_40px_rgba(0,0,0,0.2)]">
+            <div className="rounded-sm border border-[var(--border)] bg-[var(--surface)] shadow-[0_18px_40px_rgba(0,0,0,0.08)]">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--background)] px-6 py-4">
                 <div className="flex flex-col gap-1 text-sm">
                   <span className="text-[var(--foreground)]">Systesign is here!</span>
@@ -563,39 +601,39 @@ export default function ChatClient() {
                     Build agentic architectures with Systesign - Agentic system researcher!
                   </span>
                 </div>
-                <button className="rounded-lg border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--accent)_22%,transparent)]">
+                <button className="rounded-sm border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--accent)_22%,transparent)]">
                   Try Systesign:
                 </button>
               </div>
 
               <div className="space-y-5 px-6 py-6">
-                <label className="block rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3">
+                <label className="block rounded border border-[var(--border)] bg-[var(--background)] px-4 py-3">
                   <div className="mb-2 text-sm font-semibold text-[var(--foreground)]">Context / Data</div>
                   <textarea
                     value={contextInput}
                     onChange={(e) => setContextInput(e.target.value)}
                     aria-label="Context input"
-                    className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
+                    className="w-full resize-none rounded-sm border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
                     rows={4}
                     placeholder=""
                   />
                 </label>
 
-                <label className="block rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3">
+                <label className="block rounded border border-[var(--border)] bg-[var(--background)] px-4 py-3">
                   <div className="mb-2 text-sm font-semibold text-[var(--foreground)]">Question</div>
                   <textarea
                     value={questionInput}
                     onChange={(e) => setQuestionInput(e.target.value)}
                     aria-label="Question input"
-                    className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
+                    className="w-full resize-none rounded-sm border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]"
                     rows={6}
                     placeholder=""
                   />
                 </label>
 
                 <div className="flex flex-col gap-4 border-t border-[var(--border)] pt-4 md:flex-row md:items-center md:justify-between">
-                  <div className="flex flex-1 items-center gap-3 rounded-xl border border-dashed border-[color-mix(in_srgb,var(--accent)_55%,var(--border))] bg-[var(--background)] px-4 py-4 text-sm text-[var(--foreground)]">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[color-mix(in_srgb,var(--accent)_55%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-base font-semibold text-[var(--foreground)]">
+                  <div className="flex flex-1 items-center gap-3 rounded border border-dashed border-[color-mix(in_srgb,var(--accent)_55%,var(--border))] bg-[var(--background)] px-4 py-4 text-sm text-[var(--foreground)]">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-sm border border-[color-mix(in_srgb,var(--accent)_55%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-base font-semibold text-[var(--foreground)]">
                       ↑
                     </div>
                     <div className="flex flex-col">
@@ -612,7 +650,7 @@ export default function ChatClient() {
                       type="button"
                       onClick={handleSubmit}
                       disabled={isRunning}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--background)] transition-transform duration-150 hover:-translate-y-0.5 hover:shadow-[0_0_16px_rgba(154,182,194,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center justify-center gap-2 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition-transform duration-150 hover:-translate-y-0.5 hover:shadow-[0_0_16px_rgba(139,90,43,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isRunning ? "Running..." : "Start →"}
                     </button>

@@ -1,7 +1,7 @@
-export const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:10000";
+export const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 export const DEV_BASE_CANDIDATES: string[] = [
-  "http://localhost:10000",
-  "http://127.0.0.1:10000",
+  "http://localhost:8000",
+  "http://127.0.0.1:8000",
 ];
 export const WS_BASE = BASE.replace(/^http/i, "ws");
 export const ASSISTANT_ID = "system_design_agent";
