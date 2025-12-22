@@ -2,12 +2,13 @@
 
 import { ReactNode, useMemo, useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { createThread, startRun } from "@/app/actions";
+import { createThread, startRun, getThreadState } from "@/app/actions";
 import { useRunPolling } from "./useRunPolling";
 import { useRunWebSocket } from "./useRunWebSocket";
 import ReactMarkdown from "react-markdown";
 import AgentDashboard from "./components/AgentDashboard";
 import ProfilePopup from "./components/ProfilePopup";
+import ThreadList from "./components/ThreadList";
 
 type NavItem = {
   label: string;
@@ -134,6 +135,9 @@ export default function ChatClient() {
   const [showProfilePopup, setShowProfilePopup] = useState(false);
   const profileButtonRef = useRef<HTMLButtonElement>(null);
 
+  // Thread list refresh trigger
+  const [threadListRefresh, setThreadListRefresh] = useState(0);
+
   const themeVars = useMemo(
     () => ({
       "--background": "#eee7d7",
@@ -249,6 +253,7 @@ export default function ChatClient() {
             setIsPollingActive(false);
             setIsComplete(true);
             setProgress(100);
+            setThreadListRefresh((n) => n + 1);
           },
           onError: (message) => {
             console.error("[ChatClient] Polling error:", message);
@@ -285,6 +290,7 @@ export default function ChatClient() {
             setIsPollingActive(false);
             setIsComplete(true);
             setProgress(100);
+            setThreadListRefresh((n) => n + 1);
             polling.stop();
           },
           onError: (message) => {
@@ -390,6 +396,30 @@ export default function ChatClient() {
     setError(null); // Clear any previous errors
   }, [resetSession]);
 
+  // Handler to load a thread from the sidebar
+  const handleSelectThread = useCallback(async (selectedThreadId: string) => {
+    if (!session?.access_token) return;
+    
+    try {
+      const state = await getThreadState(selectedThreadId, session.access_token);
+      if (state) {
+        setThreadId(selectedThreadId);
+        setRunId(state.run_id ?? null);
+        setRunValues(state.values ?? null);
+        setFinalMarkdown(state.output ?? null);
+        setSubmittedQuestion(state.values?.goal as string ?? "");
+        setIsComplete(state.status === "completed" || state.status === "failed");
+        setIsRunning(state.status === "running");
+        setStartedAt(new Date()); // Set to show dashboard
+        setProgress(state.status === "completed" ? 100 : 0);
+        setError(null);
+      }
+    } catch (err) {
+      console.error("Failed to load thread:", err);
+      setError(err instanceof Error ? err.message : "Failed to load thread");
+    }
+  }, [session?.access_token]);
+
   // Show dashboard when running OR when we have completed results
   // Use startedAt to prevent flash - if we started a run, stay on dashboard until explicitly reset
   const hasStartedRun = startedAt !== null;
@@ -425,10 +455,18 @@ export default function ChatClient() {
                 stroke="currentColor"
                 strokeWidth="1.5"
               >
-                <path d="m10 8 4 4-4 4" />
-              </svg>
-            </button>
-          </div>
+              <path d="m10 8 4 4-4 4" />
+            </svg>
+          </button>
+        </div>
+
+          <ThreadList
+            token={session?.access_token ?? null}
+            activeThreadId={threadId}
+            onSelectThread={handleSelectThread}
+            collapsed={collapsed}
+            refreshTrigger={threadListRefresh}
+          />
 
           <nav className="mt-auto flex flex-col gap-1.5">
             {["Profile", "Data Storage", "Feedback", "Docs"].map((label) => {
@@ -511,6 +549,14 @@ export default function ChatClient() {
             </svg>
           </button>
         </div>
+
+        <ThreadList
+          token={session?.access_token ?? null}
+          activeThreadId={threadId}
+          onSelectThread={handleSelectThread}
+          collapsed={collapsed}
+          refreshTrigger={threadListRefresh}
+        />
 
         <nav className="mt-auto flex flex-col gap-1.5">
           {["Profile", "Data Storage", "Feedback", "Docs"].map((label) => {

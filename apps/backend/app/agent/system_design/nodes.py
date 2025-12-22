@@ -1967,6 +1967,7 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
 
     # Call LLM with retry logic
     max_retries = 2
+    architecture: dict[str, Any] = {}
     for attempt in range(max_retries + 1):
         try:
             brain = make_brain()
@@ -2013,10 +2014,10 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
                 notes.append(f"Attempt {attempt + 1} validation failed: {validation_errors}")
                 # Add stronger instruction for retry
                 prompt += f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n" + "\n".join(validation_errors) + "\n\nFix these issues in your response."
-            continue
+                continue
             elif validation_errors:
                 notes.append(f"Validation warnings (final attempt): {validation_errors}")
-            
+                break
             notes.append(f"Generated architecture with {len(agents)} agents and {len(architecture.get('tools', []))} tools")
             break
             
@@ -2025,20 +2026,22 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
             if attempt < max_retries:
                 notes.append(f"JSON parse error on attempt {attempt + 1}, retrying")
                 prompt += "\n\nIMPORTANT: Your previous response was not valid JSON. Return ONLY a valid JSON object."
-            continue
-    else:
-                notes.append(f"JSON parse error after {max_retries + 1} attempts")
-                # Return fallback architecture
-                architecture = _build_fallback_architecture(goal, selected_patterns)
-                notes.append("Using fallback architecture due to parse errors")
-                break
-                
+                continue
+            notes.append(f"JSON parse error after {max_retries + 1} attempts")
+            architecture = _build_fallback_architecture(goal, selected_patterns)
+            notes.append("Using fallback architecture due to parse errors")
+            break
         except Exception as e:
             logger.warning(f"LLM call failed in architecture_generator_node: {e}")
             notes.append(f"LLM error: {str(e)[:100]}")
             architecture = _build_fallback_architecture(goal, selected_patterns)
             notes.append("Using fallback architecture due to LLM error")
             break
+    else:
+        # Loop exhausted without break (shouldn't normally happen but keep defensive fallback)
+        if not architecture:
+            architecture = _build_fallback_architecture(goal, selected_patterns)
+            notes.append("Fallback architecture generated after retries exhausted")
     
     result = {
         "status": "completed" if architecture.get("agents") else "skipped",
@@ -2234,7 +2237,7 @@ Return ONLY the Mermaid code, no markdown code blocks or explanation."""
             # Remove first line (```mermaid or ```) and last line (```)
             if lines[-1].strip() == "```":
                 mermaid_text = "\n".join(lines[1:-1])
-    else:
+        else:
                 mermaid_text = "\n".join(lines[1:])
         
         notes.append(f"Generated {mermaid_text.split()[0] if mermaid_text else 'unknown'} diagram with LLM")
@@ -2911,11 +2914,11 @@ def evals_agent(state: State) -> Dict[str, any]:
     # Aggregate notes
     if isinstance(telemetry_result, dict):
         notes = telemetry_result.get("notes")
-            if isinstance(notes, list):
-                for note in notes:
-                    eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note)
-            elif notes:
-                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
+        if isinstance(notes, list):
+            for note in notes:
+                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note)
+        elif notes:
+            eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
 
     # Determine overall status
     eval_state["status"] = telemetry_status if telemetry_status else "completed"

@@ -11,6 +11,8 @@ from app.schemas.threads import (
     RunStartRequest,
     RunStartResponse,
     ThreadStateResponse,
+    ThreadListResponse,
+    ThreadListItem,
 )
 from app.services import threads as thread_service
 from app.auth import decode_token
@@ -30,6 +32,14 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> Optional[s
         return claims.get("sub")
     except Exception:
         return None
+
+
+@threads_router.get("", response_model=ThreadListResponse)
+async def list_threads(user_id: Optional[str] = Depends(get_user_id)):
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    threads = thread_service.list_user_threads(user_id)
+    return ThreadListResponse(threads=[ThreadListItem(**t) for t in threads])
 
 
 @threads_router.post("", status_code=status.HTTP_201_CREATED, response_model=ThreadResponse)

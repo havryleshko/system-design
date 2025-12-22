@@ -54,7 +54,7 @@ export default function ProfilePopup({ onClose, anchorRef }: ProfilePopupProps) 
   return (
     <div
       ref={popupRef}
-      className="absolute bottom-full left-0 mb-2 w-[220px] rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+      className="absolute bottom-full left-0 mb-2 w-[220px] rounded border border-[var(--border)] bg-[var(--surface)] shadow-[0_8px_32px_rgba(0,0,0,0.12)]"
       style={{ zIndex: 50 }}
     >
       {/* Contact Section */}

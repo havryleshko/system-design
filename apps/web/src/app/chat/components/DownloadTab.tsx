@@ -175,7 +175,7 @@ export default function DownloadTab({ values, runId }: DownloadTabProps) {
           type="button"
           onClick={handleDownloadAll}
           disabled={!hasArchitecture}
-          className="flex items-center gap-2 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--background)] transition-all hover:shadow-[0_0_16px_rgba(154,182,194,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-2 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition-all hover:shadow-[0_0_16px_rgba(139,90,43,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
@@ -191,11 +191,11 @@ export default function DownloadTab({ values, runId }: DownloadTabProps) {
         {files.map((file) => (
           <div
             key={file.name}
-            className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4"
+            className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--surface)] p-4"
           >
             <div className="flex items-center gap-4">
               {/* File Icon */}
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--background)]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-sm bg-[var(--background)]">
                 {file.type === "PNG" ? (
                   <svg viewBox="0 0 24 24" className="h-5 w-5 text-[#22c55e]" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -230,7 +230,7 @@ export default function DownloadTab({ values, runId }: DownloadTabProps) {
               type="button"
               onClick={file.type === "PNG" ? handleDownloadArchitecture : undefined}
               disabled={!file.available}
-              className="flex items-center gap-2 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--background)] transition-all hover:shadow-[0_0_12px_rgba(154,182,194,0.25)] disabled:cursor-not-allowed disabled:border-[var(--border)] disabled:bg-[var(--surface)] disabled:text-[var(--foreground-muted)] disabled:shadow-none"
+              className="flex items-center gap-2 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition-all hover:shadow-[0_0_12px_rgba(139,90,43,0.25)] disabled:cursor-not-allowed disabled:border-[var(--border)] disabled:bg-[var(--surface)] disabled:text-[var(--foreground-muted)] disabled:shadow-none"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
@@ -245,7 +245,7 @@ export default function DownloadTab({ values, runId }: DownloadTabProps) {
 
       {/* Empty State */}
       {!hasArchitecture && (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--background)] py-12">
+        <div className="flex flex-col items-center justify-center rounded border border-dashed border-[var(--border)] bg-[var(--background)] py-12">
           <svg viewBox="0 0 24 24" className="mb-3 h-10 w-10 text-[var(--foreground-muted)]" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" />
             <path d="M13 2v7h7" />
