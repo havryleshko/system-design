@@ -121,6 +121,7 @@ export default function ChatClient() {
   const [finalMarkdown, setFinalMarkdown] = useState<string | null>(null);
   const [runValues, setRunValues] = useState<Record<string, unknown> | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPollingActive, setIsPollingActive] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
@@ -225,6 +226,7 @@ export default function ChatClient() {
     setSubmittedQuestion("");
     setIsComplete(false);
     setIsRunning(false);
+    setRunStatus(null);
     setIsPollingActive(false);
     if (options?.clearThread) {
       setThreadId(null);
@@ -252,6 +254,7 @@ export default function ChatClient() {
             setIsRunning(false);
             setIsPollingActive(false);
             setIsComplete(true);
+            setRunStatus("completed");
             setProgress(100);
             setThreadListRefresh((n) => n + 1);
           },
@@ -289,6 +292,7 @@ export default function ChatClient() {
             setIsRunning(false);
             setIsPollingActive(false);
             setIsComplete(true);
+            setRunStatus("completed");
             setProgress(100);
             setThreadListRefresh((n) => n + 1);
             polling.stop();
@@ -349,6 +353,7 @@ export default function ChatClient() {
       resetSession();
       setError(null);
       setIsRunning(true);
+      setRunStatus("running");
       setStartedAt(new Date());
       setProgress(0);
       setSubmittedQuestion(context ? `${context}\n\n${question}` : question);
@@ -382,6 +387,7 @@ export default function ChatClient() {
     setIsRunning(false);
     setStartedAt(null);
     setProgress(0);
+    setRunStatus(null);
     stopAll();
   }, [stopAll]);
 
@@ -410,6 +416,7 @@ export default function ChatClient() {
         setSubmittedQuestion(state.values?.goal as string ?? "");
         setIsComplete(state.status === "completed" || state.status === "failed");
         setIsRunning(state.status === "running");
+        setRunStatus(state.status ?? null);
         setStartedAt(new Date()); // Set to show dashboard
         setProgress(state.status === "completed" ? 100 : 0);
         setError(null);
@@ -510,6 +517,7 @@ export default function ChatClient() {
           values={runValues}
           finalMarkdown={finalMarkdown}
           isComplete={isComplete}
+          runStatus={runStatus}
           onCancel={handleCancel}
           onShare={handleShare}
           onNewAnalysis={handleNewAnalysis}

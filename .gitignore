@@ -3,6 +3,10 @@
 .env.local
 apps/web/.env
 apps/backend/.env
+.vscode/
+apps/web/.cursor/
+supabase/.temp/
+apps/backend/supabase/
 node_modules
 
 # Python
@@ -10,6 +14,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.langgraph_api/
+*.pckl
 .Python
 .venv/
 .venv-*/

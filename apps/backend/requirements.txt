@@ -10,3 +10,4 @@ langgraph-checkpoint-postgres
 jsonschema
 pyjwt>=2.8.0
 httpx>=0.24.0
+sentry-sdk[fastapi]>=2.0.0,<3.0.0

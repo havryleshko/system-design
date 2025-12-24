@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import psycopg
 from psycopg.rows import dict_row
+import sentry_sdk  # pyright: ignore[reportMissingImports]
 
 from langchain_core.messages import HumanMessage, BaseMessage
 
@@ -266,6 +267,19 @@ async def execute_run(
         import traceback
         traceback.print_exc()
         logger.exception(f"Run execution failed: {exc}")
+
+        # Report to Sentry with useful correlation tags (safe: no PII by default).
+        try:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("thread_id", thread_id)
+                scope.set_tag("run_id", run_id)
+                if user_id:
+                    scope.set_user({"id": str(user_id)})
+                sentry_sdk.capture_exception(exc)
+        except Exception:
+            # Never let observability break the run failure path.
+            pass
+
         _run_execute(
             "update runs set status = 'failed', updated_at = now() where run_id = %s",
             (run_id,),
