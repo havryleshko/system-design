@@ -19,6 +19,7 @@ type SessionInfo = {
 
 type ThreadState = {
   status?: string;
+  run_id?: string | null;
   output?: string;
   values?: Record<string, unknown>;
 };

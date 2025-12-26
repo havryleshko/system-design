@@ -333,7 +333,7 @@ async def _execute_run_body(
     if final_state and hasattr(final_state, 'values'):
         final_state = final_state.values
         print(
-            f\"[EXEC] Got final state with keys: {list(final_state.keys()) if isinstance(final_state, dict) else 'not a dict'}\",
+            f"[EXEC] Got final state with keys: {list(final_state.keys()) if isinstance(final_state, dict) else 'not a dict'}",
             flush=True,
         )
     else:
@@ -350,7 +350,7 @@ async def _execute_run_body(
         # Log what we have in the state for debugging
         state_output = final_state.get("output")
         print(
-            f\"[EXEC] final_state.output type: {type(state_output)}, value preview: {str(state_output)[:200] if state_output else 'None'}...\",
+            f"[EXEC] final_state.output type: {type(state_output)}, value preview: {str(state_output)[:200] if state_output else 'None'}...",
             flush=True,
         )
 

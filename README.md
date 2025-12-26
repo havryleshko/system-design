@@ -80,12 +80,25 @@ Planner → Research → Design → Critic → Evals → Output formatter
 The formatter emits user-facing markdown in `output` plus `architecture_json` and `design_brief` in state.
 
 ## Deployment notes
-- **Backend (FastAPI on a VM)**: deploy behind HTTPS (Caddy recommended) and ensure backend env vars are set.
+- **Backend (FastAPI on a VM)**: deploy behind HTTPS (Caddy recommended) and ensure backend env vars are set. See `DEPLOY_DO.md`.
 - **Web (Vercel)**: standard Next.js deployment; ensure env vars are set.
 
 ## More docs
 - Backend auth/checkpointer specifics: `apps/backend/README.md`
 - Web app notes: `apps/web/README.md`
+
+## Production (DigitalOcean + Caddy)
+This repo includes a simple MVP production setup using Docker Compose:
+
+- `docker-compose.yml` + `Caddyfile` (TLS + WebSockets for `api.systesign.com`)
+- Guardrails via env vars:
+  - `RUN_CONCURRENCY_LIMIT` (default 1)
+  - `RUN_DAILY_LIMIT` (default 3)
+  - `RUN_TIMEOUT_SECONDS` (default 420)
+  - `RUN_MAX_TOTAL_TOKENS` (default 20000)
+  - `CORS_ALLOW_ORIGINS` (e.g. `https://app.systesign.com`)
+
+For step-by-step instructions, see `DEPLOY_DO.md`.
 
 ## Contributing
 PRs welcome — please keep lint/tests green (`pnpm lint`, `pnpm test`).

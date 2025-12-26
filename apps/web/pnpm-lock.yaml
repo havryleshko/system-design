@@ -17,6 +17,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.57.4
         version: 2.58.0
+      import-in-the-middle:
+        specifier: ^1.15.0
+        version: 1.15.0
       next:
         specifier: 16.0.7
         version: 16.0.7(@babel/core@7.28.5)(@opentelemetry/api@1.9.0)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
@@ -35,6 +38,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.0
         version: 4.0.1
+      require-in-the-middle:
+        specifier: ^7.5.2
+        version: 7.5.2
       resend:
         specifier: ^6.6.0
         version: 6.6.0
