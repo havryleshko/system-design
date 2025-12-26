@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
     create_client = None
 
 try:
-    from app.storage.memory import add_event, record_node_tokens
+    from app.storage.memory import add_event, record_node_tokens, get_total_tokens
 except ImportError:
     from app.storage.memory import add_event
 
@@ -30,6 +30,9 @@ except ImportError:
         total_tokens: int,
     ) -> None:
             return None
+
+    def get_total_tokens(run_id: str) -> int:
+        return 0
 from app.schemas.runs import RunEvent
 try:
     from app.services.langgraph_store import (
@@ -482,7 +485,10 @@ def normalise_architecture(raw: Any, *, goal: str, design_brief: str) -> Dict[st
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
     model_name = model or os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
-    return ChatOpenAI(model=model_name)
+    # Max output tokens is a practical guardrail; total budget is enforced separately.
+    max_out = int(os.getenv("CHAT_OPENAI_MAX_OUTPUT_TOKENS", "1200"))
+    temperature = float(os.getenv("CHAT_OPENAI_TEMPERATURE", "0.2"))
+    return ChatOpenAI(model=model_name, max_tokens=max_out, temperature=temperature)
 
 def to_message(x: any) -> BaseMessage:
     if isinstance(x, BaseMessage):
@@ -655,6 +661,12 @@ def log_token_usage(run_id: str, node: str, response: BaseMessage) -> None:
         }
     ))
     record_node_tokens(run_id, node, prompt_tokens, completion_tokens, total)
+
+    # Hard budget guardrail (MVP): abort runs that exceed max total tokens.
+    limit = int(os.getenv("RUN_MAX_TOTAL_TOKENS", "20000") or "20000")
+    current = get_total_tokens(run_id)
+    if limit > 0 and current > limit:
+        raise RuntimeError(f"Token budget exceeded: {current} > {limit}")
 
 
 

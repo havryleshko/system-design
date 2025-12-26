@@ -3,12 +3,16 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Dict, Optional, Any
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 import psycopg
 from psycopg.rows import dict_row
-import sentry_sdk  # pyright: ignore[reportMissingImports]
+try:
+    import sentry_sdk 
+except ModuleNotFoundError:
+    sentry_sdk = None 
 
 from langchain_core.messages import HumanMessage, BaseMessage
 
@@ -16,6 +20,22 @@ from app.agent.system_design.graph import get_compiled_graph_with_checkpointer
 from app.storage.memory import add_event, record_node_tokens
 
 logger = logging.getLogger(__name__)
+
+def _get_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+_RUN_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _run_semaphore() -> asyncio.Semaphore:
+    global _RUN_SEMAPHORE
+    if _RUN_SEMAPHORE is None:
+        _RUN_SEMAPHORE = asyncio.Semaphore(_get_int_env("RUN_CONCURRENCY_LIMIT", 1))
+    return _RUN_SEMAPHORE
 
 def _pg_url() -> str:
     url = os.getenv("LANGGRAPH_PG_URL")
@@ -97,7 +117,55 @@ def create_thread(user_id: Optional[str] = None) -> str:
     return thread_id
 
 
+def _enforce_daily_run_limit(user_id: Optional[str]) -> None:
+    limit = _get_int_env("RUN_DAILY_LIMIT", 3)
+    if limit <= 0:
+        return
+    if not user_id:
+        return
+    try:
+        uid = UUID(str(user_id))
+    except Exception:
+        # If user_id isn't a UUID, skip enforcement rather than breaking runs.
+        return
+
+    now = datetime.now(timezone.utc)
+    period_month = now.strftime("%Y-%m")
+    today = now.strftime("%Y-%m-%d")
+
+    row = _run_select(
+        "select runs_day, runs_used_day from usage_counters where user_id = %s and period_month = %s",
+        (uid, period_month),
+    )
+    runs_day = row[0].get("runs_day") if row else None
+    runs_used_day = int(row[0].get("runs_used_day") or 0) if row else 0
+
+    if runs_day != today:
+        runs_used_day = 0
+        if row:
+            _run_execute(
+                "update usage_counters set runs_day = %s, runs_used_day = 0, updated_at = now() where user_id = %s and period_month = %s",
+                (today, uid, period_month),
+            )
+
+    if runs_used_day >= limit:
+        raise RuntimeError(f"Daily run limit reached ({limit}/day). Try again tomorrow.")
+
+    if row:
+        _run_execute(
+            "update usage_counters set runs_used_day = runs_used_day + 1, updated_at = now() where user_id = %s and period_month = %s",
+            (uid, period_month),
+        )
+    else:
+        _run_execute(
+            "insert into usage_counters(user_id, period_month, runs_day, runs_used_day) values (%s, %s, %s, 1)",
+            (uid, period_month, today),
+        )
+
+
 def start_run(thread_id: str, user_input: str, user_id: Optional[str] = None) -> str:
+    _enforce_daily_run_limit(user_id)
+
     # Ensure thread exists
     if not get_thread_data(thread_id):
         create_thread(user_id)
@@ -269,16 +337,17 @@ async def execute_run(
         logger.exception(f"Run execution failed: {exc}")
 
         # Report to Sentry with useful correlation tags (safe: no PII by default).
-        try:
-            with sentry_sdk.push_scope() as scope:
-                scope.set_tag("thread_id", thread_id)
-                scope.set_tag("run_id", run_id)
-                if user_id:
-                    scope.set_user({"id": str(user_id)})
-                sentry_sdk.capture_exception(exc)
-        except Exception:
-            # Never let observability break the run failure path.
-            pass
+        # Never let observability break the run failure path.
+        if sentry_sdk is not None:
+            try:
+                with sentry_sdk.push_scope() as scope:
+                    scope.set_tag("thread_id", thread_id)
+                    scope.set_tag("run_id", run_id)
+                    if user_id:
+                        scope.set_user({"id": str(user_id)})
+                    sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
 
         _run_execute(
             "update runs set status = 'failed', updated_at = now() where run_id = %s",
