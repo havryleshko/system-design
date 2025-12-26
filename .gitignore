@@ -42,3 +42,6 @@ wheels/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# Sentry Config File
+.env.sentry-build-plugin
