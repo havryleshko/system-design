@@ -27,8 +27,6 @@ LangGraph-powered API that orchestrates the system-design agent, handles Supabas
   langgraph dev
   # uses langgraph.json (graph: system_design_agent, env: .env, auth: app.auth:auth)
   ```
-- **LangGraph serve (Render/start.sh)**:
-  `start.sh` sets `PUBLIC_URL` and runs `langgraph serve --config langgraph.json`.
 
 ## Environment variables
 See `env.example` for the canonical list. Key values:
@@ -53,8 +51,8 @@ See `env.example` for the canonical list. Key values:
 - Memory/checkpointer partitioning depends on run metadata: always pass `user_id`, `thread_id`, and `run_id` when triggering runs in Studio or via the API.
 
 ## Deploying
-- **Render**: `render.yaml` installs requirements and runs `langgraph dev --host 0.0.0.0 --port $PORT --no-reload`. Provide env vars via the dashboard.
-- **LangGraph Cloud / Studio**: point to `langgraph.json`; ensure env vars are configured per workspace.
+- **VM (recommended for MVP)**: run FastAPI behind HTTPS (Caddy recommended) and set env vars from `env.example`.
+- **LangGraph Cloud / Studio** (optional): point to `langgraph.json`; ensure env vars are configured per workspace.
 
 After deploying, hit `/health/checkpointer` to verify database access, then run through `/threads/:id/runs/:run_id/resume` to ensure persistence works end-to-end.
 

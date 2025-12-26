@@ -1,0 +1,8 @@
+api.systesign.com {
+  encode zstd gzip
+
+  # FastAPI behind docker compose
+  reverse_proxy backend:8000
+}
+
+

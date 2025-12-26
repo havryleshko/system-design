@@ -80,7 +80,7 @@ Planner → Research → Design → Critic → Evals → Output formatter
 The formatter emits user-facing markdown in `output` plus `architecture_json` and `design_brief` in state.
 
 ## Deployment notes
-- **Backend (Render)**: see `apps/backend/render.yaml` and `apps/backend/start.sh`.
+- **Backend (FastAPI on a VM)**: deploy behind HTTPS (Caddy recommended) and ensure backend env vars are set.
 - **Web (Vercel)**: standard Next.js deployment; ensure env vars are set.
 
 ## More docs

@@ -1,6 +1,7 @@
-# Dockerfile for LangSmith deployments
-# Usage: docker build -t langgraph-backend .
-#        docker run -p 2024:2024 --env-file .env langgraph-backend
+# Dockerfile for FastAPI deployments
+# Usage:
+#   docker build -t system-design-backend .
+#   docker run -p 8000:8000 --env-file .env system-design-backend
 
 FROM python:3.12-slim
 
@@ -16,21 +17,14 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install LangGraph CLI and API
-RUN pip install --no-cache-dir langgraph-cli langgraph-api
-
 # Copy application code
 COPY . .
 
-# Expose port (LangSmith sets $PORT, default to 2024)
-EXPOSE 2024
+EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:${PORT:-2024}/ok || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:8000/ || exit 1
 
-# Start LangGraph server for production
-# LangSmith deployments will handle the server startup, but this provides a fallback
-# Use PORT environment variable if set (LangSmith), otherwise default to 2024
-CMD langgraph dev --host 0.0.0.0 --port ${PORT:-2024} --no-reload --config langgraph.json
+# Production server (no reload)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
