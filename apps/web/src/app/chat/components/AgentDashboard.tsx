@@ -17,6 +17,7 @@ type AgentDashboardProps = {
   values: Record<string, unknown> | null;
   finalMarkdown: string | null;
   isComplete: boolean;
+  runStatus: string | null;
   onCancel: () => void;
   onShare?: () => void;
   onNewAnalysis?: () => void;
@@ -30,6 +31,7 @@ export default function AgentDashboard({
   values,
   finalMarkdown,
   isComplete,
+  runStatus,
   onCancel,
   onShare,
   onNewAnalysis,
@@ -65,7 +67,15 @@ export default function AgentDashboard({
   const output = getOutput();
   const roundedProgress = Math.round(progress);
   const displayProgress = isComplete ? 100 : roundedProgress;
-  const statusLabel = isComplete ? "SUCCESS" : roundedProgress < 5 ? "QUEUED" : "RUNNING";
+  const normalizedStatus = (runStatus ?? "").toLowerCase();
+  const statusLabel =
+    normalizedStatus === "failed"
+      ? "FAILED"
+      : isComplete
+      ? "SUCCESS"
+      : roundedProgress < 5
+      ? "QUEUED"
+      : "RUNNING";
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     {
@@ -133,6 +143,8 @@ export default function AgentDashboard({
           <ResultsTab
             output={output}
             startedAt={startedAt}
+            values={values}
+            runStatus={runStatus}
           />
         );
       case "notebook":
@@ -215,6 +227,8 @@ export default function AgentDashboard({
               className={`h-2 w-2 rounded-full ${
                 statusLabel === "SUCCESS"
                   ? "bg-[#22c55e]"
+                  : statusLabel === "FAILED"
+                  ? "bg-red-500"
                   : statusLabel === "QUEUED"
                   ? "bg-[#6b7280]"
                   : "bg-[#22c55e] animate-pulse"

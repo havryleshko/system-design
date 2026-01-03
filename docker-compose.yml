@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: ./apps/backend
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      # Guardrails (defaults are set in code; these are the prod values)
+      - RUN_CONCURRENCY_LIMIT=${RUN_CONCURRENCY_LIMIT:-1}
+      - RUN_DAILY_LIMIT=${RUN_DAILY_LIMIT:-3}
+      - RUN_TIMEOUT_SECONDS=${RUN_TIMEOUT_SECONDS:-420}
+      - RUN_MAX_TOTAL_TOKENS=${RUN_MAX_TOTAL_TOKENS:-20000}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-https://app.systesign.com}
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+

@@ -35,14 +35,14 @@ function CollapsibleSection({ title, icon, defaultOpen = false, children }: Coll
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+    <div className="rounded border border-[var(--border)] bg-[var(--surface)]">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[var(--background)]"
       >
         <div className="flex items-center gap-3">
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--background)] text-[var(--accent)]">
+          <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-[var(--background)] text-[var(--accent)]">
             {icon}
           </span>
           <span className="font-medium text-[var(--foreground)]">{title}</span>
@@ -159,7 +159,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
   return (
     <div className="reasoning-tab flex flex-col gap-4">
       {/* Query Section */}
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="mb-2 flex items-center gap-2">
           <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--accent)]" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
@@ -194,7 +194,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Steps</h4>
               <div className="space-y-2">
                 {(planSteps as Array<Record<string, unknown>>).map((step, idx) => (
-                  <div key={idx} className="rounded-md bg-[var(--background)] p-3">
+                  <div key={idx} className="rounded-sm bg-[var(--background)] p-3">
                     <div className="flex items-start gap-2">
                       <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/20 text-xs font-semibold text-[var(--accent)]">
                         {idx + 1}
@@ -241,7 +241,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(knowledgeBase) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Knowledge Base</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {kbStatus && <DataItem label="Status" value={kbStatus} />}
                 {kbHighlights && (
                   <div className="mt-2">
@@ -257,7 +257,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(githubApi) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">GitHub API</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {ghStatus && <DataItem label="Status" value={ghStatus} />}
                 {ghHighlights && (
                   <div className="mt-2">
@@ -273,7 +273,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(webSearch) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Web Search</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {wsStatus && <DataItem label="Status" value={wsStatus} />}
                 {wsHighlights && (
                   <div className="mt-2">
@@ -332,7 +332,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Components</h4>
               <div className="space-y-2">
                 {(components as Array<Record<string, unknown>>).slice(0, 10).map((comp, idx) => (
-                  <div key={idx} className="rounded-md bg-[var(--background)] p-3">
+                  <div key={idx} className="rounded-sm bg-[var(--background)] p-3">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-[var(--foreground)]">
                         {String(comp.name || comp.id || `Component ${idx + 1}`)}
@@ -356,7 +356,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(costsData) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Cost Estimates</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {Object.entries(costsData).map(([key, value]) => (
                   <DataItem key={key} label={key} value={typeof value === "object" ? JSON.stringify(value) : String(value)} />
                 ))}
@@ -368,7 +368,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {diagramStatus && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Diagram</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 <DataItem label="Status" value={diagramStatus} />
               </div>
             </div>
@@ -395,7 +395,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(reviewData) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Review</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {reviewStatus && <DataItem label="Status" value={reviewStatus} />}
                 {reviewNotes != null && (
                   <div className="mt-2">
@@ -415,7 +415,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(hallucinationData) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Hallucination Check</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {hallucinationStatus && <DataItem label="Status" value={hallucinationStatus} />}
                 {hallucinationIssues && (
                   <div className="mt-2">
@@ -431,7 +431,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(riskData) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Risk Analysis</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {riskStatus && <DataItem label="Status" value={riskStatus} />}
                 {riskRisks && (
                   <div className="mt-2">
@@ -464,7 +464,7 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(telemetryData) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Telemetry</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {telemetryStatus && <DataItem label="Status" value={telemetryStatus} />}
                 {hasKeys(telemetryMetrics) && (
                   <div className="mt-2 space-y-1">
@@ -481,12 +481,12 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
           {hasKeys(scoresData) && (
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Scores</h4>
-              <div className="rounded-md bg-[var(--background)] p-3">
+              <div className="rounded-sm bg-[var(--background)] p-3">
                 {scoresStatus && <DataItem label="Status" value={scoresStatus} />}
                 {hasKeys(scoresMetrics) && (
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {Object.entries(scoresMetrics).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between rounded-md bg-[var(--surface)] px-3 py-2">
+                      <div key={key} className="flex items-center justify-between rounded-sm bg-[var(--surface)] px-3 py-2">
                         <span className="text-sm text-[var(--foreground-muted)]">{key}</span>
                         <span className="font-medium text-[var(--foreground)]">{String(value)}</span>
                       </div>

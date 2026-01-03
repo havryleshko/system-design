@@ -9,14 +9,17 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@sentry/nextjs": "^8.0.0",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.57.4",
+    "import-in-the-middle": "^1.15.0",
     "next": "16.0.7",
     "react": "19.1.2",
     "react-dom": "19.1.2",
     "react-markdown": "^10.1.0",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.0",
+    "require-in-the-middle": "^7.5.2",
     "resend": "^6.6.0",
     "stripe": "^16.4.0"
   },

@@ -1,9 +1,19 @@
 import logging
+import os
 import sys
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from app.agent.system_design.graph import _load_checkpointer_async
 from app.routes.runs import runs_router
 from app.routes.threads import threads_router
+
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+except ModuleNotFoundError:
+    # Sentry is optional in some dev/test environments.
+    sentry_sdk = None  # type: ignore[assignment]
+    FastApiIntegration = None  # type: ignore[assignment]
 
 # Configure logging to output to stdout
 logging.basicConfig(
@@ -17,8 +27,36 @@ logging.getLogger("app").setLevel(logging.DEBUG)
 logging.getLogger("app.routes.threads").setLevel(logging.DEBUG)
 logging.getLogger("app.services.threads").setLevel(logging.DEBUG)
 
+SENTRY_DSN = os.getenv("SENTRY_DSN") or ""
+if SENTRY_DSN and sentry_sdk is not None and FastApiIntegration is not None:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("SENTRY_RELEASE") or None,
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
+        profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
+        integrations=[FastApiIntegration()],
+        send_default_pii=False,
+    )
+
 app = FastAPI()
 logger = logging.getLogger("app.main")
+
+# CORS is required for browser clients (Vercel app.systesign.com -> api.systesign.com).
+_cors_raw = os.getenv("CORS_ALLOW_ORIGINS", "")
+cors_allow_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] or [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "https://app.systesign.com",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def health():

@@ -1,4 +1,11 @@
-export const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+// NOTE:
+// - In production (Vercel), this must be set to https://api.systesign.com
+// - If it is missing, server-side code may fall back to localhost and fail.
+export const BASE =
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  // Server-only fallback (kept for safety if someone configured BACKEND_URL instead).
+  process.env.BACKEND_URL ||
+  "http://localhost:8000";
 export const DEV_BASE_CANDIDATES: string[] = [
   "http://localhost:8000",
   "http://127.0.0.1:8000",

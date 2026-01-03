@@ -59,3 +59,15 @@ def record_node_tokens(
     entry["prompt_tokens"] = max(0, entry.get("prompt_tokens", 0) + safe_prompt)
     entry["completion_tokens"] = max(0, entry.get("completion_tokens", 0) + safe_completion)
     entry["total_tokens"] = max(0, entry.get("total_tokens", 0) + safe_total)
+
+
+def get_total_tokens(run_id: str) -> int:
+    """Best-effort total tokens for a run (in-memory, process-local)."""
+    if not run_id:
+        return 0
+    nodes = _TOKEN_USAGE.get(run_id, {}) or {}
+    total = 0
+    for entry in nodes.values():
+        if isinstance(entry, dict):
+            total += int(entry.get("total_tokens", 0) or 0)
+    return max(0, total)

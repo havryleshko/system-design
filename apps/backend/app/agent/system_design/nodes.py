@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
     create_client = None
 
 try:
-    from app.storage.memory import add_event, record_node_tokens
+    from app.storage.memory import add_event, record_node_tokens, get_total_tokens
 except ImportError:
     from app.storage.memory import add_event
 
@@ -30,6 +30,9 @@ except ImportError:
         total_tokens: int,
     ) -> None:
             return None
+
+    def get_total_tokens(run_id: str) -> int:
+        return 0
 from app.schemas.runs import RunEvent
 try:
     from app.services.langgraph_store import (
@@ -482,7 +485,10 @@ def normalise_architecture(raw: Any, *, goal: str, design_brief: str) -> Dict[st
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
     model_name = model or os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
-    return ChatOpenAI(model=model_name)
+    # Max output tokens is a practical guardrail; total budget is enforced separately.
+    max_out = int(os.getenv("CHAT_OPENAI_MAX_OUTPUT_TOKENS", "1200"))
+    temperature = float(os.getenv("CHAT_OPENAI_TEMPERATURE", "0.2"))
+    return ChatOpenAI(model=model_name, max_tokens=max_out, temperature=temperature)
 
 def to_message(x: any) -> BaseMessage:
     if isinstance(x, BaseMessage):
@@ -655,6 +661,12 @@ def log_token_usage(run_id: str, node: str, response: BaseMessage) -> None:
         }
     ))
     record_node_tokens(run_id, node, prompt_tokens, completion_tokens, total)
+
+    # Hard budget guardrail (MVP): abort runs that exceed max total tokens.
+    limit = int(os.getenv("RUN_MAX_TOTAL_TOKENS", "20000") or "20000")
+    current = get_total_tokens(run_id)
+    if limit > 0 and current > limit:
+        raise RuntimeError(f"Token budget exceeded: {current} > {limit}")
 
 
 
@@ -1967,6 +1979,7 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
 
     # Call LLM with retry logic
     max_retries = 2
+    architecture: dict[str, Any] = {}
     for attempt in range(max_retries + 1):
         try:
             brain = make_brain()
@@ -2013,10 +2026,10 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
                 notes.append(f"Attempt {attempt + 1} validation failed: {validation_errors}")
                 # Add stronger instruction for retry
                 prompt += f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n" + "\n".join(validation_errors) + "\n\nFix these issues in your response."
-            continue
+                continue
             elif validation_errors:
                 notes.append(f"Validation warnings (final attempt): {validation_errors}")
-            
+                break
             notes.append(f"Generated architecture with {len(agents)} agents and {len(architecture.get('tools', []))} tools")
             break
             
@@ -2025,20 +2038,22 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
             if attempt < max_retries:
                 notes.append(f"JSON parse error on attempt {attempt + 1}, retrying")
                 prompt += "\n\nIMPORTANT: Your previous response was not valid JSON. Return ONLY a valid JSON object."
-            continue
-    else:
-                notes.append(f"JSON parse error after {max_retries + 1} attempts")
-                # Return fallback architecture
-                architecture = _build_fallback_architecture(goal, selected_patterns)
-                notes.append("Using fallback architecture due to parse errors")
-                break
-                
+                continue
+            notes.append(f"JSON parse error after {max_retries + 1} attempts")
+            architecture = _build_fallback_architecture(goal, selected_patterns)
+            notes.append("Using fallback architecture due to parse errors")
+            break
         except Exception as e:
             logger.warning(f"LLM call failed in architecture_generator_node: {e}")
             notes.append(f"LLM error: {str(e)[:100]}")
             architecture = _build_fallback_architecture(goal, selected_patterns)
             notes.append("Using fallback architecture due to LLM error")
             break
+    else:
+        # Loop exhausted without break (shouldn't normally happen but keep defensive fallback)
+        if not architecture:
+            architecture = _build_fallback_architecture(goal, selected_patterns)
+            notes.append("Fallback architecture generated after retries exhausted")
     
     result = {
         "status": "completed" if architecture.get("agents") else "skipped",
@@ -2234,7 +2249,7 @@ Return ONLY the Mermaid code, no markdown code blocks or explanation."""
             # Remove first line (```mermaid or ```) and last line (```)
             if lines[-1].strip() == "```":
                 mermaid_text = "\n".join(lines[1:-1])
-    else:
+        else:
                 mermaid_text = "\n".join(lines[1:])
         
         notes.append(f"Generated {mermaid_text.split()[0] if mermaid_text else 'unknown'} diagram with LLM")
@@ -2911,11 +2926,11 @@ def evals_agent(state: State) -> Dict[str, any]:
     # Aggregate notes
     if isinstance(telemetry_result, dict):
         notes = telemetry_result.get("notes")
-            if isinstance(notes, list):
-                for note in notes:
-                    eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note)
-            elif notes:
-                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
+        if isinstance(notes, list):
+            for note in notes:
+                eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note)
+        elif notes:
+            eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
 
     # Determine overall status
     eval_state["status"] = telemetry_status if telemetry_status else "completed"
