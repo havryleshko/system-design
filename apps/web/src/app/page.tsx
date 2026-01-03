@@ -83,7 +83,9 @@ export default async function Home({ searchParams }: HomeProps) {
 
       <header className="landing-nav">
         <div className="landing-brand">
-          <span className="brand-mark" />
+          <span className="brand-mark" aria-hidden="true">
+            S
+          </span>
           <span className="brand-name">Systesign</span>
         </div>
         <div className="landing-nav-actions">
