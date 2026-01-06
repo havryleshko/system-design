@@ -9,6 +9,7 @@ def overwrite(_: Any, updated: Any) -> Any:
 class State(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
     stream_messages: Annotated[list[BaseMessage], overwrite]
+    reasoning_trace: Annotated[list[dict], operator.add]
     goal: str
     clarifier_done: Annotated[bool, overwrite]
     plan: str

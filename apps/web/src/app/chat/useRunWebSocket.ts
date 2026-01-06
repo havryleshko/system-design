@@ -131,9 +131,9 @@ export function useRunWebSocket() {
           return;
         }
         
-        const url = buildRunStreamUrl({ threadId, runId, token });
-        console.log("[WS Client] Opening WebSocket to:", url.substring(0, 100) + "...");
-        const ws = new WebSocket(url);
+        const url = buildRunStreamUrl({ threadId, runId });
+        // Authenticate via Sec-WebSocket-Protocol (browsers can't set Authorization headers for WS).
+        const ws = new WebSocket(url, ["bearer", token]);
         socketRef.current = ws;
 
         ws.onmessage = handleMessage;

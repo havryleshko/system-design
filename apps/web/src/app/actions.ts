@@ -31,6 +31,19 @@ type ThreadListItem = {
   created_at: string | null;
 };
 
+async function extractBackendError(response: Response): Promise<string | null> {
+  // FastAPI errors are usually `{ detail: string }`
+  try {
+    const data = (await response.json()) as { detail?: unknown; error?: unknown; message?: unknown };
+    const detail = typeof data?.detail === "string" ? data.detail : null;
+    const error = typeof data?.error === "string" ? data.error : null;
+    const message = typeof data?.message === "string" ? data.message : null;
+    return detail || error || message;
+  } catch {
+    return null;
+  }
+}
+
 function makeRequestId(prefix: string): string {
   if (typeof randomUUID === "function") return randomUUID();
   const rand = Math.random().toString(16).slice(2);
@@ -83,7 +96,8 @@ export async function createThread(token: string): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to create thread: ${response.statusText}`);
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Failed to create thread: ${msg}`);
   }
 
   const data = (await response.json()) as { thread_id?: string };
@@ -101,7 +115,8 @@ export async function startRun(threadId: string, input: string, token: string): 
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to start run: ${response.statusText}`);
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Failed to start run: ${msg}`);
   }
 
   const data = (await response.json()) as { run_id?: string };
@@ -120,7 +135,8 @@ export async function getThreadState(threadId: string, token: string): Promise<T
     if (response.status === 404) {
       return null;
     }
-    throw new Error(`Failed to get thread state: ${response.statusText}`);
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Failed to get thread state: ${msg}`);
   }
 
   return (await response.json()) as ThreadState | null;
@@ -135,7 +151,8 @@ export async function listThreads(token: string): Promise<ThreadListItem[]> {
     if (response.status === 401) {
       return [];
     }
-    throw new Error(`Failed to list threads: ${response.statusText}`);
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Failed to list threads: ${msg}`);
   }
 
   const data = (await response.json()) as { threads?: ThreadListItem[] };

@@ -4,7 +4,6 @@ import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.agent.system_design.graph import _load_checkpointer_async
-from app.routes.runs import runs_router
 from app.routes.threads import threads_router
 
 try:
@@ -16,16 +15,18 @@ except ModuleNotFoundError:
     FastApiIntegration = None  # type: ignore[assignment]
 
 # Configure logging to output to stdout
+_log_level_name = (os.getenv("LOG_LEVEL") or "INFO").upper()
+_log_level = getattr(logging, _log_level_name, logging.INFO)
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    level=_log_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
-# Set specific loggers
-logging.getLogger("app").setLevel(logging.DEBUG)
-logging.getLogger("app.routes.threads").setLevel(logging.DEBUG)
-logging.getLogger("app.services.threads").setLevel(logging.DEBUG)
+# Set specific loggers (inherit from LOG_LEVEL unless explicitly overridden)
+logging.getLogger("app").setLevel(_log_level)
+logging.getLogger("app.routes.threads").setLevel(_log_level)
+logging.getLogger("app.services.threads").setLevel(_log_level)
 
 SENTRY_DSN = os.getenv("SENTRY_DSN") or ""
 if SENTRY_DSN and sentry_sdk is not None and FastApiIntegration is not None:
@@ -74,5 +75,4 @@ async def checkpointer_health():
         logger.exception("Checkpointer health failed")
         raise HTTPException(status_code=503, detail=f"checkpointer unavailable: {exc}") from exc
 
-app.include_router(runs_router)
 app.include_router(threads_router)

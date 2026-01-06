@@ -13,7 +13,8 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const redirectTo = searchParams.get("redirect") || "/chat";
+  const rawRedirectTo = searchParams.get("redirect") || "/chat";
+  const redirectTo = rawRedirectTo.startsWith("/") ? rawRedirectTo : "/chat";
   const callbackUrl = useMemo(() => {
     // Dynamically detect the current origin when running in browser
     // This ensures localhost works correctly even if NEXT_PUBLIC_APP_URL is set
@@ -32,7 +33,7 @@ function LoginContent() {
       params.set("localhost_origin", baseUrl);
     }
     
-    const url = `${baseUrl.replace(/\/$/, "")}?${params.toString()}`;
+    const url = `${baseUrl.replace(/\/$/, "")}/auth/callback?${params.toString()}`;
     
     // Debug logging to help diagnose redirect issues
     if (typeof window !== "undefined") {

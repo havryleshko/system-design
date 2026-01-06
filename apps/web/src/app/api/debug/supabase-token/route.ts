@@ -5,7 +5,7 @@ import { createServerSupabase } from "@/utils/supabase/server";
 const DEBUG_ENABLED = process.env.SUPABASE_TOKEN_DEBUG === "true";
 
 export async function GET() {
-  if (!DEBUG_ENABLED) {
+  if (!DEBUG_ENABLED || process.env.NODE_ENV === "production") {
     return NextResponse.json({ error: "Disabled" }, { status: 404 });
   }
 
