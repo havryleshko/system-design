@@ -3,6 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 
 export async function POST(req: NextRequest) {
   try {
+    const expectedSecret = process.env.RUN_COMPLETE_WEBHOOK_SECRET || "";
+    const providedSecret = req.headers.get("x-webhook-secret") || "";
+    if (!expectedSecret || providedSecret !== expectedSecret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
     // Lazily initialize Supabase at request time to avoid build-time env access
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

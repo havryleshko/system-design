@@ -1558,10 +1558,42 @@ Only return the JSON array, no other text."""
                     "mermaid_template": p.get("mermaid_template", ""),
                 })
     
+    # Explainability fields (for post-hoc reasoning trace)
+    what = f"Selected {len(selected_patterns)} agentic pattern(s)"
+    why_parts: list[str] = []
+    if domain_hints:
+        hint_domains = [h.get("domain") for h in domain_hints if isinstance(h, dict) and h.get("domain")]
+        if hint_domains:
+            why_parts.append(f"Goal keywords matched domains: {', '.join(hint_domains[:2])}")
+    if plan_summary:
+        why_parts.append("Plan summary used as selection context")
+    if selected_patterns:
+        why_parts.append(f"Chosen patterns: {', '.join([p.get('name','') for p in selected_patterns if isinstance(p, dict) and p.get('name')][:3])}")
+    why = "; ".join([p for p in why_parts if p]) or None
+
+    alternatives_considered: list[dict] = []
+    if domain_hints:
+        suggested: list[str] = []
+        for hint in domain_hints[:2]:
+            if isinstance(hint, dict):
+                for pid in hint.get("primary_patterns", [])[:5]:
+                    if pid and pid not in suggested:
+                        suggested.append(pid)
+        chosen_ids = {p.get("id") for p in selected_patterns if isinstance(p, dict)}
+        for pid in suggested:
+            if pid and pid not in chosen_ids:
+                alternatives_considered.append(
+                    {"id": pid, "reason": "Suggested by domain template keywords but not selected"}
+                )
+        alternatives_considered = alternatives_considered[:6]
+
     result = {
         "status": "completed" if selected_patterns else "skipped",
         "selected_patterns": selected_patterns,
         "notes": notes,
+        "what": what,
+        "why": why,
+        "alternatives_considered": alternatives_considered or None,
     }
     
     # Store result in research_state.nodes for research_agent to aggregate
@@ -2059,6 +2091,13 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
         "status": "completed" if architecture.get("agents") else "skipped",
         "architecture": architecture,
         "notes": notes,
+        "what": f"Generated architecture with {len(architecture.get('agents', []) if isinstance(architecture, dict) else [])} agent(s)",
+        "why": (
+            f"Used selected patterns: {', '.join([p.get('name','') for p in selected_patterns[:3] if isinstance(p, dict) and p.get('name')])}"
+            if selected_patterns
+            else "No patterns were selected; generated architecture using best judgment"
+        ),
+        "alternatives_considered": None,
     }
     
     # Store result in design_state.architecture for design_agent to aggregate
@@ -2288,6 +2327,16 @@ Return ONLY the Mermaid code, no markdown code blocks or explanation."""
         "diagram_image_url": diagram_image_url,
         "graph": {"nodes": graph_nodes, "edges": graph_edges},
         "notes": notes,
+        "what": "Generated Mermaid diagram",
+        "why": (
+            f"Selected diagram type '{(mermaid_text.split()[0] if mermaid_text else 'unknown')}' based on architecture structure and control flow."
+            if mermaid_text
+            else None
+        ),
+        "alternatives_considered": [
+            {"type": "flowchart TD", "reason": "Best for control-flow and decision routing"},
+            {"type": "sequenceDiagram", "reason": "Best for temporal ordering and message passing"},
+        ],
     }
     
     # Store result in design_state.diagram for design_agent to aggregate

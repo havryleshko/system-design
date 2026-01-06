@@ -1,55 +1,113 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 type ReasoningTabProps = {
   query: string;
   values: Record<string, unknown> | null;
 };
 
-type CollapsibleSectionProps = {
-  title: string;
-  icon: React.ReactNode;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
+type ReasoningEvent = {
+  ts_iso?: string;
+  node?: string;
+  agent?: string;
+  phase?: string;
+  status?: string;
+  duration_ms?: number;
+  kind?: string;
+  what?: string;
+  why?: string;
+  alternatives_considered?: unknown;
+  inputs?: unknown;
+  outputs?: unknown;
+  debug?: unknown;
+  error?: string;
 };
 
-// Helper to safely get string value
-function getString(value: unknown): string | null {
-  if (typeof value === "string" && value) return value;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function coerceEvents(values: Record<string, unknown>): ReasoningEvent[] {
+  const raw = values.reasoning_trace;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isRecord) as ReasoningEvent[];
+}
+
+function safeText(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value;
   return null;
 }
 
-// Helper to safely get array
-function getArray(value: unknown): unknown[] | null {
-  if (Array.isArray(value) && value.length > 0) return value;
+function summarizeNotes(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const t = safeText(item);
+      if (t) return t;
+    }
+  }
   return null;
 }
 
-// Helper to check if object has keys
-function hasKeys(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && Object.keys(value).length > 0;
+function fallbackSummary(ev: ReasoningEvent): string | null {
+  const error = safeText(ev.error);
+  if (error) return error;
+  const out = isRecord(ev.outputs) ? (ev.outputs as Record<string, unknown>) : null;
+  const reason = out ? safeText(out.reason) : null;
+  const notes = out ? summarizeNotes(out.notes) : null;
+
+  const highlightsCount = out && typeof out.highlights_count === "number" ? out.highlights_count : null;
+  const citationsCount = out && typeof out.citations_count === "number" ? out.citations_count : null;
+  const risksCount = out && typeof out.risks_count === "number" ? out.risks_count : null;
+
+  const counts: string[] = [];
+  if (highlightsCount != null) counts.push(`${highlightsCount} highlight(s)`);
+  if (citationsCount != null) counts.push(`${citationsCount} citation(s)`);
+  if (risksCount != null) counts.push(`${risksCount} risk(s)`);
+
+  const bits = [reason, notes, counts.length ? counts.join(", ") : null].filter(Boolean) as string[];
+  if (bits.length) return bits.join(" — ");
+  return null;
 }
 
-function CollapsibleSection({ title, icon, defaultOpen = false, children }: CollapsibleSectionProps) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+function formatJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
+function statusColor(status: string | undefined) {
+  const s = (status || "").toLowerCase();
+  if (s === "failed") return "bg-red-500/10 text-red-400 border-red-500/20";
+  if (s === "completed") return "bg-green-500/10 text-green-400 border-green-500/20";
+  if (s === "skipped") return "bg-yellow-500/10 text-yellow-400 border-yellow-500/20";
+  return "bg-[var(--background)] text-[var(--foreground-muted)] border-[var(--border)]";
+}
+
+function CollapsibleSection({
+  title,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(Boolean(defaultOpen));
   return (
     <div className="rounded border border-[var(--border)] bg-[var(--surface)]">
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => setOpen(!open)}
         className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[var(--background)]"
       >
-        <div className="flex items-center gap-3">
-          <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-[var(--background)] text-[var(--accent)]">
-            {icon}
-          </span>
-          <span className="font-medium text-[var(--foreground)]">{title}</span>
-        </div>
+        <span className="font-medium text-[var(--foreground)]">{title}</span>
         <svg
           viewBox="0 0 24 24"
-          className={`h-4 w-4 text-[var(--foreground-muted)] transition-transform ${isOpen ? "rotate-180" : ""}`}
+          className={`h-4 w-4 text-[var(--foreground-muted)] transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
@@ -57,42 +115,207 @@ function CollapsibleSection({ title, icon, defaultOpen = false, children }: Coll
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
-      {isOpen && (
-        <div className="border-t border-[var(--border)] px-4 py-3">
-          {children}
+      {open ? <div className="border-t border-[var(--border)] px-4 py-3">{children}</div> : null}
+    </div>
+  );
+}
+
+function EventCard({ ev }: { ev: ReasoningEvent }) {
+  const status = (ev.status || "unknown").toLowerCase();
+  const title = ev.node || "node";
+  const time = ev.ts_iso ? new Date(ev.ts_iso).toLocaleString() : null;
+  const duration = typeof ev.duration_ms === "number" ? `${ev.duration_ms}ms` : null;
+
+  const what = safeText(ev.what);
+  const why = safeText(ev.why);
+  const error = safeText(ev.error);
+  const fallback = !what && !why ? fallbackSummary(ev) : null;
+
+  return (
+    <div className="rounded border border-[var(--border)] bg-[var(--background)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-[var(--foreground)]">{title}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-xs ${statusColor(status)}`}>{status}</span>
+          {ev.kind && ev.kind !== "node_end" ? (
+            <span className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-2 py-0.5 text-xs text-[var(--foreground-muted)]">
+              {ev.kind}
+            </span>
+          ) : null}
         </div>
-      )}
+        <div className="flex items-center gap-3 text-xs text-[var(--foreground-muted)]">
+          {duration ? <span>{duration}</span> : null}
+          {time ? <span>{time}</span> : null}
+        </div>
+      </div>
+
+      <div className="px-3 pb-3">
+        {what || why || error || fallback ? (
+          <div className="mt-1 space-y-2">
+            {what ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">What</div>
+                <div className="text-sm text-[var(--foreground)]">{what}</div>
+              </div>
+            ) : null}
+            {why ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Why</div>
+                <div className="text-sm text-[var(--foreground)]">{why}</div>
+              </div>
+            ) : null}
+            {!what && !why && fallback ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Summary</div>
+                <div className="text-sm text-[var(--foreground)]">{fallback}</div>
+              </div>
+            ) : null}
+            {error ? (
+              <div className="rounded border border-red-500/20 bg-red-500/10 p-2 text-sm text-red-200">
+                {error}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <details className="mt-3">
+          <summary className="cursor-pointer select-none text-sm text-[var(--accent)] hover:underline">
+            Details
+          </summary>
+          <div className="mt-2 grid gap-3">
+            {ev.alternatives_considered != null ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                  Alternatives
+                </div>
+                <pre className="mt-1 max-h-72 overflow-auto rounded bg-[var(--surface)] p-2 text-xs text-[var(--foreground)]">
+                  {formatJson(ev.alternatives_considered)}
+                </pre>
+              </div>
+            ) : null}
+            {ev.inputs != null ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Inputs</div>
+                <pre className="mt-1 max-h-72 overflow-auto rounded bg-[var(--surface)] p-2 text-xs text-[var(--foreground)]">
+                  {formatJson(ev.inputs)}
+                </pre>
+              </div>
+            ) : null}
+            {ev.outputs != null ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Outputs</div>
+                <pre className="mt-1 max-h-72 overflow-auto rounded bg-[var(--surface)] p-2 text-xs text-[var(--foreground)]">
+                  {formatJson(ev.outputs)}
+                </pre>
+              </div>
+            ) : null}
+            {ev.debug != null ? (
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Debug</div>
+                <pre className="mt-1 max-h-72 overflow-auto rounded bg-[var(--surface)] p-2 text-xs text-[var(--foreground)]">
+                  {formatJson(ev.debug)}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        </details>
+      </div>
     </div>
   );
 }
 
-function DataItem({ label, value }: { label: string; value: string | number | boolean | null | undefined }) {
-  if (value === null || value === undefined || value === "") return null;
-  return (
-    <div className="flex gap-2 text-sm">
-      <span className="font-medium text-[var(--foreground-muted)]">{label}:</span>
-      <span className="text-[var(--foreground)]">{String(value)}</span>
-    </div>
-  );
-}
+function AgentPanel({ title, events }: { title: string; events: ReasoningEvent[] }) {
+  const failures = events.filter((e) => (e.status || "").toLowerCase() === "failed" || e.kind === "run_failed");
+  const decisions = events
+    .filter((e) => safeText(e.what) || safeText(e.why))
+    .slice(-3)
+    .reverse();
 
-function ListItems({ items, emptyText = "No items" }: { items: unknown[] | null | undefined; emptyText?: string }) {
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    return <p className="text-sm text-[var(--foreground-muted)]">{emptyText}</p>;
-  }
   return (
-    <ul className="space-y-1 text-sm">
-      {items.map((item, idx) => (
-        <li key={idx} className="flex items-start gap-2 text-[var(--foreground)]">
-          <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[var(--accent)]" />
-          <span>{typeof item === "object" ? JSON.stringify(item) : String(item)}</span>
-        </li>
-      ))}
-    </ul>
+    <CollapsibleSection title={title} defaultOpen={title === "Orchestrator"}>
+      {events.length === 0 ? <p className="text-sm text-[var(--foreground-muted)]">No events.</p> : null}
+
+      {failures.length > 0 || decisions.length > 0 ? (
+        <div className="mb-3 rounded border border-[var(--border)] bg-[var(--surface)] p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Summary</div>
+          <div className="mt-2 space-y-2">
+            {failures.slice(0, 3).map((e, idx) => (
+              <div key={`f-${idx}`} className="text-sm text-red-200">
+                {safeText(e.error) || safeText(e.what) || "Failure"}
+              </div>
+            ))}
+            {decisions.map((e, idx) => (
+              <div key={`d-${idx}`} className="text-sm text-[var(--foreground)]">
+                {safeText(e.what) || safeText(e.why) || "Decision"}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="space-y-3">
+        {events.map((ev, idx) => (
+          <EventCard key={`${ev.ts_iso || "t"}-${ev.node || "n"}-${idx}`} ev={ev} />
+        ))}
+      </div>
+    </CollapsibleSection>
   );
 }
 
 export default function ReasoningTab({ query, values }: ReasoningTabProps) {
+  const [showSkipped, setShowSkipped] = useState(false);
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const trace = useMemo(() => (values ? coerceEvents(values) : []), [values]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return trace
+      .slice()
+      .sort((a, b) => {
+        const ta = a.ts_iso ? Date.parse(a.ts_iso) : 0;
+        const tb = b.ts_iso ? Date.parse(b.ts_iso) : 0;
+        return ta - tb;
+      })
+      .filter((e) => (showSkipped ? true : (e.status || "").toLowerCase() !== "skipped"))
+      .filter((e) => (failuresOnly ? (e.status || "").toLowerCase() === "failed" || e.kind === "run_failed" : true))
+      .filter((e) => {
+        if (!q) return true;
+        const hay = [
+          e.node,
+          e.agent,
+          e.phase,
+          e.status,
+          e.kind,
+          safeText(e.what),
+          safeText(e.why),
+          safeText(e.error),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+  }, [trace, showSkipped, failuresOnly, search]);
+
+  const byAgent = useMemo(() => {
+    const groups: Record<string, ReasoningEvent[]> = {
+      Orchestrator: [],
+      Planner: [],
+      Research: [],
+      Design: [],
+      Critic: [],
+      Evals: [],
+      Unknown: [],
+    };
+    for (const ev of filtered) {
+      const agent = ev.agent || "Unknown";
+      (groups[agent] || groups.Unknown).push(ev);
+    }
+    return groups;
+  }, [filtered]);
+
   if (!values) {
     return (
       <div className="flex flex-1 items-center justify-center py-12">
@@ -101,407 +324,59 @@ export default function ReasoningTab({ query, values }: ReasoningTabProps) {
     );
   }
 
-  const planState = (values.plan_state as Record<string, unknown>) || {};
-  const planScope = (values.plan_scope as Record<string, unknown>) || {};
-  const researchState = (values.research_state as Record<string, unknown>) || {};
-  const designState = (values.design_state as Record<string, unknown>) || {};
-  const criticState = (values.critic_state as Record<string, unknown>) || {};
-  const evalState = (values.eval_state as Record<string, unknown>) || {};
-
-  // Extract research nodes
-  const researchNodes = (researchState.nodes as Record<string, Record<string, unknown>>) || {};
-  const knowledgeBase = researchNodes.knowledge_base || {};
-  const githubApi = researchNodes.github_api || {};
-  const webSearch = researchNodes.web_search || {};
-
-  // Extract design components
-  const componentsData = (designState.components as Record<string, unknown>) || {};
-  const components = getArray(componentsData.components) || [];
-  const costsData = (designState.costs as Record<string, unknown>) || {};
-  const diagramData = (designState.diagram as Record<string, unknown>) || {};
-
-  // Extract critic data
-  const reviewData = (criticState.review as Record<string, unknown>) || {};
-  const hallucinationData = (criticState.hallucination as Record<string, unknown>) || {};
-  const riskData = (criticState.risk as Record<string, unknown>) || {};
-
-  // Extract eval data
-  const telemetryData = (evalState.telemetry as Record<string, unknown>) || {};
-  const scoresData = (evalState.scores as Record<string, unknown>) || {};
-
-  // Extract typed values
-  const planSummary = getString(planState.summary);
-  const planSteps = getArray(planState.steps);
-  const planRisks = getArray(planState.risks);
-  const scopeIssues = getArray(planScope.issues);
-
-  const kbStatus = getString(knowledgeBase.status);
-  const kbHighlights = getArray(knowledgeBase.highlights);
-  const ghStatus = getString(githubApi.status);
-  const ghHighlights = getArray(githubApi.highlights);
-  const wsStatus = getString(webSearch.status);
-  const wsHighlights = getArray(webSearch.highlights);
-  const wsCitations = getArray(webSearch.citations);
-
-  const diagramStatus = getString(diagramData.status);
-  const reviewStatus = getString(reviewData.status);
-  const reviewNotes = reviewData.notes;
-  const hallucinationStatus = getString(hallucinationData.status);
-  const hallucinationIssues = getArray(hallucinationData.issues);
-  const riskStatus = getString(riskData.status);
-  const riskRisks = getArray(riskData.risks);
-
-  const telemetryStatus = getString(telemetryData.status);
-  const telemetryMetrics = telemetryData.telemetry;
-  const scoresStatus = getString(scoresData.status);
-  const scoresMetrics = scoresData.scores;
-
   return (
-    <div className="reasoning-tab flex flex-col gap-4">
-      {/* Query Section */}
+    <div className="flex flex-col gap-4">
       <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-        <div className="mb-2 flex items-center gap-2">
-          <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--accent)]" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-          </svg>
-          <span className="font-semibold text-[var(--foreground)]">Query</span>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Query</div>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-[var(--foreground)]">{query}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
+              <input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} />
+              Show skipped
+            </label>
+            <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
+              <input type="checkbox" checked={failuresOnly} onChange={(e) => setFailuresOnly(e.target.checked)} />
+              Only failures
+            </label>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search trace…"
+              className="h-9 w-56 rounded border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-muted)]"
+            />
+          </div>
         </div>
-        <p className="whitespace-pre-wrap text-sm text-[var(--foreground)]">{query}</p>
+
+        <div className="text-xs text-[var(--foreground-muted)]">
+          {filtered.length} event(s){trace.length !== filtered.length ? ` (filtered from ${trace.length})` : ""}
+        </div>
       </div>
 
-      {/* Planner Section */}
-      <CollapsibleSection
-        title="Planner Agent"
-        defaultOpen={true}
-        icon={
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
-            <rect x="9" y="3" width="6" height="4" rx="1" />
-            <path d="M9 12h6" />
-            <path d="M9 16h6" />
-          </svg>
-        }
-      >
-        <div className="space-y-4">
-          {planSummary && (
-            <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Summary</h4>
-              <p className="text-sm text-[var(--foreground)]">{planSummary}</p>
-            </div>
-          )}
-          {planSteps && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Steps</h4>
-              <div className="space-y-2">
-                {(planSteps as Array<Record<string, unknown>>).map((step, idx) => (
-                  <div key={idx} className="rounded-sm bg-[var(--background)] p-3">
-                    <div className="flex items-start gap-2">
-                      <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/20 text-xs font-semibold text-[var(--accent)]">
-                        {idx + 1}
-                      </span>
-                      <div>
-                        <p className="font-medium text-[var(--foreground)]">{String(step.title || "Step")}</p>
-                        {step.detail != null && (
-                          <p className="mt-1 text-sm text-[var(--foreground-muted)]">{String(step.detail)}</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {planRisks && (
-            <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Risks</h4>
-              <ListItems items={planRisks} />
-            </div>
-          )}
-          {scopeIssues && (
-            <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Issues</h4>
-              <ListItems items={scopeIssues} />
-            </div>
-          )}
+      {trace.length === 0 ? (
+        <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
+          <p className="text-sm text-[var(--foreground-muted)]">No reasoning trace available for this run yet.</p>
         </div>
-      </CollapsibleSection>
+      ) : null}
 
-      {/* Research Section */}
-      <CollapsibleSection
-        title="Research Agent"
-        icon={
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" />
-          </svg>
-        }
-      >
-        <div className="space-y-4">
-          {/* Knowledge Base */}
-          {hasKeys(knowledgeBase) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Knowledge Base</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {kbStatus && <DataItem label="Status" value={kbStatus} />}
-                {kbHighlights && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Highlights:</span>
-                    <ListItems items={kbHighlights} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+      <div className="space-y-4">
+        <AgentPanel title="Orchestrator" events={byAgent.Orchestrator} />
+        <AgentPanel title="Planner" events={byAgent.Planner} />
+        <AgentPanel title="Research" events={byAgent.Research} />
+        <AgentPanel title="Design" events={byAgent.Design} />
+        <AgentPanel title="Critic" events={byAgent.Critic} />
+        <AgentPanel title="Evals" events={byAgent.Evals} />
+        {byAgent.Unknown.length > 0 ? <AgentPanel title="Unknown" events={byAgent.Unknown} /> : null}
+      </div>
 
-          {/* GitHub API */}
-          {hasKeys(githubApi) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">GitHub API</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {ghStatus && <DataItem label="Status" value={ghStatus} />}
-                {ghHighlights && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Highlights:</span>
-                    <ListItems items={ghHighlights} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Web Search */}
-          {hasKeys(webSearch) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Web Search</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {wsStatus && <DataItem label="Status" value={wsStatus} />}
-                {wsHighlights && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Highlights:</span>
-                    <ListItems items={wsHighlights} />
-                  </div>
-                )}
-                {wsCitations && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Citations:</span>
-                    <ul className="mt-1 space-y-1">
-                      {(wsCitations as Array<Record<string, unknown>>).slice(0, 6).map((cite, idx) => (
-                        <li key={idx} className="text-sm">
-                          {cite.url ? (
-                            <a
-                              href={String(cite.url)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[var(--accent)] hover:underline"
-                            >
-                              {String(cite.title || cite.url)}
-                            </a>
-                          ) : (
-                            <span className="text-[var(--foreground)]">{String(cite.title || "Source")}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {!hasKeys(knowledgeBase) && !hasKeys(githubApi) && !hasKeys(webSearch) && (
-            <p className="text-sm text-[var(--foreground-muted)]">No research data available.</p>
-          )}
-        </div>
-      </CollapsibleSection>
-
-      {/* Design Section */}
-      <CollapsibleSection
-        title="Design Agent"
-        icon={
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <path d="M3 9h18" />
-            <path d="M9 21V9" />
-          </svg>
-        }
-      >
-        <div className="space-y-4">
-          {/* Components */}
-          {components.length > 0 && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Components</h4>
-              <div className="space-y-2">
-                {(components as Array<Record<string, unknown>>).slice(0, 10).map((comp, idx) => (
-                  <div key={idx} className="rounded-sm bg-[var(--background)] p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-[var(--foreground)]">
-                        {String(comp.name || comp.id || `Component ${idx + 1}`)}
-                      </span>
-                      {comp.type != null && (
-                        <span className="rounded-full bg-[var(--accent)]/10 px-2 py-0.5 text-xs text-[var(--accent)]">
-                          {String(comp.type)}
-                        </span>
-                      )}
-                    </div>
-                    {comp.description != null && (
-                      <p className="mt-1 text-sm text-[var(--foreground-muted)]">{String(comp.description)}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Costs */}
-          {hasKeys(costsData) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Cost Estimates</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {Object.entries(costsData).map(([key, value]) => (
-                  <DataItem key={key} label={key} value={typeof value === "object" ? JSON.stringify(value) : String(value)} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Diagram */}
-          {diagramStatus && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Diagram</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                <DataItem label="Status" value={diagramStatus} />
-              </div>
-            </div>
-          )}
-
-          {components.length === 0 && !hasKeys(costsData) && (
-            <p className="text-sm text-[var(--foreground-muted)]">No design data available.</p>
-          )}
-        </div>
-      </CollapsibleSection>
-
-      {/* Critic Section */}
-      <CollapsibleSection
-        title="Critic Agent"
-        icon={
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-          </svg>
-        }
-      >
-        <div className="space-y-4">
-          {/* Review */}
-          {hasKeys(reviewData) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Review</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {reviewStatus && <DataItem label="Status" value={reviewStatus} />}
-                {reviewNotes != null && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Notes:</span>
-                    {Array.isArray(reviewNotes) ? (
-                      <ListItems items={reviewNotes} />
-                    ) : (
-                      <p className="text-sm text-[var(--foreground)]">{String(reviewNotes)}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Hallucination Check */}
-          {hasKeys(hallucinationData) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Hallucination Check</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {hallucinationStatus && <DataItem label="Status" value={hallucinationStatus} />}
-                {hallucinationIssues && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Issues Found:</span>
-                    <ListItems items={hallucinationIssues} emptyText="No issues found" />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Risk Analysis */}
-          {hasKeys(riskData) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Risk Analysis</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {riskStatus && <DataItem label="Status" value={riskStatus} />}
-                {riskRisks && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-[var(--foreground-muted)]">Risks:</span>
-                    <ListItems items={riskRisks} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {!hasKeys(reviewData) && !hasKeys(hallucinationData) && !hasKeys(riskData) && (
-            <p className="text-sm text-[var(--foreground-muted)]">No critic data available.</p>
-          )}
-        </div>
-      </CollapsibleSection>
-
-      {/* Evals Section */}
-      <CollapsibleSection
-        title="Evals Agent"
-        icon={
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
-            <path d="M22 4L12 14.01l-3-3" />
-          </svg>
-        }
-      >
-        <div className="space-y-4">
-          {/* Telemetry */}
-          {hasKeys(telemetryData) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Telemetry</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {telemetryStatus && <DataItem label="Status" value={telemetryStatus} />}
-                {hasKeys(telemetryMetrics) && (
-                  <div className="mt-2 space-y-1">
-                    {Object.entries(telemetryMetrics).map(([key, value]) => (
-                      <DataItem key={key} label={key} value={typeof value === "object" ? JSON.stringify(value) : String(value)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Scores */}
-          {hasKeys(scoresData) && (
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">Scores</h4>
-              <div className="rounded-sm bg-[var(--background)] p-3">
-                {scoresStatus && <DataItem label="Status" value={scoresStatus} />}
-                {hasKeys(scoresMetrics) && (
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    {Object.entries(scoresMetrics).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between rounded-sm bg-[var(--surface)] px-3 py-2">
-                        <span className="text-sm text-[var(--foreground-muted)]">{key}</span>
-                        <span className="font-medium text-[var(--foreground)]">{String(value)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {!hasKeys(telemetryData) && !hasKeys(scoresData) && (
-            <p className="text-sm text-[var(--foreground-muted)]">No evaluation data available.</p>
-          )}
-        </div>
-      </CollapsibleSection>
+      <details className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
+        <summary className="cursor-pointer select-none text-sm text-[var(--foreground)]">Raw state (dev)</summary>
+        <pre className="mt-3 max-h-[520px] overflow-auto rounded bg-[var(--background)] p-3 text-xs text-[var(--foreground)]">
+          {formatJson(values)}
+        </pre>
+      </details>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, status
@@ -20,6 +21,8 @@ from app.auth import decode_token
 logger = logging.getLogger(__name__)
 
 threads_router = APIRouter(prefix="/threads", tags=["threads"])
+
+_DEBUG_LOGS = os.getenv("DEBUG_LOGS", "").lower() in ("1", "true", "yes", "on")
 
 
 async def get_user_id(authorization: Optional[str] = Header(None)) -> Optional[str]:
@@ -44,6 +47,8 @@ async def list_threads(user_id: Optional[str] = Depends(get_user_id)):
 
 @threads_router.post("", status_code=status.HTTP_201_CREATED, response_model=ThreadResponse)
 async def create_thread(user_id: Optional[str] = Depends(get_user_id)):
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
     thread_id = thread_service.create_thread(user_id)
     return ThreadResponse(thread_id=thread_id)
 
@@ -54,13 +59,37 @@ async def start_run(
     payload: RunStartRequest,
     user_id: Optional[str] = Depends(get_user_id),
 ):
-    run_id = thread_service.start_run(thread_id, payload.input, user_id)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    thread = thread_service.get_thread_data(thread_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    owner = thread.get("user_id")
+    if not owner or str(owner) != str(user_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        run_id = thread_service.start_run(thread_id, payload.input, user_id)
+    except RuntimeError as exc:
+        # Map quota limits to a proper status code instead of 500.
+        msg = str(exc)
+        if "Daily run limit reached" in msg:
+            raise HTTPException(status_code=429, detail=msg)
+        raise HTTPException(status_code=500, detail="Failed to start run")
+    except PermissionError:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Thread not found")
     return RunStartResponse(run_id=run_id, thread_id=thread_id)
 
 
 @threads_router.get("/{thread_id}/state", response_model=ThreadStateResponse)
-async def get_thread_state(thread_id: str):
-    state = thread_service.get_thread_state(thread_id)
+async def get_thread_state(thread_id: str, user_id: Optional[str] = Depends(get_user_id)):
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        state = thread_service.get_thread_state_for_user(thread_id, user_id)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Forbidden")
     if not state:
         raise HTTPException(status_code=404, detail="Thread not found")
     
@@ -70,67 +99,104 @@ async def get_thread_state(thread_id: str):
 @threads_router.websocket("/{thread_id}/stream")
 async def stream_thread(websocket: WebSocket, thread_id: str):
     import traceback
-    print(f"[WS] WebSocket handler called for thread {thread_id}", flush=True)
-    await websocket.accept()
-    print(f"[WS] WebSocket accepted for thread {thread_id}", flush=True)
+    # Authenticate WS using Sec-WebSocket-Protocol if provided (preferred), else fall back.
+    offered = websocket.headers.get("sec-websocket-protocol") or ""
+    offered_parts = [p.strip() for p in offered.split(",") if p.strip()]
+    token: str | None = None
+    accept_subprotocol: str | None = None
 
+    # Expected client format: new WebSocket(url, ["bearer", token])
+    try:
+        for i, part in enumerate(offered_parts):
+            if part.lower() == "bearer" and i + 1 < len(offered_parts):
+                token = offered_parts[i + 1]
+                accept_subprotocol = "bearer"
+                break
+    except Exception:
+        token = None
+        accept_subprotocol = None
+
+    # Back-compat fallbacks: query param token, then Authorization header.
     query_params = dict(websocket.query_params)
-    token = query_params.get("token")
-    run_id = query_params.get("run_id")
-    print(f"[WS] Query params - run_id: {run_id}, token present: {bool(token)}", flush=True)
-    
+    if not token:
+        token = query_params.get("token")
     if not token:
         auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1].strip()
-            print(f"[WS] Got token from auth header", flush=True)
+
+    if accept_subprotocol:
+        await websocket.accept(subprotocol=accept_subprotocol)
+    else:
+        await websocket.accept()
+
+    if _DEBUG_LOGS:
+        logger.debug("[WS] accepted websocket", extra={"thread_id": thread_id})
+
+    run_id = query_params.get("run_id")
     
     if not token:
-        print(f"[WS] Missing token, closing with 1008", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[WS] missing token", extra={"thread_id": thread_id})
         await websocket.close(code=1008, reason="Missing authorization token")
         return
     
     if not run_id:
-        print(f"[WS] Missing run_id, closing with 1008", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[WS] missing run_id", extra={"thread_id": thread_id})
         await websocket.close(code=1008, reason="Missing run_id")
         return
     
     try:
         claims = decode_token(token)
         user_id = claims.get("sub")
-        print(f"[WS] Token decoded, user_id: {user_id}", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[WS] token decoded", extra={"thread_id": thread_id})
     except Exception as exc:
-        print(f"[WS] Token decode failed: {exc}, closing with 1008", flush=True)
+        logger.info("[WS] token decode failed", extra={"thread_id": thread_id})
         await websocket.close(code=1008, reason=f"Invalid token: {exc}")
+        return
+
+    # Authorization hardening: enforce thread ownership
+    thread = thread_service.get_thread_data(thread_id) or {}
+    owner = thread.get("user_id")
+    if not owner or not user_id or str(owner) != str(user_id):
+        logger.info("[WS] forbidden: thread owner mismatch", extra={"thread_id": thread_id})
+        await websocket.close(code=1008, reason="Forbidden")
         return
     
     # Verify thread exists
     state = thread_service.get_thread_state(thread_id)
-    print(f"[WS] Thread state: {state}", flush=True)
     if not state:
-        print(f"[WS] Thread not found, closing with 1008", flush=True)
+        logger.info("[WS] thread not found", extra={"thread_id": thread_id})
         await websocket.close(code=1008, reason="Thread not found")
         return
     
     # Get run data
     run_data = thread_service.get_run(thread_id, run_id)
-    print(f"[WS] Run data for {thread_id}/{run_id}: {run_data}", flush=True)
     if not run_data:
-        print(f"[WS] ERROR: Run not found for thread {thread_id}, run {run_id}", flush=True)
+        logger.info("[WS] run not found", extra={"thread_id": thread_id, "run_id": run_id})
         await websocket.send_json({
             "type": "error",
             "error": "Run not found",
         })
         await websocket.close(code=1008, reason="Run not found")
         return
+
+    # Authorization hardening: enforce run ownership (defense-in-depth)
+    run_owner = run_data.get("user_id")
+    if not run_owner or not user_id or str(run_owner) != str(user_id):
+        logger.info("[WS] forbidden: run owner mismatch", extra={"thread_id": thread_id, "run_id": run_id})
+        await websocket.close(code=1008, reason="Forbidden")
+        return
     
     run_status = run_data.get("status", "queued")
     user_input = run_data.get("user_input", "")
-    print(f"[WS] Run {run_id} status: {run_status}, input: {user_input[:100] if user_input else 'None'}...", flush=True)
+    if _DEBUG_LOGS:
+        logger.debug("[WS] run status", extra={"thread_id": thread_id, "run_id": run_id, "status": run_status})
     
     # If run is already completed or failed, send final state immediately
     if run_status in ("completed", "failed"):
-        print(f"[WS] Run already {run_status}, sending final state", flush=True)
         final_state = run_data.get("final_state", {})
         if isinstance(final_state, str):
             try:
@@ -156,7 +222,8 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
     
     # If run is already running, don't start another execution - just wait for completion
     if run_status == "running":
-        print(f"[WS] Run already running, will poll for completion", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[WS] run already running: polling", extra={"thread_id": thread_id, "run_id": run_id})
         # Poll for completion instead of starting new execution
         while True:
             await asyncio.sleep(2)
@@ -189,7 +256,7 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                 return
     
     if not user_input:
-        print(f"[WS] ERROR: Run missing input for thread {thread_id}, run {run_id}", flush=True)
+        logger.info("[WS] run missing input", extra={"thread_id": thread_id, "run_id": run_id})
         await websocket.send_json({
             "type": "error",
             "error": "Run missing input",
@@ -204,11 +271,13 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
     execution_task = None
     try:
         # Start execution
-        print(f"[WS] Starting execution task for thread {thread_id}, run {run_id}", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[WS] starting execution task", extra={"thread_id": thread_id, "run_id": run_id})
         execution_task = asyncio.create_task(
             thread_service.execute_run(thread_id, run_id, user_input, user_id, event_queue)
         )
-        print(f"[WS] Execution task created for thread {thread_id}, run {run_id}", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[WS] execution task created", extra={"thread_id": thread_id, "run_id": run_id})
 
         async def ping_loop():
             while True:
@@ -243,19 +312,21 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                         except asyncio.CancelledError:
                             exc = None
                         if exc:
-                            print(f"[WS] Execution task failed with exception: {exc}", flush=True)
+                            logger.info("[WS] execution task failed", extra={"thread_id": thread_id, "run_id": run_id})
                             traceback.print_exception(type(exc), exc, exc.__traceback__)
                             await websocket.send_json({
                                 "type": "error",
                                 "error": str(exc),
                             })
                         else:
-                            print(f"[WS] Execution task done without exception", flush=True)
+                            if _DEBUG_LOGS:
+                                logger.debug("[WS] execution task done", extra={"thread_id": thread_id, "run_id": run_id})
                         break
                     continue
                     
         except WebSocketDisconnect:
-            print(f"[WS] WebSocket disconnected for thread {thread_id}, run {run_id}", flush=True)
+            if _DEBUG_LOGS:
+                logger.debug("[WS] websocket disconnected", extra={"thread_id": thread_id, "run_id": run_id})
         finally:
             ping_task.cancel()
             if execution_task and not execution_task.done():
@@ -266,7 +337,7 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                     pass
                     
     except Exception as exc:
-        print(f"[WS] WebSocket stream error: {exc}", flush=True)
+        logger.info("[WS] websocket stream error", extra={"thread_id": thread_id, "run_id": run_id})
         traceback.print_exc()
         try:
             await websocket.send_json({

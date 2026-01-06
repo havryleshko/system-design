@@ -17,9 +17,24 @@ except ModuleNotFoundError:
 from langchain_core.messages import HumanMessage, BaseMessage
 
 from app.agent.system_design.graph import get_compiled_graph_with_checkpointer
+from app.agent.system_design.reasoning import build_event
 from app.storage.memory import add_event, record_node_tokens
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_LOGS = os.getenv("DEBUG_LOGS", "").lower() in ("1", "true", "yes", "on")
+_DEV_BYPASS_RUN_LIMIT = os.getenv("DEV_BYPASS_RUN_LIMIT", "").lower() in ("1", "true", "yes", "on")
+
+def _env_name() -> str:
+    # Common conventions across projects; prefer explicit env vars if present.
+    for key in ("APP_ENV", "ENVIRONMENT", "SENTRY_ENVIRONMENT", "ENV", "PYTHON_ENV"):
+        val = os.getenv(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip().lower()
+    return "production"
+
+
+_ENV_NAME = _env_name()
 
 def _get_int_env(name: str, default: int) -> int:
     try:
@@ -84,6 +99,61 @@ def _serialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+async def _persist_failed_final_state(
+    *,
+    thread_id: str,
+    run_id: str,
+    user_id: Optional[str],
+    error_message: str,
+) -> None:
+    values: Dict[str, Any] = {}
+    try:
+        compiled_graph = await get_compiled_graph_with_checkpointer()
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "metadata": {"user_id": user_id, "thread_id": thread_id, "run_id": run_id},
+            "recursion_limit": 100,
+        }
+        state = await compiled_graph.aget_state(config)
+        if state is not None and hasattr(state, "values") and isinstance(state.values, dict):
+            values = state.values
+    except Exception:
+        values = {}
+
+    trace = values.get("reasoning_trace")
+    if not isinstance(trace, list):
+        trace = []
+    has_failure = any(isinstance(ev, dict) and ev.get("kind") == "run_failed" for ev in trace)
+    if not has_failure:
+        trace.append(
+            build_event(
+                node="run",
+                agent="Orchestrator",
+                phase="orchestrator",
+                status="failed",
+                duration_ms=None,
+                kind="run_failed",
+                what="Run failed",
+                why="An exception interrupted execution; persisted last checkpointed state.",
+                error=error_message,
+                debug={"thread_id": thread_id, "run_id": run_id},
+            )
+        )
+    values["reasoning_trace"] = trace
+
+    serialized_values = _serialize_state(values)
+    _run_execute(
+        """
+        update runs
+        set status = 'failed',
+            final_state = %s,
+            updated_at = now()
+        where run_id = %s
+        """,
+        (json.dumps(serialized_values), run_id),
+    )
+
+
 def get_thread_data(thread_id: str) -> Optional[Dict[str, Any]]:
     rows = _run_select(
         "select thread_id, user_id, current_run_id, created_at from threads where thread_id = %s",
@@ -97,7 +167,7 @@ def get_thread_data(thread_id: str) -> Optional[Dict[str, Any]]:
 def get_run(thread_id: str, run_id: str) -> Optional[Dict[str, Any]]:
     rows = _run_select(
         """
-        select run_id, thread_id, status, final_state, user_input, created_at, updated_at
+        select run_id, thread_id, user_id, status, final_state, user_input, created_at, updated_at
         from runs
         where thread_id = %s and run_id = %s
         """,
@@ -118,6 +188,12 @@ def create_thread(user_id: Optional[str] = None) -> str:
 
 
 def _enforce_daily_run_limit(user_id: Optional[str]) -> None:
+    # Dev bypass: allow unlimited runs in local/dev environments.
+    # - Explicit opt-in: DEV_BYPASS_RUN_LIMIT=1
+    # - Typical local: DEBUG_LOGS=1
+    # - Or env name indicates non-prod
+    if _DEV_BYPASS_RUN_LIMIT or _DEBUG_LOGS or _ENV_NAME in ("development", "dev", "local", "test"):
+        return
     limit = _get_int_env("RUN_DAILY_LIMIT", 3)
     if limit <= 0:
         return
@@ -164,11 +240,18 @@ def _enforce_daily_run_limit(user_id: Optional[str]) -> None:
 
 
 def start_run(thread_id: str, user_input: str, user_id: Optional[str] = None) -> str:
+    if not user_id:
+        raise PermissionError("Authentication required")
+
     _enforce_daily_run_limit(user_id)
 
-    # Ensure thread exists
-    if not get_thread_data(thread_id):
-        create_thread(user_id)
+    # Thread must exist and be owned by the caller (defense-in-depth).
+    thread = get_thread_data(thread_id)
+    if not thread:
+        raise LookupError("Thread not found")
+    owner = thread.get("user_id")
+    if not owner or str(owner) != str(user_id):
+        raise PermissionError("Forbidden")
 
     run_id = str(uuid4())
     _run_execute(
@@ -192,7 +275,8 @@ async def execute_run(
     user_id: Optional[str] = None,
     ws_queue: Optional[asyncio.Queue] = None,
 ) -> Dict[str, Any]:
-    print(f"[EXEC] execute_run called for thread {thread_id}, run {run_id}", flush=True)
+    if _DEBUG_LOGS:
+        logger.debug("[EXEC] execute_run called", extra={"thread_id": thread_id, "run_id": run_id})
     sem = _run_semaphore()
     timeout_s = _get_int_env("RUN_TIMEOUT_SECONDS", 420)
 
@@ -207,10 +291,11 @@ async def execute_run(
         msg = f"Run timed out after {timeout_s}s"
         logger.exception(msg)
 
-        # Mark failed for polling clients
-        _run_execute(
-            "update runs set status = 'failed', updated_at = now() where run_id = %s",
-            (run_id,),
+        await _persist_failed_final_state(
+            thread_id=thread_id,
+            run_id=run_id,
+            user_id=user_id,
+            error_message=msg,
         )
 
         if ws_queue:
@@ -230,13 +315,9 @@ async def execute_run(
         raise RuntimeError(msg) from exc
 
     except Exception as exc:
-        print(f"[EXEC] Run execution failed: {exc}", flush=True)
-        import traceback
-        traceback.print_exc()
+        if _DEBUG_LOGS:
+            logger.debug("[EXEC] run execution failed", extra={"thread_id": thread_id, "run_id": run_id})
         logger.exception(f"Run execution failed: {exc}")
-
-        # Report to Sentry with useful correlation tags (safe: no PII by default).
-        # Never let observability break the run failure path.
         if sentry_sdk is not None:
             try:
                 with sentry_sdk.push_scope() as scope:
@@ -248,9 +329,11 @@ async def execute_run(
             except Exception:
                 pass
 
-        _run_execute(
-            "update runs set status = 'failed', updated_at = now() where run_id = %s",
-            (run_id,),
+        await _persist_failed_final_state(
+            thread_id=thread_id,
+            run_id=run_id,
+            user_id=user_id,
+            error_message=str(exc),
         )
         
         if ws_queue:
@@ -269,9 +352,11 @@ async def _execute_run_body(
     user_id: Optional[str],
     ws_queue: Optional[asyncio.Queue],
 ) -> Dict[str, Any]:
-    print(f"[EXEC] Loading compiled graph with checkpointer...", flush=True)
+    if _DEBUG_LOGS:
+        logger.debug("[EXEC] loading compiled graph", extra={"thread_id": thread_id, "run_id": run_id})
     compiled_graph = await get_compiled_graph_with_checkpointer()
-    print(f"[EXEC] Graph loaded successfully", flush=True)
+    if _DEBUG_LOGS:
+        logger.debug("[EXEC] graph loaded", extra={"thread_id": thread_id, "run_id": run_id})
 
     config = {
         "configurable": {
@@ -299,7 +384,8 @@ async def _execute_run_body(
         (run_id,),
     )
 
-    print(f"[EXEC] Starting graph execution with astream_events...", flush=True)
+    if _DEBUG_LOGS:
+        logger.debug("[EXEC] starting astream_events", extra={"thread_id": thread_id, "run_id": run_id})
     try:
         async for event in compiled_graph.astream_events(
             initial_state,
@@ -323,21 +409,27 @@ async def _execute_run_body(
                                     "run_id": run_id,
                                 })
     except Exception as stream_exc:
-        print(f"[EXEC] astream_events failed: {stream_exc}", flush=True)
-        import traceback
-        traceback.print_exc()
+        if _DEBUG_LOGS:
+            logger.debug("[EXEC] astream_events failed", extra={"thread_id": thread_id, "run_id": run_id})
         logger.warning(f"astream_events failed: {stream_exc}")
 
-    print(f"[EXEC] Getting final state from checkpointer...", flush=True)
+    if _DEBUG_LOGS:
+        logger.debug("[EXEC] getting final state from checkpointer", extra={"thread_id": thread_id, "run_id": run_id})
     final_state = await compiled_graph.aget_state(config)
     if final_state and hasattr(final_state, 'values'):
         final_state = final_state.values
-        print(
-            f"[EXEC] Got final state with keys: {list(final_state.keys()) if isinstance(final_state, dict) else 'not a dict'}",
-            flush=True,
-        )
+        if _DEBUG_LOGS:
+            logger.debug(
+                "[EXEC] got final state values",
+                extra={
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "keys": list(final_state.keys())[:25] if isinstance(final_state, dict) else None,
+                },
+            )
     else:
-        print(f"[EXEC] aget_state returned no values, falling back to ainvoke...", flush=True)
+        if _DEBUG_LOGS:
+            logger.debug("[EXEC] aget_state had no values; falling back to ainvoke", extra={"thread_id": thread_id, "run_id": run_id})
         final_state = await compiled_graph.ainvoke(initial_state, config=config)
 
     # Extract final output
@@ -347,34 +439,22 @@ async def _execute_run_body(
     if isinstance(final_state, dict):
         values = final_state
 
-        # Log what we have in the state for debugging
-        state_output = final_state.get("output")
-        print(
-            f"[EXEC] final_state.output type: {type(state_output)}, value preview: {str(state_output)[:200] if state_output else 'None'}...",
-            flush=True,
-        )
-
         output = final_state.get("output")
-        if isinstance(output, str) and output.strip():
-            print(f"[EXEC] Using output from state: {len(output)} chars", flush=True)
-        else:
+        if not (isinstance(output, str) and output.strip()):
             design_state = final_state.get("design_state", {})
             design_output = design_state.get("output", {})
             if isinstance(design_output, dict):
                 formatted = design_output.get("formatted_output")
                 if isinstance(formatted, str) and formatted.strip():
                     output = formatted
-                    print(f"[EXEC] Using design_state.output.formatted_output: {len(output)} chars", flush=True)
             if not output:
                 messages = final_state.get("messages", [])
                 if messages:
                     last_msg = messages[-1]
                     if hasattr(last_msg, "content"):
                         output = str(last_msg.content)
-                        print(f"[EXEC] Using last message content: {len(output)} chars", flush=True)
                     elif isinstance(last_msg, dict) and "content" in last_msg:
                         output = str(last_msg["content"])
-                        print(f"[EXEC] Using last message dict content: {len(output)} chars", flush=True)
 
     serialized_values = _serialize_state(values)
 
@@ -462,6 +542,16 @@ def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
         "values": final_state,
         "output": output,
     }
+
+
+def get_thread_state_for_user(thread_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+    thread = get_thread_data(thread_id)
+    if not thread:
+        return None
+    owner = thread.get("user_id")
+    if not owner or str(owner) != str(user_id):
+        raise PermissionError("Forbidden")
+    return get_thread_state(thread_id)
 
 
 def list_user_threads(user_id: str) -> list[Dict[str, Any]]:

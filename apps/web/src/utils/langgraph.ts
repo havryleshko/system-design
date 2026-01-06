@@ -28,11 +28,10 @@ export function backendHeaders(token: string, options?: { json?: boolean }): Hea
   return headers;
 }
 
-export function buildRunStreamUrl(params: { threadId: string; runId: string; token: string }): string {
-  const { threadId, runId, token } = params;
+export function buildRunStreamUrl(params: { threadId: string; runId: string }): string {
+  const { threadId, runId } = params;
   const url = new URL(`/threads/${threadId}/stream`, WS_BASE);
   url.searchParams.set("run_id", runId);
-  url.searchParams.set("token", token);
   return url.toString();
 }
 
