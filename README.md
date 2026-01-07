@@ -2,7 +2,7 @@
 
 ![Architecture](docs/arch.png)
 
-Build and run a system-design assistant that generates an architecture write-up plus structured outputs (`architecture_json`, `design_brief`) from a prompt. The backend is a LangGraph-powered agent with persistence; the web app is a Next.js UI.
+**Problem it solves: Engineers cannot reliably translate an agentic workflow idea into a correct, deployable multi-agent architecture.**
 
 ## What’s in this repo
 - **`apps/backend`**: Python backend (LangGraph agent + API + Supabase JWT auth + Postgres checkpointer/store).
