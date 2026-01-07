@@ -1,0 +1,1034 @@
+{
+  "version": "v1",
+  "last_updated": "2026-01-07",
+  "categories": [
+    "orchestration",
+    "db_storage",
+    "vector_store",
+    "queue_workflow",
+    "observability",
+    "deployment_hosting",
+    "auth_identity"
+  ],
+  "tools": [
+    {
+      "id": "langgraph",
+      "display_name": "LangGraph",
+      "category": "orchestration",
+      "type": "library",
+      "default_use_when": [
+        "Building stateful, multi-actor agent applications",
+        "Need complex control flow with cycles and branching",
+        "Require human-in-the-loop patterns",
+        "Building agentic workflows with tool calling"
+      ],
+      "avoid_when": [
+        "Simple single-shot LLM calls without state",
+        "Non-Python environments",
+        "Extremely latency-sensitive applications"
+      ],
+      "capabilities": [
+        "state_management",
+        "graph_execution",
+        "streaming",
+        "persistence",
+        "human_in_loop",
+        "subgraphs"
+      ],
+      "auth": null,
+      "operational_notes": {
+        "limits": "Memory-bound by state size; checkpoint storage scales with conversation length",
+        "pricing_tier_hint": "Open source (MIT); LangSmith for observability is paid",
+        "regionality": "Runs anywhere Python runs; LangSmith US/EU",
+        "failure_modes": ["checkpoint_corruption", "state_size_overflow", "tool_timeout"]
+      },
+      "alternatives": ["autogen", "crewai", "temporal_ai"]
+    },
+    {
+      "id": "autogen",
+      "display_name": "AutoGen",
+      "category": "orchestration",
+      "type": "library",
+      "default_use_when": [
+        "Multi-agent conversations with distinct personas",
+        "Code generation and execution workflows",
+        "Research and exploration tasks"
+      ],
+      "avoid_when": [
+        "Need fine-grained control flow",
+        "Require deterministic execution paths",
+        "Production systems requiring strict SLAs"
+      ],
+      "capabilities": [
+        "multi_agent_chat",
+        "code_execution",
+        "tool_use",
+        "nested_conversations"
+      ],
+      "auth": null,
+      "operational_notes": {
+        "limits": "Conversation length limited by context window",
+        "pricing_tier_hint": "Open source (MIT)",
+        "regionality": "Runs anywhere Python runs",
+        "failure_modes": ["runaway_conversations", "code_execution_errors", "context_overflow"]
+      },
+      "alternatives": ["langgraph", "crewai"]
+    },
+    {
+      "id": "crewai",
+      "display_name": "CrewAI",
+      "category": "orchestration",
+      "type": "library",
+      "default_use_when": [
+        "Role-based agent teams with clear responsibilities",
+        "Sequential or hierarchical task execution",
+        "Rapid prototyping of multi-agent systems"
+      ],
+      "avoid_when": [
+        "Need low-level control over agent interactions",
+        "Complex branching logic required",
+        "High-throughput production workloads"
+      ],
+      "capabilities": [
+        "role_based_agents",
+        "task_delegation",
+        "tool_integration",
+        "memory"
+      ],
+      "auth": null,
+      "operational_notes": {
+        "limits": "Task complexity limited by prompt engineering",
+        "pricing_tier_hint": "Open source; Enterprise tier available",
+        "regionality": "Runs anywhere Python runs",
+        "failure_modes": ["task_loop", "delegation_failure", "tool_mismatch"]
+      },
+      "alternatives": ["langgraph", "autogen"]
+    },
+    {
+      "id": "temporal_ai",
+      "display_name": "Temporal (for AI workflows)",
+      "category": "orchestration",
+      "type": "platform",
+      "default_use_when": [
+        "Long-running workflows requiring durability",
+        "Need exactly-once execution guarantees",
+        "Complex retry and compensation logic",
+        "Enterprise-grade reliability requirements"
+      ],
+      "avoid_when": [
+        "Simple, short-lived agent tasks",
+        "Tight latency requirements (<100ms)",
+        "Small teams without DevOps capacity"
+      ],
+      "capabilities": [
+        "durable_execution",
+        "workflow_versioning",
+        "retry_policies",
+        "visibility",
+        "multi_language"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["namespace:read", "namespace:write"]
+      },
+      "operational_notes": {
+        "limits": "Workflow history size limits; activity timeout constraints",
+        "pricing_tier_hint": "Open source self-hosted; Temporal Cloud paid",
+        "regionality": "Self-hosted anywhere; Cloud in US/EU/APAC",
+        "failure_modes": ["history_size_exceeded", "activity_timeout", "namespace_quota"]
+      },
+      "alternatives": ["langgraph", "step_functions"]
+    },
+    {
+      "id": "postgres_supabase",
+      "display_name": "PostgreSQL (via Supabase)",
+      "category": "db_storage",
+      "type": "service",
+      "default_use_when": [
+        "Need relational data with complex queries",
+        "Want integrated auth and real-time subscriptions",
+        "Rapid development with managed infrastructure",
+        "Need Row Level Security (RLS)"
+      ],
+      "avoid_when": [
+        "Extremely high write throughput (>100k writes/sec)",
+        "Need multi-region active-active",
+        "Strict data residency requirements not met by Supabase regions"
+      ],
+      "capabilities": [
+        "relational_queries",
+        "realtime_subscriptions",
+        "row_level_security",
+        "edge_functions",
+        "storage",
+        "auth"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["anon", "service_role"]
+      },
+      "operational_notes": {
+        "limits": "Connection pooling limits vary by plan; 500MB-8GB storage on free tier",
+        "pricing_tier_hint": "Free tier available; Pro from $25/mo",
+        "regionality": "US, EU, APAC, South America",
+        "failure_modes": ["connection_pool_exhaustion", "storage_quota", "rate_limiting"]
+      },
+      "alternatives": ["postgres_neon", "postgres_rds", "planetscale"]
+    },
+    {
+      "id": "postgres_neon",
+      "display_name": "PostgreSQL (via Neon)",
+      "category": "db_storage",
+      "type": "service",
+      "default_use_when": [
+        "Need serverless Postgres with scale-to-zero",
+        "Branch-based development workflows",
+        "Cost-sensitive workloads with variable traffic"
+      ],
+      "avoid_when": [
+        "Need always-on connections (cold start latency)",
+        "Very high sustained throughput",
+        "Complex extensions not supported"
+      ],
+      "capabilities": [
+        "serverless_scaling",
+        "branching",
+        "point_in_time_recovery",
+        "connection_pooling"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["project:read", "project:write"]
+      },
+      "operational_notes": {
+        "limits": "Cold start ~500ms; compute limits vary by plan",
+        "pricing_tier_hint": "Free tier; Pro from $19/mo",
+        "regionality": "US, EU, APAC",
+        "failure_modes": ["cold_start_latency", "compute_timeout", "branch_limit"]
+      },
+      "alternatives": ["postgres_supabase", "postgres_rds"]
+    },
+    {
+      "id": "postgres_rds",
+      "display_name": "PostgreSQL (via AWS RDS)",
+      "category": "db_storage",
+      "type": "service",
+      "default_use_when": [
+        "Enterprise AWS environment",
+        "Need Multi-AZ high availability",
+        "Require fine-grained instance control",
+        "Compliance requirements (SOC2, HIPAA, etc.)"
+      ],
+      "avoid_when": [
+        "Small projects (overhead too high)",
+        "Need serverless scaling",
+        "Cost-sensitive without reserved instances"
+      ],
+      "capabilities": [
+        "multi_az",
+        "read_replicas",
+        "automated_backups",
+        "encryption",
+        "iam_auth"
+      ],
+      "auth": {
+        "auth_type": "iam",
+        "scopes_examples": ["rds-db:connect"]
+      },
+      "operational_notes": {
+        "limits": "Instance-based limits; storage up to 64TB",
+        "pricing_tier_hint": "On-demand from $0.02/hr; Reserved discounts",
+        "regionality": "All AWS regions",
+        "failure_modes": ["storage_full", "connection_limit", "failover_delay"]
+      },
+      "alternatives": ["postgres_supabase", "postgres_neon", "aurora"]
+    },
+    {
+      "id": "planetscale",
+      "display_name": "PlanetScale (MySQL)",
+      "category": "db_storage",
+      "type": "service",
+      "default_use_when": [
+        "Need MySQL with branching workflows",
+        "Horizontal scaling requirements",
+        "Schema migrations without downtime"
+      ],
+      "avoid_when": [
+        "Need PostgreSQL-specific features",
+        "Foreign key constraints required (Vitess limitation)",
+        "Small projects (free tier discontinued)"
+      ],
+      "capabilities": [
+        "branching",
+        "horizontal_scaling",
+        "schema_migrations",
+        "connection_pooling"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["database:read", "database:write"]
+      },
+      "operational_notes": {
+        "limits": "Row size limits; no foreign keys",
+        "pricing_tier_hint": "Scaler from $29/mo",
+        "regionality": "US, EU, APAC, South America",
+        "failure_modes": ["row_size_exceeded", "connection_limit", "migration_conflict"]
+      },
+      "alternatives": ["postgres_supabase", "postgres_neon"]
+    },
+    {
+      "id": "pgvector",
+      "display_name": "pgvector (PostgreSQL extension)",
+      "category": "vector_store",
+      "type": "library",
+      "default_use_when": [
+        "Already using PostgreSQL",
+        "Want unified data and vector storage",
+        "Moderate vector search scale (<10M vectors)",
+        "Need ACID transactions with vectors"
+      ],
+      "avoid_when": [
+        "Billions of vectors",
+        "Need specialized ANN algorithms",
+        "Not using PostgreSQL"
+      ],
+      "capabilities": [
+        "vector_similarity",
+        "ivfflat_index",
+        "hnsw_index",
+        "hybrid_search"
+      ],
+      "auth": null,
+      "operational_notes": {
+        "limits": "Performance degrades >10M vectors without tuning; index build time",
+        "pricing_tier_hint": "Free (PostgreSQL extension)",
+        "regionality": "Wherever PostgreSQL runs",
+        "failure_modes": ["index_build_oom", "slow_queries_without_index", "dimension_mismatch"]
+      },
+      "alternatives": ["pinecone", "weaviate", "qdrant"]
+    },
+    {
+      "id": "pinecone",
+      "display_name": "Pinecone",
+      "category": "vector_store",
+      "type": "service",
+      "default_use_when": [
+        "Large-scale vector search (billions)",
+        "Need managed infrastructure",
+        "Low-latency similarity search critical",
+        "Serverless scaling preferred"
+      ],
+      "avoid_when": [
+        "Need complex filtering with vectors",
+        "Cost-sensitive small projects",
+        "Data residency requirements not met"
+      ],
+      "capabilities": [
+        "vector_similarity",
+        "metadata_filtering",
+        "namespaces",
+        "serverless",
+        "hybrid_search"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["index:read", "index:write"]
+      },
+      "operational_notes": {
+        "limits": "Metadata size limits; query result limits",
+        "pricing_tier_hint": "Free tier; Starter from $70/mo",
+        "regionality": "US, EU",
+        "failure_modes": ["rate_limiting", "metadata_size_exceeded", "namespace_limit"]
+      },
+      "alternatives": ["pgvector", "weaviate", "qdrant"]
+    },
+    {
+      "id": "weaviate",
+      "display_name": "Weaviate",
+      "category": "vector_store",
+      "type": "service",
+      "default_use_when": [
+        "Need GraphQL-style queries",
+        "Want built-in vectorization modules",
+        "Hybrid search (vector + keyword) important",
+        "Self-hosted option needed"
+      ],
+      "avoid_when": [
+        "Simple vector-only use case",
+        "Need lowest possible latency",
+        "Small team without ops capacity for self-hosted"
+      ],
+      "capabilities": [
+        "vector_similarity",
+        "graphql_api",
+        "modules",
+        "hybrid_search",
+        "multi_tenancy"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["read", "write", "admin"]
+      },
+      "operational_notes": {
+        "limits": "Object size limits; batch import limits",
+        "pricing_tier_hint": "Open source; Cloud from $25/mo",
+        "regionality": "Self-hosted anywhere; Cloud US/EU",
+        "failure_modes": ["schema_migration", "module_loading", "memory_pressure"]
+      },
+      "alternatives": ["pgvector", "pinecone", "qdrant"]
+    },
+    {
+      "id": "qdrant",
+      "display_name": "Qdrant",
+      "category": "vector_store",
+      "type": "service",
+      "default_use_when": [
+        "Need advanced filtering with vectors",
+        "Rust performance requirements",
+        "Self-hosted with good defaults",
+        "Payload-rich vector search"
+      ],
+      "avoid_when": [
+        "Need managed service in specific regions",
+        "GraphQL interface preferred",
+        "Very small scale (overhead not justified)"
+      ],
+      "capabilities": [
+        "vector_similarity",
+        "payload_filtering",
+        "collections",
+        "snapshots",
+        "distributed"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["read", "write", "manage"]
+      },
+      "operational_notes": {
+        "limits": "Collection limits; payload size limits",
+        "pricing_tier_hint": "Open source; Cloud from $25/mo",
+        "regionality": "Self-hosted anywhere; Cloud US/EU",
+        "failure_modes": ["shard_rebalancing", "snapshot_size", "filter_complexity"]
+      },
+      "alternatives": ["pgvector", "pinecone", "weaviate"]
+    },
+    {
+      "id": "sqs",
+      "display_name": "Amazon SQS",
+      "category": "queue_workflow",
+      "type": "service",
+      "default_use_when": [
+        "AWS-native architecture",
+        "Need simple, reliable message queue",
+        "Decoupling microservices",
+        "High throughput requirements"
+      ],
+      "avoid_when": [
+        "Need complex routing (use SNS+SQS or EventBridge)",
+        "Multi-cloud requirements",
+        "Need message ordering guarantees (use FIFO)"
+      ],
+      "capabilities": [
+        "message_queue",
+        "dead_letter_queue",
+        "fifo_ordering",
+        "visibility_timeout",
+        "long_polling"
+      ],
+      "auth": {
+        "auth_type": "iam",
+        "scopes_examples": ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage"]
+      },
+      "operational_notes": {
+        "limits": "256KB message size; 120k in-flight messages (standard)",
+        "pricing_tier_hint": "Pay per request; ~$0.40/million requests",
+        "regionality": "All AWS regions",
+        "failure_modes": ["visibility_timeout_too_short", "dlq_overflow", "duplicate_processing"]
+      },
+      "alternatives": ["redis_streams", "rabbitmq", "kafka"]
+    },
+    {
+      "id": "redis_streams",
+      "display_name": "Redis Streams",
+      "category": "queue_workflow",
+      "type": "service",
+      "default_use_when": [
+        "Need low-latency message streaming",
+        "Consumer groups with acknowledgment",
+        "Already using Redis for caching",
+        "Real-time event processing"
+      ],
+      "avoid_when": [
+        "Need guaranteed delivery without Redis persistence",
+        "Very large message payloads",
+        "Complex routing requirements"
+      ],
+      "capabilities": [
+        "streaming",
+        "consumer_groups",
+        "message_acknowledgment",
+        "range_queries",
+        "trimming"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["read", "write"]
+      },
+      "operational_notes": {
+        "limits": "Memory-bound; stream length limits",
+        "pricing_tier_hint": "Redis Cloud from $5/mo; self-hosted free",
+        "regionality": "Self-hosted anywhere; Cloud global",
+        "failure_modes": ["memory_exhaustion", "consumer_lag", "persistence_loss"]
+      },
+      "alternatives": ["sqs", "rabbitmq", "kafka"]
+    },
+    {
+      "id": "celery",
+      "display_name": "Celery",
+      "category": "queue_workflow",
+      "type": "library",
+      "default_use_when": [
+        "Python-based task queue needed",
+        "Background job processing",
+        "Scheduled/periodic tasks",
+        "Distributed task execution"
+      ],
+      "avoid_when": [
+        "Non-Python environments",
+        "Need exactly-once processing",
+        "Very high throughput (>10k tasks/sec)"
+      ],
+      "capabilities": [
+        "task_queue",
+        "scheduling",
+        "retries",
+        "result_backend",
+        "workflows"
+      ],
+      "auth": null,
+      "operational_notes": {
+        "limits": "Broker-dependent limits; result backend capacity",
+        "pricing_tier_hint": "Open source; broker costs vary",
+        "regionality": "Runs anywhere Python runs",
+        "failure_modes": ["broker_connection_loss", "task_timeout", "result_backend_full"]
+      },
+      "alternatives": ["sqs", "redis_streams", "dramatiq"]
+    },
+    {
+      "id": "kafka",
+      "display_name": "Apache Kafka",
+      "category": "queue_workflow",
+      "type": "platform",
+      "default_use_when": [
+        "High-throughput event streaming",
+        "Event sourcing architecture",
+        "Need message replay capability",
+        "Multi-consumer scenarios"
+      ],
+      "avoid_when": [
+        "Simple task queue needs",
+        "Small team without Kafka expertise",
+        "Low-latency requirements (<10ms)"
+      ],
+      "capabilities": [
+        "event_streaming",
+        "partitioning",
+        "replication",
+        "compaction",
+        "exactly_once"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["topic:read", "topic:write", "consumer_group:manage"]
+      },
+      "operational_notes": {
+        "limits": "Message size 1MB default; partition limits",
+        "pricing_tier_hint": "Confluent Cloud from $0.10/GB; self-hosted free",
+        "regionality": "Self-hosted anywhere; Confluent global",
+        "failure_modes": ["partition_rebalancing", "consumer_lag", "disk_full"]
+      },
+      "alternatives": ["sqs", "redis_streams", "pulsar"]
+    },
+    {
+      "id": "opentelemetry",
+      "display_name": "OpenTelemetry",
+      "category": "observability",
+      "type": "library",
+      "default_use_when": [
+        "Vendor-neutral observability",
+        "Distributed tracing across services",
+        "Want flexibility in backend choice",
+        "Standardized instrumentation"
+      ],
+      "avoid_when": [
+        "Need turnkey solution (requires backend)",
+        "Very simple single-service apps",
+        "Team unfamiliar with observability concepts"
+      ],
+      "capabilities": [
+        "tracing",
+        "metrics",
+        "logging",
+        "auto_instrumentation",
+        "context_propagation"
+      ],
+      "auth": null,
+      "operational_notes": {
+        "limits": "Sampling may be needed at high volume",
+        "pricing_tier_hint": "Open source; backend costs vary",
+        "regionality": "Runs anywhere",
+        "failure_modes": ["collector_bottleneck", "sampling_data_loss", "context_propagation_break"]
+      },
+      "alternatives": ["datadog", "newrelic"]
+    },
+    {
+      "id": "datadog",
+      "display_name": "Datadog",
+      "category": "observability",
+      "type": "service",
+      "default_use_when": [
+        "Need unified observability platform",
+        "Enterprise support requirements",
+        "Complex infrastructure monitoring",
+        "APM with AI features"
+      ],
+      "avoid_when": [
+        "Cost-sensitive projects",
+        "Simple monitoring needs",
+        "Prefer open-source stack"
+      ],
+      "capabilities": [
+        "apm",
+        "infrastructure_monitoring",
+        "log_management",
+        "synthetics",
+        "rum",
+        "security"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["metrics:read", "metrics:write", "logs:read"]
+      },
+      "operational_notes": {
+        "limits": "Cardinality limits; log retention limits",
+        "pricing_tier_hint": "Pro from $15/host/mo; Enterprise from $23/host/mo",
+        "regionality": "US, EU, Gov",
+        "failure_modes": ["cardinality_explosion", "log_quota_exceeded", "agent_resource_usage"]
+      },
+      "alternatives": ["opentelemetry", "newrelic", "grafana_cloud"]
+    },
+    {
+      "id": "grafana_cloud",
+      "display_name": "Grafana Cloud",
+      "category": "observability",
+      "type": "service",
+      "default_use_when": [
+        "Prefer open-source based stack",
+        "Need Prometheus/Loki/Tempo integration",
+        "Cost-effective observability",
+        "Custom dashboarding important"
+      ],
+      "avoid_when": [
+        "Need turnkey APM solution",
+        "Prefer single-vendor support",
+        "Team unfamiliar with Grafana ecosystem"
+      ],
+      "capabilities": [
+        "metrics",
+        "logs",
+        "traces",
+        "dashboards",
+        "alerting",
+        "oncall"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["metrics:read", "metrics:write", "logs:read"]
+      },
+      "operational_notes": {
+        "limits": "Series limits; log ingestion limits by plan",
+        "pricing_tier_hint": "Free tier; Pro from $8/user/mo",
+        "regionality": "US, EU, AU",
+        "failure_modes": ["series_limit_exceeded", "query_timeout", "dashboard_complexity"]
+      },
+      "alternatives": ["datadog", "opentelemetry", "newrelic"]
+    },
+    {
+      "id": "langsmith",
+      "display_name": "LangSmith",
+      "category": "observability",
+      "type": "service",
+      "default_use_when": [
+        "LLM application observability",
+        "Debugging agent chains",
+        "Evaluating LLM outputs",
+        "Using LangChain/LangGraph"
+      ],
+      "avoid_when": [
+        "Not using LangChain ecosystem",
+        "Need general infrastructure monitoring",
+        "Cost-sensitive high-volume tracing"
+      ],
+      "capabilities": [
+        "llm_tracing",
+        "evaluation",
+        "datasets",
+        "playground",
+        "monitoring"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["read", "write"]
+      },
+      "operational_notes": {
+        "limits": "Trace retention limits; evaluation quotas",
+        "pricing_tier_hint": "Free tier; Plus from $39/seat/mo",
+        "regionality": "US, EU",
+        "failure_modes": ["trace_ingestion_lag", "evaluation_timeout", "dataset_size_limit"]
+      },
+      "alternatives": ["opentelemetry", "arize", "weights_biases"]
+    },
+    {
+      "id": "vercel",
+      "display_name": "Vercel",
+      "category": "deployment_hosting",
+      "type": "platform",
+      "default_use_when": [
+        "Next.js or React frontend",
+        "Need edge functions",
+        "Preview deployments per PR",
+        "Serverless-first architecture"
+      ],
+      "avoid_when": [
+        "Long-running backend processes",
+        "Non-JavaScript/TypeScript backends",
+        "Need persistent connections (WebSockets limited)"
+      ],
+      "capabilities": [
+        "edge_functions",
+        "serverless_functions",
+        "preview_deployments",
+        "analytics",
+        "caching"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["deployments:read", "deployments:write"]
+      },
+      "operational_notes": {
+        "limits": "Function timeout 10s-300s; 4.5MB function size",
+        "pricing_tier_hint": "Free tier; Pro from $20/user/mo",
+        "regionality": "Global edge network",
+        "failure_modes": ["function_timeout", "cold_start", "bandwidth_quota"]
+      },
+      "alternatives": ["fly_io", "railway", "render"]
+    },
+    {
+      "id": "fly_io",
+      "display_name": "Fly.io",
+      "category": "deployment_hosting",
+      "type": "platform",
+      "default_use_when": [
+        "Need global edge deployment",
+        "Long-running processes",
+        "WebSocket-heavy applications",
+        "Docker-based deployments"
+      ],
+      "avoid_when": [
+        "Prefer managed PaaS simplicity",
+        "Need extensive AWS integrations",
+        "Very large-scale (>1000 instances)"
+      ],
+      "capabilities": [
+        "global_deployment",
+        "persistent_storage",
+        "private_networking",
+        "gpus",
+        "machines_api"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["deploy", "read"]
+      },
+      "operational_notes": {
+        "limits": "Machine size limits; volume limits per region",
+        "pricing_tier_hint": "Pay-as-you-go; ~$0.0000022/s for shared CPU",
+        "regionality": "30+ regions globally",
+        "failure_modes": ["volume_attachment", "machine_placement", "network_partition"]
+      },
+      "alternatives": ["vercel", "railway", "render"]
+    },
+    {
+      "id": "railway",
+      "display_name": "Railway",
+      "category": "deployment_hosting",
+      "type": "platform",
+      "default_use_when": [
+        "Full-stack app deployment",
+        "Need managed databases alongside app",
+        "GitHub-based deploy workflow",
+        "Rapid prototyping"
+      ],
+      "avoid_when": [
+        "Need multi-region deployment",
+        "Very cost-sensitive at scale",
+        "Complex networking requirements"
+      ],
+      "capabilities": [
+        "container_deployment",
+        "managed_databases",
+        "private_networking",
+        "cron_jobs",
+        "environments"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["project:read", "project:write"]
+      },
+      "operational_notes": {
+        "limits": "Resource limits by plan; single region",
+        "pricing_tier_hint": "Free tier; Pro from $5/mo",
+        "regionality": "US West, US East, EU West",
+        "failure_modes": ["resource_exhaustion", "build_timeout", "volume_limit"]
+      },
+      "alternatives": ["vercel", "fly_io", "render"]
+    },
+    {
+      "id": "render",
+      "display_name": "Render",
+      "category": "deployment_hosting",
+      "type": "platform",
+      "default_use_when": [
+        "Heroku-like simplicity needed",
+        "Static sites with backend services",
+        "Managed SSL and scaling",
+        "Background workers needed"
+      ],
+      "avoid_when": [
+        "Need edge deployment",
+        "Very latency-sensitive (single region)",
+        "Complex multi-service orchestration"
+      ],
+      "capabilities": [
+        "web_services",
+        "static_sites",
+        "background_workers",
+        "cron_jobs",
+        "managed_databases"
+      ],
+      "auth": {
+        "auth_type": "api_key",
+        "scopes_examples": ["service:read", "service:write"]
+      },
+      "operational_notes": {
+        "limits": "Free tier spin-down; resource limits by plan",
+        "pricing_tier_hint": "Free tier; Individual from $7/mo",
+        "regionality": "US (Oregon, Ohio), EU (Frankfurt), Singapore",
+        "failure_modes": ["cold_start", "build_timeout", "disk_quota"]
+      },
+      "alternatives": ["vercel", "fly_io", "railway"]
+    },
+    {
+      "id": "kubernetes",
+      "display_name": "Kubernetes",
+      "category": "deployment_hosting",
+      "type": "platform",
+      "default_use_when": [
+        "Complex microservices architecture",
+        "Need fine-grained resource control",
+        "Multi-cloud or hybrid deployment",
+        "Team has Kubernetes expertise"
+      ],
+      "avoid_when": [
+        "Small team without DevOps capacity",
+        "Simple applications",
+        "Rapid prototyping phase"
+      ],
+      "capabilities": [
+        "container_orchestration",
+        "auto_scaling",
+        "service_mesh",
+        "config_management",
+        "rolling_updates"
+      ],
+      "auth": {
+        "auth_type": "jwt",
+        "scopes_examples": ["pods:read", "deployments:write", "services:manage"]
+      },
+      "operational_notes": {
+        "limits": "Cluster size limits; etcd limits",
+        "pricing_tier_hint": "Self-managed free; GKE/EKS/AKS from $0.10/hr",
+        "regionality": "Anywhere (self-hosted or managed)",
+        "failure_modes": ["pod_eviction", "resource_quota", "network_policy"]
+      },
+      "alternatives": ["fly_io", "render", "ecs"]
+    },
+    {
+      "id": "auth0",
+      "display_name": "Auth0",
+      "category": "auth_identity",
+      "type": "service",
+      "default_use_when": [
+        "Need comprehensive identity platform",
+        "Multiple social login providers",
+        "Enterprise SSO requirements",
+        "Complex authorization rules"
+      ],
+      "avoid_when": [
+        "Simple username/password only",
+        "Cost-sensitive small projects",
+        "Need full control over auth flow"
+      ],
+      "capabilities": [
+        "social_login",
+        "sso",
+        "mfa",
+        "rules_actions",
+        "user_management",
+        "rbac"
+      ],
+      "auth": {
+        "auth_type": "oauth",
+        "scopes_examples": ["openid", "profile", "email", "read:users"]
+      },
+      "operational_notes": {
+        "limits": "MAU limits by plan; action execution limits",
+        "pricing_tier_hint": "Free up to 7500 MAU; Essential from $23/mo",
+        "regionality": "US, EU, AU",
+        "failure_modes": ["rate_limiting", "action_timeout", "token_expiry"]
+      },
+      "alternatives": ["clerk", "supabase_auth", "cognito"]
+    },
+    {
+      "id": "clerk",
+      "display_name": "Clerk",
+      "category": "auth_identity",
+      "type": "service",
+      "default_use_when": [
+        "React/Next.js frontend",
+        "Need beautiful pre-built UI components",
+        "Multi-tenant SaaS applications",
+        "Developer experience priority"
+      ],
+      "avoid_when": [
+        "Need extensive customization",
+        "Non-JavaScript environments",
+        "Enterprise compliance requirements"
+      ],
+      "capabilities": [
+        "pre_built_components",
+        "social_login",
+        "organizations",
+        "webhooks",
+        "session_management"
+      ],
+      "auth": {
+        "auth_type": "jwt",
+        "scopes_examples": ["user:read", "org:read", "org:write"]
+      },
+      "operational_notes": {
+        "limits": "MAU limits by plan; organization limits",
+        "pricing_tier_hint": "Free up to 10k MAU; Pro from $25/mo",
+        "regionality": "US, EU",
+        "failure_modes": ["webhook_delivery", "session_sync", "component_hydration"]
+      },
+      "alternatives": ["auth0", "supabase_auth"]
+    },
+    {
+      "id": "supabase_auth",
+      "display_name": "Supabase Auth",
+      "category": "auth_identity",
+      "type": "service",
+      "default_use_when": [
+        "Already using Supabase",
+        "Need auth integrated with database RLS",
+        "PostgreSQL-centric architecture",
+        "Cost-effective auth solution"
+      ],
+      "avoid_when": [
+        "Need enterprise SSO (limited SAML)",
+        "Complex authorization rules",
+        "Not using Supabase platform"
+      ],
+      "capabilities": [
+        "email_password",
+        "social_login",
+        "magic_links",
+        "phone_auth",
+        "rls_integration"
+      ],
+      "auth": {
+        "auth_type": "jwt",
+        "scopes_examples": ["authenticated", "service_role"]
+      },
+      "operational_notes": {
+        "limits": "Email rate limits; social provider limits",
+        "pricing_tier_hint": "Included with Supabase; Pro from $25/mo",
+        "regionality": "Supabase regions (US, EU, APAC, SA)",
+        "failure_modes": ["email_delivery", "token_refresh", "provider_oauth"]
+      },
+      "alternatives": ["auth0", "clerk", "cognito"]
+    },
+    {
+      "id": "cognito",
+      "display_name": "AWS Cognito",
+      "category": "auth_identity",
+      "type": "service",
+      "default_use_when": [
+        "AWS-native architecture",
+        "Need user pools with federation",
+        "Integration with other AWS services",
+        "High-scale requirements"
+      ],
+      "avoid_when": [
+        "Need modern DX and UI components",
+        "Simple auth needs (complexity overhead)",
+        "Multi-cloud requirements"
+      ],
+      "capabilities": [
+        "user_pools",
+        "identity_pools",
+        "federation",
+        "mfa",
+        "lambda_triggers"
+      ],
+      "auth": {
+        "auth_type": "oauth",
+        "scopes_examples": ["openid", "profile", "email", "aws.cognito.signin.user.admin"]
+      },
+      "operational_notes": {
+        "limits": "50 user pools per account; 60 requests/sec default",
+        "pricing_tier_hint": "Free tier 50k MAU; then $0.0055/MAU",
+        "regionality": "All AWS regions",
+        "failure_modes": ["lambda_trigger_timeout", "rate_limiting", "token_size"]
+      },
+      "alternatives": ["auth0", "supabase_auth"]
+    }
+  ],
+  "selection_rules": {
+    "description": "Rules for selecting tools from the catalog during architecture generation",
+    "rules": [
+      {
+        "id": "catalog_only",
+        "rule": "All tool IDs referenced in architecture must exist in this catalog"
+      },
+      {
+        "id": "default_plus_alternatives",
+        "rule": "For each category needed, emit one default choice + 1-2 alternatives with requirement-based rationales"
+      },
+      {
+        "id": "no_placeholders",
+        "rule": "Never use generic placeholders like 'Task Queue' or 'Database' - always reference specific catalog tools"
+      },
+      {
+        "id": "permission_mapping",
+        "rule": "For each agent, specify which tools it can access and relevant auth scopes"
+      },
+      {
+        "id": "failure_handling",
+        "rule": "Include failure_handling notes for critical path tools"
+      }
+    ]
+  }
+}
+

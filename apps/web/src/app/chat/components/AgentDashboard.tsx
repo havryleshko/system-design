@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import CubeLoader from "./CubeLoader";
-import ResultsTab from "./ResultsTab";
-import NotebookTab from "./NotebookTab";
-import ReasoningTab from "./ReasoningTab";
-import DownloadTab from "./DownloadTab";
+import ResultsV2 from "./ResultsV2";
+import PlaceholderTab from "./PlaceholderTab";
 
 type TabId = "results" | "notebook" | "reasoning" | "download";
 
@@ -140,7 +138,7 @@ export default function AgentDashboard({
       case "results":
 
         return (
-          <ResultsTab
+          <ResultsV2
             output={output}
             startedAt={startedAt}
             values={values}
@@ -148,11 +146,11 @@ export default function AgentDashboard({
           />
         );
       case "notebook":
-        return <NotebookTab />;
+        return <PlaceholderTab title="Notebook" note="Tab reset for Results V2 rebuild." />;
       case "reasoning":
-        return <ReasoningTab query={question} values={values} />;
+        return <PlaceholderTab title="Reasoning" note="Tab reset for Results V2 rebuild." />;
       case "download":
-        return <DownloadTab values={values} runId={runId} />;
+        return <PlaceholderTab title="Download" note="Exports will be rebuilt after Results V2." />;
       default:
         return null;
     }

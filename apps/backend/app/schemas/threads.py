@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal, Optional, Dict, Any
+from typing import Literal, Optional, Dict, Any, List
 
 
 class ThreadCreate(BaseModel):
@@ -12,6 +12,8 @@ class ThreadResponse(BaseModel):
 
 class RunStartRequest(BaseModel):
     input: str
+    clarifier_session_id: Optional[str] = None
+    clarifier_summary: Optional[str] = None
 
 
 class RunStartResponse(BaseModel):
@@ -36,3 +38,59 @@ class ThreadListItem(BaseModel):
 
 class ThreadListResponse(BaseModel):
     threads: list[ThreadListItem]
+
+ 
+# =============================================================================
+# Clarifier Chat (LLM-led) Schemas
+# =============================================================================
+
+class ClarifierSessionCreateRequest(BaseModel):
+    input: str
+
+
+class ClarifierSessionCreateResponse(BaseModel):
+    session_id: str
+    status: Literal["active"]
+    assistant_message: str
+    turn_count: int
+
+
+class ClarifierTurnRequest(BaseModel):
+    message: str
+
+
+class ClarifierTurnResponse(BaseModel):
+    status: Literal["active", "finalized"]
+    assistant_message: str
+    turn_count: int
+
+
+class ClarifierFinalizeRequest(BaseModel):
+    proceed_as_draft: bool
+
+
+class ClarifierFinalizeResponse(BaseModel):
+    status: Literal["ready", "draft"]
+    final_summary: str
+    enriched_prompt: str
+    missing_fields: List[str]
+    assumptions: List[str]
+
+
+class ClarifierMessage(BaseModel):
+    role: Literal["system", "assistant", "user"]
+    content: str
+    created_at: Optional[str] = None
+
+
+class ClarifierSessionGetResponse(BaseModel):
+    session_id: str
+    thread_id: str
+    status: Literal["active", "finalized", "abandoned"]
+    original_input: str
+    turn_count: int
+    final_summary: Optional[str] = None
+    enriched_prompt: Optional[str] = None
+    missing_fields: List[str] = []
+    assumptions: List[str] = []
+    messages: List[ClarifierMessage] = []

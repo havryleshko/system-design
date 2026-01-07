@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.agent.system_design.graph import _load_checkpointer_async
 from app.routes.threads import threads_router
+from app.routes.clarifier import clarifier_router
 
 try:
     import sentry_sdk
@@ -76,3 +77,4 @@ async def checkpointer_health():
         raise HTTPException(status_code=503, detail=f"checkpointer unavailable: {exc}") from exc
 
 app.include_router(threads_router)
+app.include_router(clarifier_router)

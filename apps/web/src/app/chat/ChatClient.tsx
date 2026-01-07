@@ -2,13 +2,14 @@
 
 import { ReactNode, useMemo, useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { createThread, startRun, getThreadState } from "@/app/actions";
+import { createThread, startRun, getThreadState, createClarifierSession } from "@/app/actions";
 import { useRunPolling } from "./useRunPolling";
 import { useRunWebSocket } from "./useRunWebSocket";
 import ReactMarkdown from "react-markdown";
 import AgentDashboard from "./components/AgentDashboard";
 import ProfilePopup from "./components/ProfilePopup";
 import ThreadList from "./components/ThreadList";
+import ClarifierChatModal from "./components/ClarifierChatModal";
 
 type NavItem = {
   label: string;
@@ -138,6 +139,11 @@ export default function ChatClient() {
 
   // Thread list refresh trigger
   const [threadListRefresh, setThreadListRefresh] = useState(0);
+
+  // Clarifier chat state
+  const [showClarifier, setShowClarifier] = useState(false);
+  const [clarifierSessionId, setClarifierSessionId] = useState<string | null>(null);
+  const [clarifierAssistantMessage, setClarifierAssistantMessage] = useState("");
 
   const themeVars = useMemo(
     () => ({
@@ -348,7 +354,33 @@ export default function ChatClient() {
     }
 
     const token = session.access_token;
+    const prompt = context ? `${context}\n\n${question}` : question;
 
+    try {
+      setError(null);
+      // Ensure thread exists first (clarifier session is thread-scoped)
+      let currentThreadId = threadId;
+      if (!currentThreadId) {
+        currentThreadId = await createThread(token);
+        setThreadId(currentThreadId);
+      }
+
+      const created = await createClarifierSession(currentThreadId, prompt, token);
+      setClarifierSessionId(created.session_id);
+      setClarifierAssistantMessage(created.assistant_message);
+      setShowClarifier(true);
+    } catch (err) {
+      console.error("Submit error:", err);
+      const message = err instanceof Error ? err.message : "Failed to start run";
+      setError(message);
+    }
+  };
+
+  const executeRun = async (
+    prompt: string,
+    token: string,
+    extra?: { clarifier_session_id?: string; clarifier_summary?: string }
+  ) => {
     try {
       resetSession();
       setError(null);
@@ -356,7 +388,7 @@ export default function ChatClient() {
       setRunStatus("running");
       setStartedAt(new Date());
       setProgress(0);
-      setSubmittedQuestion(context ? `${context}\n\n${question}` : question);
+      setSubmittedQuestion(prompt);
 
       // Create thread if needed
       let currentThreadId = threadId;
@@ -365,13 +397,12 @@ export default function ChatClient() {
         setThreadId(currentThreadId);
       }
 
-      const prompt = context ? `${context}\n\n${question}` : question;
-      const newRunId = await startRun(currentThreadId, prompt, token);
+      const newRunId = await startRun(currentThreadId, prompt, token, extra);
       setRunId(newRunId);
 
       attachWebSocket(currentThreadId, newRunId, token);
     } catch (err) {
-      console.error("Submit error:", err);
+      console.error("Execute run error:", err);
       const message = err instanceof Error ? err.message : "Failed to start run";
       // If the backend lost in-memory state, clear the thread so the next attempt creates a new one
       if (message.toLowerCase().includes("thread") || message.includes("404")) {
@@ -382,6 +413,24 @@ export default function ChatClient() {
       stopAll();
     }
   };
+
+  const handleClarifierClose = useCallback(() => {
+    setShowClarifier(false);
+    setClarifierSessionId(null);
+    setClarifierAssistantMessage("");
+  }, []);
+
+  const handleClarifierReadyToStart = useCallback(
+    (result: { enrichedPrompt: string; finalSummary: string; sessionId: string }) => {
+      setShowClarifier(false);
+      if (!session?.access_token) return;
+      executeRun(result.enrichedPrompt, session.access_token, {
+        clarifier_session_id: result.sessionId,
+        clarifier_summary: result.finalSummary,
+      });
+    },
+    [session?.access_token]
+  );
 
   const handleCancel = useCallback(() => {
     setIsRunning(false);
@@ -522,6 +571,7 @@ export default function ChatClient() {
           onShare={handleShare}
           onNewAnalysis={handleNewAnalysis}
         />
+
       </div>
     );
   }
@@ -731,6 +781,15 @@ export default function ChatClient() {
           </div>
         </div>
       </div>
+
+      <ClarifierChatModal
+        isOpen={showClarifier}
+        sessionId={clarifierSessionId}
+        token={session?.access_token ?? null}
+        initialAssistantMessage={clarifierAssistantMessage}
+        onClose={handleClarifierClose}
+        onReadyToStart={handleClarifierReadyToStart}
+      />
     </div>
   );
 }

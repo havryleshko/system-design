@@ -167,7 +167,9 @@ def get_thread_data(thread_id: str) -> Optional[Dict[str, Any]]:
 def get_run(thread_id: str, run_id: str) -> Optional[Dict[str, Any]]:
     rows = _run_select(
         """
-        select run_id, thread_id, user_id, status, final_state, user_input, created_at, updated_at
+        select run_id, thread_id, user_id, status, final_state, user_input,
+               clarifier_session_id, clarifier_summary,
+               created_at, updated_at
         from runs
         where thread_id = %s and run_id = %s
         """,
@@ -239,7 +241,14 @@ def _enforce_daily_run_limit(user_id: Optional[str]) -> None:
         )
 
 
-def start_run(thread_id: str, user_input: str, user_id: Optional[str] = None) -> str:
+def start_run(
+    thread_id: str,
+    user_input: str,
+    user_id: Optional[str] = None,
+    *,
+    clarifier_session_id: str | None = None,
+    clarifier_summary: str | None = None,
+) -> str:
     if not user_id:
         raise PermissionError("Authentication required")
 
@@ -256,10 +265,10 @@ def start_run(thread_id: str, user_input: str, user_id: Optional[str] = None) ->
     run_id = str(uuid4())
     _run_execute(
         """
-        insert into runs(run_id, thread_id, user_id, status, user_input)
-        values (%s, %s, %s, 'queued', %s)
+        insert into runs(run_id, thread_id, user_id, status, user_input, clarifier_session_id, clarifier_summary)
+        values (%s, %s, %s, 'queued', %s, %s, %s)
         """,
-        (run_id, thread_id, user_id, user_input),
+        (run_id, thread_id, user_id, user_input, clarifier_session_id, clarifier_summary),
     )
     _run_execute(
         "update threads set current_run_id = %s where thread_id = %s",
@@ -274,6 +283,7 @@ async def execute_run(
     user_input: str,
     user_id: Optional[str] = None,
     ws_queue: Optional[asyncio.Queue] = None,
+    metadata_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if _DEBUG_LOGS:
         logger.debug("[EXEC] execute_run called", extra={"thread_id": thread_id, "run_id": run_id})
@@ -285,7 +295,7 @@ async def execute_run(
             if timeout_s > 0:
                 async with asyncio.timeout(timeout_s):
                     return await _execute_run_body(thread_id, run_id, user_input, user_id, ws_queue)
-            return await _execute_run_body(thread_id, run_id, user_input, user_id, ws_queue)
+            return await _execute_run_body(thread_id, run_id, user_input, user_id, ws_queue, metadata_extra)
 
     except (TimeoutError, asyncio.TimeoutError) as exc:
         msg = f"Run timed out after {timeout_s}s"
@@ -351,6 +361,7 @@ async def _execute_run_body(
     user_input: str,
     user_id: Optional[str],
     ws_queue: Optional[asyncio.Queue],
+    metadata_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if _DEBUG_LOGS:
         logger.debug("[EXEC] loading compiled graph", extra={"thread_id": thread_id, "run_id": run_id})
@@ -358,26 +369,28 @@ async def _execute_run_body(
     if _DEBUG_LOGS:
         logger.debug("[EXEC] graph loaded", extra={"thread_id": thread_id, "run_id": run_id})
 
+    meta = {
+        "user_id": user_id,
+        "thread_id": thread_id,
+        "run_id": run_id,
+    }
+    if isinstance(metadata_extra, dict):
+        for k, v in metadata_extra.items():
+            if v is not None:
+                meta[k] = v
+
     config = {
         "configurable": {
             "thread_id": thread_id,
         },
-        "metadata": {
-            "user_id": user_id,
-            "thread_id": thread_id,
-            "run_id": run_id,
-        },
+        "metadata": meta,
         "recursion_limit": 100,
     }
 
     initial_state = {
         "messages": [HumanMessage(content=user_input)],
         "goal": user_input,
-        "metadata": {
-            "user_id": user_id,
-            "thread_id": thread_id,
-            "run_id": run_id,
-        },
+        "metadata": meta,
     }
     _run_execute(
         "update runs set status = 'running', updated_at = now() where run_id = %s",
@@ -386,6 +399,7 @@ async def _execute_run_body(
 
     if _DEBUG_LOGS:
         logger.debug("[EXEC] starting astream_events", extra={"thread_id": thread_id, "run_id": run_id})
+    stream_exc: Exception | None = None
     try:
         async for event in compiled_graph.astream_events(
             initial_state,
@@ -408,28 +422,57 @@ async def _execute_run_body(
                                     "content": msg.content,
                                     "run_id": run_id,
                                 })
-    except Exception as stream_exc:
+    except Exception as exc:
+        stream_exc = exc
         if _DEBUG_LOGS:
             logger.debug("[EXEC] astream_events failed", extra={"thread_id": thread_id, "run_id": run_id})
         logger.warning(f"astream_events failed: {stream_exc}")
 
     if _DEBUG_LOGS:
         logger.debug("[EXEC] getting final state from checkpointer", extra={"thread_id": thread_id, "run_id": run_id})
-    final_state = await compiled_graph.aget_state(config)
-    if final_state and hasattr(final_state, 'values'):
-        final_state = final_state.values
+    final_state: Any = None
+
+    def _has_useful_artifacts(state_dict: Dict[str, Any]) -> bool:
+        # If we have any meaningful output or design artifacts, treat state as final.
+        out = state_dict.get("output")
+        if isinstance(out, str) and out.strip():
+            return True
+        design_state = state_dict.get("design_state") or {}
+        if isinstance(design_state, dict):
+            design_output = design_state.get("output") or {}
+            if isinstance(design_output, dict):
+                formatted = design_output.get("formatted_output")
+                if isinstance(formatted, str) and formatted.strip():
+                    return True
+            diagram = design_state.get("diagram") or {}
+            if isinstance(diagram, dict):
+                mermaid = diagram.get("mermaid")
+                if isinstance(mermaid, str) and mermaid.strip():
+                    return True
+        return False
+
+    # Prefer checkpointed state for performance, but if streaming failed or state looks incomplete,
+    # fall back to a full invoke (and let exceptions propagate to execute_run for proper failure persistence).
+    if stream_exc is None:
+        checkpointed = await compiled_graph.aget_state(config)
+        if checkpointed and hasattr(checkpointed, "values"):
+            final_state = checkpointed.values
+            if _DEBUG_LOGS:
+                logger.debug(
+                    "[EXEC] got final state values",
+                    extra={
+                        "thread_id": thread_id,
+                        "run_id": run_id,
+                        "keys": list(final_state.keys())[:25] if isinstance(final_state, dict) else None,
+                    },
+                )
+
+    if not (isinstance(final_state, dict) and _has_useful_artifacts(final_state)):
         if _DEBUG_LOGS:
             logger.debug(
-                "[EXEC] got final state values",
-                extra={
-                    "thread_id": thread_id,
-                    "run_id": run_id,
-                    "keys": list(final_state.keys())[:25] if isinstance(final_state, dict) else None,
-                },
+                "[EXEC] falling back to ainvoke for complete final state",
+                extra={"thread_id": thread_id, "run_id": run_id, "had_checkpoint": isinstance(final_state, dict)},
             )
-    else:
-        if _DEBUG_LOGS:
-            logger.debug("[EXEC] aget_state had no values; falling back to ainvoke", extra={"thread_id": thread_id, "run_id": run_id})
         final_state = await compiled_graph.ainvoke(initial_state, config=config)
 
     # Extract final output

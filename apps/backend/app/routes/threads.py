@@ -68,7 +68,13 @@ async def start_run(
     if not owner or str(owner) != str(user_id):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
-        run_id = thread_service.start_run(thread_id, payload.input, user_id)
+        run_id = thread_service.start_run(
+            thread_id,
+            payload.input,
+            user_id,
+            clarifier_session_id=payload.clarifier_session_id,
+            clarifier_summary=payload.clarifier_summary,
+        )
     except RuntimeError as exc:
         # Map quota limits to a proper status code instead of 500.
         msg = str(exc)
@@ -203,7 +209,22 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                 final_state = json.loads(final_state)
             except Exception:
                 final_state = {}
-        output = final_state.get("output") if isinstance(final_state, dict) else None
+        output = None
+        if isinstance(final_state, dict):
+            output = final_state.get("output")
+            if not output:
+                design_state = final_state.get("design_state", {})
+                design_output = design_state.get("output", {}) if isinstance(design_state, dict) else {}
+                if isinstance(design_output, dict):
+                    output = design_output.get("formatted_output")
+            if not output:
+                messages = final_state.get("messages", [])
+                if isinstance(messages, list) and messages:
+                    last_msg = messages[-1]
+                    if hasattr(last_msg, "content"):
+                        output = str(last_msg.content)
+                    elif isinstance(last_msg, dict) and "content" in last_msg:
+                        output = str(last_msg["content"])
         
         await websocket.send_json({
             "type": "values-updated",
@@ -233,7 +254,14 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                     current_status = run.get("status", "queued")
                     if current_status in ("completed", "failed"):
                         final_state = run.get("final_state", {})
-                        output = final_state.get("output") if isinstance(final_state, dict) else None
+                        output = None
+                        if isinstance(final_state, dict):
+                            output = final_state.get("output")
+                            if not output:
+                                design_state = final_state.get("design_state", {})
+                                design_output = design_state.get("output", {}) if isinstance(design_state, dict) else {}
+                                if isinstance(design_output, dict):
+                                    output = design_output.get("formatted_output")
                         await websocket.send_json({
                             "type": "values-updated",
                             "values": final_state,
@@ -273,8 +301,14 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
         # Start execution
         if _DEBUG_LOGS:
             logger.debug("[WS] starting execution task", extra={"thread_id": thread_id, "run_id": run_id})
+        metadata_extra: dict[str, str] = {}
+        if isinstance(run_data, dict):
+            if run_data.get("clarifier_session_id"):
+                metadata_extra["clarifier_session_id"] = str(run_data.get("clarifier_session_id"))
+            if run_data.get("clarifier_summary"):
+                metadata_extra["clarifier_summary"] = str(run_data.get("clarifier_summary"))
         execution_task = asyncio.create_task(
-            thread_service.execute_run(thread_id, run_id, user_input, user_id, event_queue)
+            thread_service.execute_run(thread_id, run_id, user_input, user_id, event_queue, metadata_extra)
         )
         if _DEBUG_LOGS:
             logger.debug("[WS] execution task created", extra={"thread_id": thread_id, "run_id": run_id})
@@ -291,6 +325,7 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
         
         # Stream events from queue
         try:
+            saw_terminal_event = False
             while True:
                 try:
                     # Wait for event with timeout
@@ -299,8 +334,10 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                     
                     # Close on completion
                     if event.get("type") == "run-completed":
+                        saw_terminal_event = True
                         break
                     if event.get("type") == "error":
+                        saw_terminal_event = True
                         break
                         
                 except asyncio.TimeoutError:
@@ -318,9 +355,42 @@ async def stream_thread(websocket: WebSocket, thread_id: str):
                                 "type": "error",
                                 "error": str(exc),
                             })
+                            saw_terminal_event = True
                         else:
                             if _DEBUG_LOGS:
                                 logger.debug("[WS] execution task done", extra={"thread_id": thread_id, "run_id": run_id})
+                        while True:
+                            try:
+                                pending = event_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                            await websocket.send_json(pending)
+                            if pending.get("type") in ("run-completed", "error"):
+                                saw_terminal_event = True
+                        if not saw_terminal_event:
+                            run_row = thread_service.get_run(thread_id, run_id) or {}
+                            final_state = run_row.get("final_state") or {}
+                            if isinstance(final_state, str):
+                                try:
+                                    final_state = json.loads(final_state)
+                                except Exception:
+                                    final_state = {}
+                            output = None
+                            if isinstance(final_state, dict):
+                                output = final_state.get("output")
+                                if not output:
+                                    design_state = final_state.get("design_state", {})
+                                    design_output = design_state.get("output", {}) if isinstance(design_state, dict) else {}
+                                    if isinstance(design_output, dict):
+                                        output = design_output.get("formatted_output")
+                            await websocket.send_json(
+                                {"type": "values-updated", "values": final_state, "output": output, "run_id": run_id}
+                            )
+                            await websocket.send_json(
+                                {"type": "run-completed", "run_id": run_id, "thread_id": thread_id, "status": "completed"}
+                            )
+                            saw_terminal_event = True
+
                         break
                     continue
                     

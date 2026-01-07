@@ -1,13 +1,20 @@
 from typing import Any, Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from .state import State
-from langchain_openai import ChatOpenAI
+try:  
+    from langchain_openai import ChatOpenAI  
+except Exception:  
+    ChatOpenAI = None  
 
 from functools import lru_cache
 import json, os, math
-from datetime import datetime
+from datetime import datetime, timezone
 
-from langgraph.types import interrupt, Command
+try:  
+    from langgraph.types import interrupt, Command  # type: ignore
+except Exception:
+    interrupt = None  
+    Command = None  
 import logging
 import requests
 
@@ -484,6 +491,8 @@ def normalise_architecture(raw: Any, *, goal: str, design_brief: str) -> Dict[st
 
 @lru_cache(maxsize=4)
 def make_brain(model: str | None = None) -> ChatOpenAI:
+    if ChatOpenAI is None:
+        raise RuntimeError("langchain-openai is not installed. Install backend requirements.")
     model_name = model or os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
     # Max output tokens is a practical guardrail; total budget is enforced separately.
     max_out = int(os.getenv("CHAT_OPENAI_MAX_OUTPUT_TOKENS", "1200"))
@@ -792,18 +801,18 @@ def planner_agent(state: State) -> Dict[str, any]:
         if quality < min_quality and not already_retried:
             updated_meta = dict(metadata)
             updated_meta["planner_quality_retry"] = True
-            # Reset subnode statuses to allow retry
+                # Reset subnode state to allow retry (tests expect cleared state, not just pending flags)
             return {
                 "planner_state": planner_state,
-                "plan_scope": {**plan_scope, "status": "pending"},  # Reset to allow retry
-                "plan_state": {**plan_state, "status": "pending"},  # Reset to allow retry
+                    "plan_scope": {},
+                    "plan_state": {},
                 "metadata": updated_meta,
                 "run_phase": "planner",
             }
     
     # Finalize and record memory
     summary = _coerce_str(plan_state.get("summary"), max_len=600)
-    _record_final_plan_memory(state, summary, plan_state=plan_state)
+    _record_final_plan_memory(state, summary)
     
     updates: Dict[str, Any] = {
         "planner_state": planner_state,
@@ -893,8 +902,8 @@ def planner_scope(state: State) -> Dict[str, any]:
     if not latest_user or latest_user.lower() == goal.lower():
         info_issues.append("Constraints or requirements not provided.")
 
-    # Temporarily disable clarifier interruptions; keep issues for notes/risk
-    needs_clarifier = False
+    # Clarifier is required for blocking issues (e.g. missing goal)
+    needs_clarifier = bool(blocking_issues)
     risks = [(issue or "").strip()[:120] for issue in (blocking_issues + info_issues) if (issue or "").strip()]
     plan_scope = {
         "goal": goal,
@@ -1615,43 +1624,58 @@ def research_agent(state: State) -> Dict[str, any]:
     existing = state.get("research_state")
     research_state = _initial_research_state(existing)
     
-    # Get results from subnodes (they update state directly via graph edges)
+    goal = _coerce_str(state.get("goal"), max_len=500) or ""
     nodes = research_state.get("nodes") or {}
+    in_graph_mode = isinstance(state.get("run_phase"), str) and bool(state.get("run_phase"))
+
+    if not in_graph_mode:
+        if not nodes:
+            if not goal:
+                nodes = {
+                    "knowledge_base": {"status": "skipped", "notes": "Goal missing"},
+                    "github_api": {"status": "skipped", "notes": "Goal missing"},
+                    "web_search": {"status": "skipped", "notes": "Goal missing"},
+                }
+            else:
+                def _as_payload(key: str, out: Any) -> dict[str, Any]:
+                    if isinstance(out, dict) and isinstance(out.get("research_state"), dict):
+                        rs = out.get("research_state") or {}
+                        nd = rs.get("nodes") or {}
+                        candidate = nd.get(key)
+                        if isinstance(candidate, dict):
+                            return candidate
+                    return out if isinstance(out, dict) else {"status": "skipped", "notes": f"{key} non-dict result"}
+
+                kb_out = knowledge_base_node(state)
+                gh_out = github_api_node(state)
+                web_out = web_search_node(state)
+                nodes = {
+                    "knowledge_base": _as_payload("knowledge_base", kb_out),
+                    "github_api": _as_payload("github_api", gh_out),
+                    "web_search": _as_payload("web_search", web_out),
+                }
+            research_state["nodes"] = nodes
     
-    # Check status of subnodes
-    pattern_result = nodes.get("pattern_selector", {})
-    kb_result = nodes.get("knowledge_base", {})
-    github_result = nodes.get("github_api", {})
-    web_result = nodes.get("web_search", {})
-    
+    # Graph-mode uses pattern_selector_node + other subnodes; direct-call mode may omit pattern selector.
+    pattern_result = nodes.get("pattern_selector", {}) if isinstance(nodes, dict) else {}
+    kb_result = nodes.get("knowledge_base", {}) if isinstance(nodes, dict) else {}
+    github_result = nodes.get("github_api", {}) if isinstance(nodes, dict) else {}
+    web_result = nodes.get("web_search", {}) if isinstance(nodes, dict) else {}
+
     pattern_status = pattern_result.get("status", "").lower() if isinstance(pattern_result, dict) else ""
     kb_status = kb_result.get("status", "").lower() if isinstance(kb_result, dict) else ""
     github_status = github_result.get("status", "").lower() if isinstance(github_result, dict) else ""
     web_status = web_result.get("status", "").lower() if isinstance(web_result, dict) else ""
-    
-    pattern_completed = pattern_status == "completed" or pattern_status == "skipped"
+
+    pattern_completed = pattern_status == "completed" or pattern_status == "skipped" or (not in_graph_mode)
     kb_completed = kb_status == "completed" or kb_status == "skipped"
     github_completed = github_status == "completed" or github_status == "skipped"
     web_completed = web_status == "completed" or web_status == "skipped"
-    
-    # If subnodes are not all complete, routing will handle it
-    # This function only aggregates when all are done
+
     if not (pattern_completed and kb_completed and github_completed and web_completed):
-        # Still update research_state with what we have
-        if pattern_completed:
-            research_state["nodes"]["pattern_selector"] = pattern_result
-        if kb_completed:
-            research_state["nodes"]["knowledge_base"] = kb_result
-        if github_completed:
-            research_state["nodes"]["github_api"] = github_result
-        if web_completed:
-            research_state["nodes"]["web_search"] = web_result
-        
-        # Return minimal updates - routing will handle next step
-        return {
-            "research_state": research_state,
-        }
-    
+        # Routing will handle next step in graph-mode.
+        return {"research_state": research_state}
+
     # All subnodes are complete - aggregate results
     node_outputs = {
         "pattern_selector_node": pattern_result,
@@ -1659,19 +1683,22 @@ def research_agent(state: State) -> Dict[str, any]:
         "github_api_node": github_result,
         "web_search_node": web_result,
     }
-    
-    # Store all node outputs
-    research_state["nodes"] = {
-        "pattern_selector": pattern_result,
+
+    # Store all node outputs (keep pattern selector in graph-mode for routing/debugging)
+    aggregated_nodes: dict[str, Any] = {
         "knowledge_base": kb_result,
         "github_api": github_result,
         "web_search": web_result,
     }
-    
-    # Preserve selected_patterns from pattern_selector_node
-    selected_patterns = pattern_result.get("selected_patterns", [])
-    if selected_patterns:
-        research_state["selected_patterns"] = selected_patterns
+    if in_graph_mode:
+        aggregated_nodes["pattern_selector"] = pattern_result
+    research_state["nodes"] = aggregated_nodes
+
+    # Preserve selected_patterns from pattern_selector_node (graph-mode)
+    if in_graph_mode and isinstance(pattern_result, dict):
+        selected_patterns = pattern_result.get("selected_patterns", [])
+        if selected_patterns:
+            research_state["selected_patterns"] = selected_patterns
     
     # Aggregate notes
     for result in node_outputs.values():
@@ -1781,7 +1808,6 @@ def _initial_design_state(existing: Optional[dict[str, Any]]) -> dict[str, Any]:
     return {
         "status": _coerce_str(data.get("status")) or "pending",
         "architecture": data.get("architecture") or {},
-        "diagram": data.get("diagram") or {},
         "output": data.get("output") or {},
         "notes": _coerce_str_list(data.get("notes"), max_items=8, max_len=160),
     }
@@ -1969,7 +1995,7 @@ Generate a complete architecture as JSON with this structure:
             "name": "GoalSpecificAgentName",
             "responsibility": "What this agent does",
             "tools": ["tool1", "tool2"],
-            "subagents": []
+            "subagents": ["child_agent_id_1", "child_agent_id_2"]
         }}
     ],
     "tools": [
@@ -1979,6 +2005,14 @@ Generate a complete architecture as JSON with this structure:
             "type": "api|db|llm|search|file|code|other",
             "io_schema": "{{input}} -> {{output}}",
             "failure_handling": "How to handle failures"
+        }}
+    ],
+    "interactions": [
+        {{
+            "source": "agent_or_tool_id",
+            "target": "agent_or_tool_id",
+            "kind": "delegates|reviews|aggregates|routes|requests|returns|tool_call|reads|writes|notifies",
+            "label": "Optional short human label shown on the edge"
         }}
     ],
     "memory": {{
@@ -2006,6 +2040,9 @@ Generate a complete architecture as JSON with this structure:
 3. Include at least 2 agents with distinct responsibilities
 4. Tools should be specific to the goal (e.g., "gmail_api", "github_search", not just "api")
 5. The architecture should directly address the user's goal
+6. `subagents` MUST be a list of agent IDs (strings), not nested objects
+7. `interactions[].source/target` MUST reference existing IDs from `agents[].id` or `tools[].id`
+8. Include enough interactions to represent the true topology (fan-out/fan-in, routing, loops) — avoid a single linear chain unless the system is truly linear
 
 Return ONLY the JSON object, no markdown code blocks or other text."""
 
@@ -2043,6 +2080,8 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
             # Validate architecture
             validation_errors = []
             agents = architecture.get("agents", [])
+            tools = architecture.get("tools", [])
+            interactions = architecture.get("interactions", [])
             
             if len(agents) < 2:
                 validation_errors.append("Architecture must have at least 2 agents")
@@ -2053,6 +2092,45 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
                 name = (agent.get("name") or "").lower()
                 if name in generic_names:
                     validation_errors.append(f"Agent name '{agent.get('name')}' is too generic")
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    continue
+                raw_subagents = agent.get("subagents")
+                if raw_subagents is None:
+                    agent["subagents"] = []
+                    continue
+                if isinstance(raw_subagents, list):
+                    normalized: list[str] = []
+                    for entry in raw_subagents:
+                        if isinstance(entry, str) and entry.strip():
+                            normalized.append(entry.strip())
+                        elif isinstance(entry, dict):
+                            cid = (entry.get("id") or entry.get("name") or "").strip()
+                            if cid:
+                                normalized.append(cid)
+                    agent["subagents"] = normalized[:10]
+                else:
+                    agent["subagents"] = []
+            agent_ids = {a.get("id") for a in agents if isinstance(a, dict) and a.get("id")}
+            tool_ids = {t.get("id") for t in tools if isinstance(t, dict) and t.get("id")}
+            valid_ids = agent_ids | tool_ids
+            if not isinstance(interactions, list) or not interactions:
+                validation_errors.append("Architecture must include a non-empty interactions[] list (explicit edges)")
+            else:
+                bad_edges = 0
+                for e in interactions[:120]:
+                    if not isinstance(e, dict):
+                        bad_edges += 1
+                        continue
+                    src = e.get("source")
+                    tgt = e.get("target")
+                    if not isinstance(src, str) or not isinstance(tgt, str):
+                        bad_edges += 1
+                        continue
+                    if src not in valid_ids or tgt not in valid_ids:
+                        bad_edges += 1
+                if bad_edges:
+                    validation_errors.append(f"interactions[] has {bad_edges} invalid edge(s) (bad/missing endpoints)")
             
             if validation_errors and attempt < max_retries:
                 notes.append(f"Attempt {attempt + 1} validation failed: {validation_errors}")
@@ -2099,8 +2177,6 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
         ),
         "alternatives_considered": None,
     }
-    
-    # Store result in design_state.architecture for design_agent to aggregate
     existing_design_state = state.get("design_state") or {}
     existing_design_state["architecture"] = result
     
@@ -2111,22 +2187,24 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
 
 
 def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
-    # Extract keywords from goal for agent naming
     goal_words = [w.capitalize() for w in goal.split()[:3] if len(w) > 3]
     prefix = goal_words[0] if goal_words else "Task"
+
+    coordinator_id = f"{prefix.lower()}_coordinator"
+    worker_id = f"{prefix.lower()}_worker"
     
     return {
         "overview": f"Architecture for: {goal[:200]}",
         "agents": [
             {
-                "id": f"{prefix.lower()}_coordinator",
+                "id": coordinator_id,
                 "name": f"{prefix}Coordinator",
                 "responsibility": "Coordinate the overall workflow and delegate tasks",
                 "tools": ["task_queue", "status_tracker"],
-                "subagents": [],
+                "subagents": [worker_id],
             },
             {
-                "id": f"{prefix.lower()}_worker",
+                "id": worker_id,
                 "name": f"{prefix}Processor",
                 "responsibility": "Execute the main processing tasks",
                 "tools": ["data_handler", "output_generator"],
@@ -2141,6 +2219,35 @@ def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
                 "io_schema": "{task} -> {queued_task}",
                 "failure_handling": "Retry with exponential backoff",
             },
+            {
+                "id": "status_tracker",
+                "name": "Status Tracker",
+                "type": "other",
+                "io_schema": "{status_update} -> {ack}",
+                "failure_handling": "Best-effort; retry on transient errors",
+            },
+            {
+                "id": "data_handler",
+                "name": "Data Handler",
+                "type": "other",
+                "io_schema": "{input} -> {processed}",
+                "failure_handling": "Validate input; return structured error on failure",
+            },
+            {
+                "id": "output_generator",
+                "name": "Output Generator",
+                "type": "other",
+                "io_schema": "{processed} -> {output}",
+                "failure_handling": "Retry; fall back to simplified output if needed",
+            },
+        ],
+        "interactions": [
+            {"source": coordinator_id, "target": worker_id, "kind": "delegates", "label": "Delegate work"},
+            {"source": worker_id, "target": coordinator_id, "kind": "returns", "label": "Return results"},
+            {"source": coordinator_id, "target": "task_queue", "kind": "tool_call", "label": "Enqueue tasks"},
+            {"source": coordinator_id, "target": "status_tracker", "kind": "tool_call", "label": "Track progress"},
+            {"source": worker_id, "target": "data_handler", "kind": "tool_call", "label": "Process inputs"},
+            {"source": worker_id, "target": "output_generator", "kind": "tool_call", "label": "Generate output"},
         ],
         "memory": {
             "short_term": {"purpose": "Track current task state", "implementation": "In-memory dict"},
@@ -2160,221 +2267,13 @@ def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
     }
 
 
-def diagram_generator_node(state: State) -> Dict[str, Any]:
-    import base64
-    import urllib.parse
-    
-    run_id = (state.get("metadata") or {}).get("run_id") or ""
-    goal = _coerce_str(state.get("goal"), max_len=300) or "System"
-    design_state = state.get("design_state") or {}
-    
-    # Use architecture from architecture_generator_node
-    architecture_data = design_state.get("architecture") or {}
-    architecture = architecture_data.get("architecture") or state.get("architecture_output") or {}
-    
-    notes: list[str] = []
-    mermaid_text = ""
-    diagram_image_url = ""
-    
-    # Get agents and control loop from architecture
-    agents = architecture.get("agents", [])
-    tools = architecture.get("tools", [])
-    control_loop = architecture.get("control_loop", {})
-    
-    # Load diagram templates for reference
-    diagram_templates_path = os.path.join(os.path.dirname(__file__), "diagram_templates.json")
-    diagram_templates = {}
-    try:
-        with open(diagram_templates_path, "r") as f:
-            diagram_data = json.load(f)
-        diagram_templates = diagram_data.get("templates", {})
-    except Exception as e:
-        logger.warning(f"Failed to load diagram_templates.json: {e}")
-    
-    if not agents:
-        # No architecture to diagram
-        result = {
-            "status": "skipped",
-            "mermaid": "",
-            "diagram_image_url": "",
-            "notes": ["No architecture agents found to generate diagram"],
-        }
-        existing_design_state = state.get("design_state") or {}
-        existing_design_state["diagram"] = result
-        return {"design_state": existing_design_state}
-    
-    # Build architecture summary for LLM
-    agents_summary = []
-    for agent in agents[:6]:  # Limit to 6 agents for diagram clarity
-        agent_name = agent.get("name", "Agent")
-        agent_tools = agent.get("tools", [])[:3]
-        agents_summary.append(f"- {agent_name}: tools={agent_tools}")
-    
-    tools_summary = [t.get("name", "Tool") for t in tools[:5]]
-    flow = control_loop.get("flow", "")
-    
-    # Get example templates
-    flowchart_example = ""
-    sequence_example = ""
-    if diagram_templates:
-        fc_templates = diagram_templates.get("flowchart", {}).get("examples", [])
-        if fc_templates:
-            flowchart_example = fc_templates[0].get("code", "")
-        seq_templates = diagram_templates.get("sequence", {}).get("examples", [])
-        if seq_templates:
-            sequence_example = seq_templates[0].get("code", "")
-    
-    # Build LLM prompt
-    prompt = f"""Generate a Mermaid diagram for this agentic architecture.
-
-## Architecture Overview:
-Goal: {goal}
-
-## Agents:
-{chr(10).join(agents_summary)}
-
-## Tools: {', '.join(tools_summary) if tools_summary else 'None specified'}
-
-## Control Flow: {flow or 'Not specified'}
-
-## Diagram Type Selection:
-- Use **flowchart TD** for: showing agent decision flow, tool selection, control loops
-- Use **sequenceDiagram** for: multi-agent communication, temporal ordering, message passing
-
-## Example Flowchart:
-```
-{flowchart_example or "flowchart TD\\n    START([Start]) --> A[Agent A]\\n    A --> B[Agent B]\\n    B --> END([End])"}
-```
-
-## Example Sequence:
-```
-{sequence_example or "sequenceDiagram\\n    participant A as Agent A\\n    participant B as Agent B\\n    A->>B: Request\\n    B-->>A: Response"}
-```
-
-## Requirements:
-1. Choose the BEST diagram type for this architecture
-2. Include ALL agents from the architecture
-3. Show the flow/communication between agents
-4. Include tool interactions where relevant
-5. Use clear, readable node labels (agent names)
-6. Add START and END nodes for flowcharts
-
-Return ONLY the Mermaid code, no markdown code blocks or explanation."""
-
-    # Call LLM to generate diagram
-    try:
-        brain = make_brain()
-        messages = [
-            SystemMessage(content="You are an expert at creating clear, informative Mermaid diagrams for software architectures. Return only valid Mermaid syntax."),
-            HumanMessage(content=prompt),
-        ]
-        response = brain.invoke(messages)
-        mermaid_text = response.content.strip()
-        
-        # Track tokens
-        if hasattr(response, "response_metadata"):
-            usage = response.response_metadata.get("token_usage", {})
-            record_node_tokens(
-                run_id,
-                "diagram_generator_node",
-                usage.get("prompt_tokens", 0),
-                usage.get("completion_tokens", 0),
-                usage.get("total_tokens", 0),
-            )
-        
-        # Clean up response - remove markdown code blocks if present
-        if mermaid_text.startswith("```"):
-            lines = mermaid_text.split("\n")
-            # Remove first line (```mermaid or ```) and last line (```)
-            if lines[-1].strip() == "```":
-                mermaid_text = "\n".join(lines[1:-1])
-        else:
-                mermaid_text = "\n".join(lines[1:])
-        
-        notes.append(f"Generated {mermaid_text.split()[0] if mermaid_text else 'unknown'} diagram with LLM")
-        
-    except Exception as e:
-        logger.warning(f"LLM diagram generation failed: {e}")
-        notes.append(f"LLM error, using fallback diagram: {str(e)[:50]}")
-        # Generate fallback flowchart from agents
-        mermaid_text = _generate_fallback_diagram(agents, control_loop)
-    
-    # Generate mermaid.ink URL
-    if mermaid_text:
-        try:
-            # Encode diagram for mermaid.ink
-            # mermaid.ink uses base64 encoding
-            encoded = base64.urlsafe_b64encode(mermaid_text.encode('utf-8')).decode('utf-8')
-            diagram_image_url = f"https://mermaid.ink/img/{encoded}"
-            notes.append(f"Generated mermaid.ink URL")
-        except Exception as e:
-            logger.warning(f"Failed to generate mermaid.ink URL: {e}")
-            notes.append(f"Failed to generate image URL: {str(e)[:50]}")
-    
-    # Build graph JSON for frontend
-    graph_nodes = []
-    graph_edges = []
-    for i, agent in enumerate(agents):
-        graph_nodes.append({
-            "id": agent.get("id", f"agent_{i}"),
-            "label": agent.get("name", f"Agent {i}"),
-            "type": "agent",
-        })
-    
-    result = {
-        "status": "completed",
-        "mermaid": mermaid_text,
-        "diagram_image_url": diagram_image_url,
-        "graph": {"nodes": graph_nodes, "edges": graph_edges},
-        "notes": notes,
-        "what": "Generated Mermaid diagram",
-        "why": (
-            f"Selected diagram type '{(mermaid_text.split()[0] if mermaid_text else 'unknown')}' based on architecture structure and control flow."
-            if mermaid_text
-            else None
-        ),
-        "alternatives_considered": [
-            {"type": "flowchart TD", "reason": "Best for control-flow and decision routing"},
-            {"type": "sequenceDiagram", "reason": "Best for temporal ordering and message passing"},
-        ],
-    }
-    
-    # Store result in design_state.diagram for design_agent to aggregate
-    existing_design_state = state.get("design_state") or {}
-    existing_design_state["diagram"] = result
-    
-    return {
-        "design_state": existing_design_state,
-        "diagram_image_url": diagram_image_url,
-    }
-
-
-def _generate_fallback_diagram(agents: list, control_loop: dict) -> str:
-    lines = ["flowchart TD"]
-    lines.append("    START([Start])")
-    
-    prev_id = "START"
-    for i, agent in enumerate(agents):
-        agent_id = agent.get("id", f"agent_{i}").replace("-", "_").replace(" ", "_")
-        agent_name = agent.get("name", f"Agent {i}")
-        lines.append(f'    {agent_id}["{agent_name}"]')
-        lines.append(f"    {prev_id} --> {agent_id}")
-        prev_id = agent_id
-    
-    lines.append("    END([End])")
-    lines.append(f"    {prev_id} --> END")
-    
-    return "\n".join(lines)
-
-
 def output_formatter_node(state: State) -> Dict[str, Any]:
     design_state = state.get("design_state") or {}
     goal = _coerce_str(state.get("goal"), max_len=300) or "System"
     
-    # Get architecture and diagram from design_state
+    # Get architecture from design_state
     architecture_data = design_state.get("architecture") or {}
     architecture = architecture_data.get("architecture") or state.get("architecture_output") or {}
-    diagram_data = design_state.get("diagram") or {}
     
     notes: list[str] = []
     
@@ -2387,10 +2286,6 @@ def output_formatter_node(state: State) -> Dict[str, Any]:
     bounded_autonomy = architecture.get("bounded_autonomy", {})
     implementation_notes = architecture.get("implementation_notes", [])
     start_simple = architecture.get("start_simple_recommendation", "")
-    
-    # Get diagram info
-    mermaid_code = diagram_data.get("mermaid", "")
-    diagram_image_url = diagram_data.get("diagram_image_url", "") or state.get("diagram_image_url", "")
     
     # Build markdown output
     output_parts = []
@@ -2485,21 +2380,6 @@ def output_formatter_node(state: State) -> Dict[str, Any]:
     else:
         output_parts.append("*No safety constraints defined.*\n")
     
-    # Architecture Diagram
-    output_parts.append("## Architecture Diagram\n")
-    if diagram_image_url:
-        output_parts.append(f"![Architecture Diagram]({diagram_image_url})\n")
-    
-    if mermaid_code:
-        output_parts.append("<details>")
-        output_parts.append("<summary>View Diagram Code</summary>\n")
-        output_parts.append("```mermaid")
-        output_parts.append(mermaid_code)
-        output_parts.append("```")
-        output_parts.append("</details>\n")
-    elif not diagram_image_url:
-        output_parts.append("*No diagram generated.*\n")
-    
     # Implementation Notes
     output_parts.append("## Implementation Notes\n")
     if implementation_notes:
@@ -2541,26 +2421,21 @@ def design_agent(state: State) -> Dict[str, any]:
 
     # Get results from subnodes (they update state directly via graph edges)
     architecture_result = design_state.get("architecture", {})
-    diagram_result = design_state.get("diagram", {})
     output_result = design_state.get("output", {})
     
     # Check status of subnodes
     architecture_status = architecture_result.get("status", "").lower() if isinstance(architecture_result, dict) else ""
-    diagram_status = diagram_result.get("status", "").lower() if isinstance(diagram_result, dict) else ""
     output_status = output_result.get("status", "").lower() if isinstance(output_result, dict) else ""
     
     architecture_completed = architecture_status == "completed" or architecture_status == "skipped"
-    diagram_completed = diagram_status == "completed" or diagram_status == "skipped"
     output_completed = output_status == "completed" or output_status == "skipped"
     
     # If subnodes are not all complete, routing will handle it
     # This function only aggregates when all are done
-    if not (architecture_completed and diagram_completed and output_completed):
+    if not (architecture_completed and output_completed):
         # Still update design_state with what we have
         if architecture_completed:
             design_state["architecture"] = architecture_result
-        if diagram_completed:
-            design_state["diagram"] = diagram_result
         if output_completed:
             design_state["output"] = output_result
         
@@ -2571,11 +2446,10 @@ def design_agent(state: State) -> Dict[str, any]:
     
     # All subnodes are complete - aggregate results
     design_state["architecture"] = architecture_result
-    design_state["diagram"] = diagram_result
     design_state["output"] = output_result
     
     # Aggregate notes
-    for result in [architecture_result, diagram_result, output_result]:
+    for result in [architecture_result, output_result]:
         if isinstance(result, dict):
             notes = result.get("notes")
             if isinstance(notes, list):
@@ -2585,7 +2459,7 @@ def design_agent(state: State) -> Dict[str, any]:
                 design_state["notes"] = _append_design_note(design_state.get("notes", []), notes)
     
     # Determine overall status
-    statuses = [architecture_status, diagram_status, output_status]
+    statuses = [architecture_status, output_status]
     lowered = [status.lower() for status in statuses if status]
     if any(status == "completed" for status in lowered):
         overall_status = "completed"
@@ -2948,6 +2822,589 @@ def telemetry_node(state: State) -> Dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _load_tool_catalog() -> dict[str, Any]:
+    """Load the tool catalog v1 from JSON file."""
+    catalog_path = os.path.join(os.path.dirname(__file__), "tool_catalog_v1.json")
+    try:
+        with open(catalog_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load tool_catalog_v1.json: {e}")
+        return {"version": "v1", "tools": [], "categories": []}
+
+
+def _map_tool_to_catalog(tool_name: str, tool_type: str, catalog: dict) -> Optional[str]:
+    """Map a legacy tool name to a catalog tool ID."""
+    catalog_tools = catalog.get("tools", [])
+    tool_name_lower = tool_name.lower()
+    tool_type_lower = tool_type.lower() if tool_type else ""
+    
+    # Direct ID match
+    for ct in catalog_tools:
+        if ct.get("id", "").lower() == tool_name_lower:
+            return ct["id"]
+    
+    # Name match
+    for ct in catalog_tools:
+        if ct.get("display_name", "").lower() == tool_name_lower:
+            return ct["id"]
+    
+    # Category-based mapping
+    category_map = {
+        "db": "db_storage",
+        "database": "db_storage",
+        "api": "deployment_hosting",
+        "llm": "orchestration",
+        "search": "vector_store",
+        "queue": "queue_workflow",
+        "auth": "auth_identity",
+    }
+    
+    mapped_category = category_map.get(tool_type_lower)
+    if mapped_category:
+        for ct in catalog_tools:
+            if ct.get("category") == mapped_category:
+                return ct["id"]
+    
+    # Keyword-based mapping
+    keyword_map = {
+        "postgres": "postgres_supabase",
+        "supabase": "postgres_supabase",
+        "redis": "redis_streams",
+        "queue": "sqs",
+        "vector": "pgvector",
+        "embedding": "pgvector",
+        "auth": "supabase_auth",
+        "login": "supabase_auth",
+        "deploy": "vercel",
+        "host": "vercel",
+        "monitor": "opentelemetry",
+        "trace": "langsmith",
+        "log": "opentelemetry",
+    }
+    
+    for keyword, tool_id in keyword_map.items():
+        if keyword in tool_name_lower:
+            return tool_id
+    
+    return None
+
+
+def _build_asc_v11(state: State) -> dict[str, Any]:
+    """
+    Build ASC v1.1 - the new format answering all 4 objectives.
+    
+    Objective 1: Architecture Decision
+    Objective 2: Agent Decomposition
+    Objective 3: Interaction & Control Flow
+    Objective 4: Deployability Constraints
+    """
+    goal = _coerce_str(state.get("goal"), max_len=300) or "System"
+    generated_at = datetime.now(timezone.utc).isoformat()
+    
+    # Load tool catalog
+    catalog = _load_tool_catalog()
+    
+    # Pull design artifacts
+    design_state = state.get("design_state") if isinstance(state.get("design_state"), dict) else {}
+    architecture_artifact = design_state.get("architecture") if isinstance(design_state.get("architecture"), dict) else {}
+    architecture = (
+        architecture_artifact.get("architecture")
+        if isinstance(architecture_artifact.get("architecture"), dict)
+        else state.get("architecture_output")
+        if isinstance(state.get("architecture_output"), dict)
+        else {}
+    )
+    # Get pattern info
+    selected_patterns = state.get("selected_patterns") or []
+    pattern_ids = [p.get("id") for p in selected_patterns if isinstance(p, dict) and p.get("id")]
+    
+    # Plan state for assumptions/missing info
+    plan_scope = state.get("plan_scope") if isinstance(state.get("plan_scope"), dict) else {}
+    plan_state = state.get("plan_state") if isinstance(state.get("plan_state"), dict) else {}
+    research_state = state.get("research_state") if isinstance(state.get("research_state"), dict) else {}
+    
+    # ==========================================================================
+    # Objective 1: Architecture Decision
+    # ==========================================================================
+    legacy_agents = architecture.get("agents", [])
+    num_agents = len(legacy_agents) if isinstance(legacy_agents, list) else 0
+    
+    # Determine architecture type from patterns or control loop
+    control_loop = architecture.get("control_loop", {})
+    arch_type = "react"  # default
+    if pattern_ids:
+        arch_type = pattern_ids[0]
+    elif isinstance(control_loop, dict):
+        flow = control_loop.get("flow", "").lower()
+        if "supervisor" in flow or "delegate" in flow:
+            arch_type = "supervisor"
+        elif "plan" in flow and "execute" in flow:
+            arch_type = "plan-and-execute"
+        elif "reflect" in flow or "critic" in flow:
+            arch_type = "reflection"
+    
+    blocking_issues = _coerce_str_list(plan_scope.get("blocking_issues"), max_items=8, max_len=160)
+    info_issues = _coerce_str_list(plan_scope.get("info_issues"), max_items=8, max_len=160)
+    
+    decision = {
+        "single_vs_multi": "multi" if num_agents > 1 else "single",
+        "architecture_type": arch_type,
+        "architecture_type_reason": architecture_artifact.get("why") or f"Selected {arch_type} pattern based on goal requirements",
+        "confidence": 0.8 if not blocking_issues else 0.5,
+        "assumptions": _coerce_str_list(plan_scope.get("assumptions"), max_items=8, max_len=200),
+        "missing_info": blocking_issues + info_issues,
+        "pattern_influences": pattern_ids[:3],
+        "pattern_deviation_notes": [],
+    }
+    
+    # ==========================================================================
+    # Objective 2 + 4: Agent Specifications
+    # ==========================================================================
+    agents_v11 = []
+    legacy_tools = architecture.get("tools", [])
+    
+    for agent in legacy_agents:
+        if not isinstance(agent, dict):
+            continue
+        
+        agent_id = agent.get("id") or agent.get("name", "").lower().replace(" ", "_")
+        
+        # Map legacy tools to catalog
+        agent_tool_access = []
+        for tool_name in agent.get("tools", []):
+            catalog_id = _map_tool_to_catalog(str(tool_name), "", catalog)
+            if catalog_id:
+                agent_tool_access.append({
+                    "tool_id": catalog_id,
+                    "scopes": [],
+                    "usage_notes": f"Used by {agent.get('name', agent_id)}",
+                })
+        
+        # Determine model class based on responsibility
+        responsibility = (agent.get("responsibility") or "").lower()
+        model_class = "mid"  # default
+        if any(kw in responsibility for kw in ["coordinate", "supervise", "orchestrate", "plan"]):
+            model_class = "frontier"
+        elif any(kw in responsibility for kw in ["simple", "basic", "route", "validate"]):
+            model_class = "small"
+        
+        agent_spec = {
+            "id": agent_id,
+            "name": agent.get("name") or agent_id,
+            "role": agent.get("responsibility") or "Agent role",
+            "boundaries": [agent.get("responsibility") or "Primary responsibility"],
+            "inputs": [],
+            "outputs": [],
+            "reports_to": None,
+            "subagents": agent.get("subagents", []),
+            "model_class": model_class,
+            "model_class_rationale": f"Selected {model_class} based on {agent.get('responsibility', 'role')}",
+            "tools": agent_tool_access,
+            "memory": [],
+            "orchestration_constraints": [],
+        }
+        agents_v11.append(agent_spec)
+    
+    # ==========================================================================
+    # Objective 3: Interaction Graph
+    # ==========================================================================
+    legacy_interactions = architecture.get("interactions", [])
+    
+    # Build nodes
+    graph_nodes = [{"id": "start", "type": "start", "label": "Start"}]
+    for agent in agents_v11:
+        graph_nodes.append({
+            "id": agent["id"],
+            "type": "agent",
+            "label": agent["name"],
+            "agent_id": agent["id"],
+        })
+    graph_nodes.append({"id": "end", "type": "end", "label": "End"})
+    
+    # Build edges from legacy interactions
+    graph_edges = []
+    for interaction in legacy_interactions:
+        if not isinstance(interaction, dict):
+            continue
+        
+        source = interaction.get("source")
+        target = interaction.get("target")
+        kind = interaction.get("kind", "control").lower()
+        
+        edge_type = "data" if kind in ["reads", "writes", "returns"] else "control"
+        
+        graph_edges.append({
+            "source": source,
+            "target": target,
+            "edge_type": edge_type,
+            "label": interaction.get("label") or kind,
+            "condition": None,
+        })
+    
+    # Add start/end edges if not present
+    if agents_v11 and not any(e.get("source") == "start" for e in graph_edges):
+        graph_edges.insert(0, {
+            "source": "start",
+            "target": agents_v11[0]["id"],
+            "edge_type": "control",
+            "label": "Begin",
+        })
+    if agents_v11 and not any(e.get("target") == "end" for e in graph_edges):
+        graph_edges.append({
+            "source": agents_v11[-1]["id"],
+            "target": "end",
+            "edge_type": "control",
+            "label": "Complete",
+        })
+    
+    # Build loops from control_loop
+    loops = []
+    termination_conditions = []
+    if isinstance(control_loop, dict):
+        termination_conditions = _coerce_str_list(control_loop.get("termination_conditions"), max_items=5, max_len=200)
+    
+    graph = {
+        "nodes": graph_nodes,
+        "edges": graph_edges,
+        "loops": loops,
+        "entry_point": "start",
+        "exit_points": ["end"],
+        "termination_conditions": termination_conditions,
+    }
+    
+    # ==========================================================================
+    # Objective 3: Execution Flow
+    # ==========================================================================
+    execution_steps = []
+    for idx, agent in enumerate(agents_v11):
+        step = {
+            "order": idx + 1,
+            "agent_id": agent["id"],
+            "action": agent["role"],
+            "inputs_from": ["user"] if idx == 0 else [agents_v11[idx - 1]["id"]],
+            "outputs_to": ["user"] if idx == len(agents_v11) - 1 else [agents_v11[idx + 1]["id"]],
+            "can_loop": False,
+            "human_checkpoint": False,
+        }
+        execution_steps.append(step)
+    
+    execution_flow = {
+        "steps": execution_steps,
+        "parallel_groups": [],
+        "critical_path": list(range(1, len(execution_steps) + 1)),
+    }
+    
+    # ==========================================================================
+    # Objective 4: Tooling (grounded to catalog)
+    # ==========================================================================
+    selected_tools = []
+    used_tool_ids = set()
+    
+    for tool in legacy_tools:
+        if not isinstance(tool, dict):
+            continue
+        
+        tool_name = tool.get("name") or tool.get("id") or ""
+        tool_type = tool.get("type") or ""
+        
+        catalog_id = _map_tool_to_catalog(tool_name, tool_type, catalog)
+        if not catalog_id or catalog_id in used_tool_ids:
+            continue
+        
+        used_tool_ids.add(catalog_id)
+        
+        # Find catalog entry for details
+        catalog_entry = next((ct for ct in catalog.get("tools", []) if ct.get("id") == catalog_id), {})
+        
+        # Find alternatives from catalog
+        alternatives = []
+        for alt_id in catalog_entry.get("alternatives", [])[:2]:
+            alt_entry = next((ct for ct in catalog.get("tools", []) if ct.get("id") == alt_id), None)
+            if alt_entry:
+                alternatives.append({
+                    "tool_id": alt_id,
+                    "reason": f"Alternative in {catalog_entry.get('category', 'same')} category",
+                })
+        
+        # Build agent permissions
+        agent_permissions = {}
+        for agent in agents_v11:
+            for ta in agent.get("tools", []):
+                if ta.get("tool_id") == catalog_id:
+                    agent_permissions[agent["id"]] = ta.get("scopes", [])
+        
+        selected_tools.append({
+            "id": catalog_id,
+            "display_name": catalog_entry.get("display_name") or tool_name,
+            "category": catalog_entry.get("category") or "other",
+            "default_choice_reason": tool.get("failure_handling") or "Selected based on architecture requirements",
+            "alternatives": alternatives,
+            "auth_config": catalog_entry.get("auth"),
+            "failure_handling": tool.get("failure_handling") or "Retry with backoff",
+            "agent_permissions": agent_permissions,
+        })
+    
+    tooling = {
+        "tool_catalog_version": "v1",
+        "tools": selected_tools,
+    }
+    
+    # ==========================================================================
+    # Objective 4: Deployability Matrix
+    # ==========================================================================
+    deployability_constraints = []
+    for agent in agents_v11:
+        constraint = {
+            "agent_id": agent["id"],
+            "model_class": agent.get("model_class", "mid"),
+            "estimated_latency_ms": 2000 if agent.get("model_class") == "frontier" else 500,
+            "estimated_cost_per_call": "$0.05" if agent.get("model_class") == "frontier" else "$0.01",
+            "scaling_notes": "Horizontal scaling via multiple instances",
+            "failure_modes": ["timeout", "rate_limit"],
+            "recovery_strategy": "Retry with exponential backoff",
+        }
+        deployability_constraints.append(constraint)
+    
+    deployability = {
+        "constraints": deployability_constraints,
+        "orchestration_platform": "langgraph",
+        "orchestration_platform_reason": "Selected LangGraph for stateful agent orchestration with persistence",
+        "infrastructure_notes": [
+            "Deploy on serverless infrastructure for cost efficiency",
+            "Use Redis for short-term state, PostgreSQL for long-term",
+        ],
+    }
+    
+    # ==========================================================================
+    # Product State
+    # ==========================================================================
+    missing_for_ready = decision.get("missing_info", [])
+    assumptions_made = decision.get("assumptions", [])
+    
+    product_state = {
+        "status": "ready_to_build" if not missing_for_ready and len(assumptions_made) <= 3 else "draft",
+        "missing_for_ready": missing_for_ready,
+        "assumptions_made": assumptions_made,
+        "confidence_score": decision.get("confidence", 0.7),
+    }
+    
+    # ==========================================================================
+    # Legacy fields for backward compatibility
+    # ==========================================================================
+    plan_summary = _coerce_str(state.get("plan"), max_len=1_200) or _coerce_str(plan_state.get("summary"), max_len=1_200)
+    overview = _coerce_str(architecture.get("overview"), max_len=600)
+    kickoff_summary = plan_summary or overview or f"Architecture starter kit for: {goal}"
+    
+    plan_risks = _coerce_str_list(plan_scope.get("risks"), max_items=8, max_len=160)
+    research_risks = _coerce_str_list(research_state.get("risks"), max_items=8, max_len=160)
+    critic_state = state.get("critic_state") if isinstance(state.get("critic_state"), dict) else {}
+    critic_notes = _coerce_str_list(critic_state.get("notes"), max_items=8, max_len=160)
+    risks = _limit_strings([*plan_risks, *research_risks, *critic_notes], limit=10)
+    
+    research_highlights = _coerce_str_list(research_state.get("highlights"), max_items=7, max_len=260)
+    citations_raw = research_state.get("citations")
+    citations = []
+    if isinstance(citations_raw, list):
+        for c in citations_raw[:12]:
+            if not isinstance(c, dict):
+                continue
+            url = _coerce_str(c.get("url"), max_len=320)
+            title = _coerce_str(c.get("title"), max_len=180)
+            source = _coerce_str(c.get("source"), max_len=60)
+            item = {k: v for k, v in {"source": source, "url": url, "title": title}.items() if v is not None}
+            if item:
+                citations.append(item)
+    citations = _limit_dicts(citations, limit=7)
+    
+    # Build ASC v1.1
+    contract = _strip_nulls({
+        "version": "v1.1",
+        "generated_at": generated_at,
+        "goal": goal,
+        "product_state": product_state,
+        "decision": decision,
+        "agents": agents_v11,
+        "graph": graph,
+        "execution_flow": execution_flow,
+        "tooling": tooling,
+        "deployability": deployability,
+        "kickoff": {
+            "summary": kickoff_summary,
+            "open_questions": blocking_issues + info_issues,
+            "risks": risks,
+        },
+        "research": {
+            "highlights": research_highlights,
+            "citations": citations,
+            "risks": _coerce_str_list(research_state.get("risks"), max_items=8, max_len=160),
+        },
+        "quality": {
+            "critic": {
+                "notes": critic_notes,
+            },
+        },
+        "build": {
+            "milestones": _coerce_str_list(plan_state.get("intermediate_milestones"), max_items=10, max_len=180),
+            "steps": [],
+            "first_tasks": [],
+        },
+    })
+    
+    return contract
+
+
+def _build_asc_v1(state: State) -> dict[str, Any]:
+    goal = _coerce_str(state.get("goal"), max_len=300) or "System"
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    # Pull design artifacts (Design phase)
+    design_state = state.get("design_state") if isinstance(state.get("design_state"), dict) else {}
+    architecture_artifact = (
+        design_state.get("architecture") if isinstance(design_state.get("architecture"), dict) else {}
+    )
+    architecture = (
+        architecture_artifact.get("architecture")
+        if isinstance(architecture_artifact.get("architecture"), dict)
+        else state.get("architecture_output")
+        if isinstance(state.get("architecture_output"), dict)
+        else {}
+    )
+    output_artifact = design_state.get("output") if isinstance(design_state.get("output"), dict) else {}
+
+    # Top-level planner/research/critic/evals artifacts
+    plan_scope = state.get("plan_scope") if isinstance(state.get("plan_scope"), dict) else {}
+    plan_state = state.get("plan_state") if isinstance(state.get("plan_state"), dict) else {}
+    research_state = state.get("research_state") if isinstance(state.get("research_state"), dict) else {}
+    critic_state = state.get("critic_state") if isinstance(state.get("critic_state"), dict) else {}
+    eval_state = state.get("eval_state") if isinstance(state.get("eval_state"), dict) else {}
+
+    # Output text (prefer final output)
+    output_text = _coerce_str(state.get("output"), max_len=6_000)
+    if not output_text:
+        formatted = output_artifact.get("formatted_output") if isinstance(output_artifact.get("formatted_output"), str) else None
+    plan_summary = _coerce_str(state.get("plan"), max_len=1_200) or _coerce_str(plan_state.get("summary"), max_len=1_200)
+    overview = _coerce_str(architecture.get("overview"), max_len=600)
+    kickoff_summary = plan_summary or overview or f"Architecture starter kit for: {goal}"
+
+    blocking_issues = _coerce_str_list(plan_scope.get("blocking_issues"), max_items=8, max_len=160)
+    info_issues = _coerce_str_list(plan_scope.get("info_issues"), max_items=8, max_len=160)
+    plan_risks = _coerce_str_list(plan_scope.get("risks"), max_items=8, max_len=160)
+    plan_risks = plan_risks or _coerce_str_list(plan_state.get("risks"), max_items=8, max_len=160)
+    research_risks = _coerce_str_list(research_state.get("risks"), max_items=8, max_len=160)
+    critic_notes = _coerce_str_list(critic_state.get("notes"), max_items=8, max_len=160)
+
+    risks = _limit_strings([*plan_risks, *research_risks, *critic_notes], limit=10)
+    open_questions = _limit_strings([*blocking_issues, *info_issues], limit=10)
+
+    # Research (trim aggressively)
+    research_highlights = _coerce_str_list(research_state.get("highlights"), max_items=7, max_len=260)
+    citations_raw = research_state.get("citations")
+    citations: list[dict[str, Any]] = []
+    if isinstance(citations_raw, list):
+        for c in citations_raw[:12]:
+            if not isinstance(c, dict):
+                continue
+            url = _coerce_str(c.get("url"), max_len=320)
+            title = _coerce_str(c.get("title"), max_len=180)
+            source = _coerce_str(c.get("source"), max_len=60)
+            item = {k: v for k, v in {"source": source, "url": url, "title": title}.items() if v is not None}
+            if item:
+                citations.append(item)
+    citations = _limit_dicts(citations, limit=7)
+
+    # Build plan (trim to first 12 steps)
+    milestones = plan_state.get("intermediate_milestones")
+    milestones_out = _coerce_str_list(milestones, max_items=10, max_len=180)
+
+    steps_out: list[dict[str, Any]] = []
+    steps_raw = plan_state.get("steps")
+    if isinstance(steps_raw, list):
+        for idx, step in enumerate(steps_raw[:12]):
+            if not isinstance(step, dict):
+                continue
+            sid = _coerce_str(step.get("id"), max_len=80) or f"step-{idx+1}"
+            title = _coerce_str(step.get("title"), max_len=140) or sid
+            detail = _coerce_str(step.get("detail"), max_len=400)
+            steps_out.append(_strip_nulls({"id": sid, "title": title, "detail": detail}))
+
+    atomic_tasks_out: list[dict[str, Any]] = []
+    atomic_raw = plan_state.get("atomic_tasks")
+    if isinstance(atomic_raw, list):
+        for idx, task in enumerate(atomic_raw[:12]):
+            if not isinstance(task, dict):
+                continue
+            tid = _coerce_str(task.get("id"), max_len=80) or f"task-{idx+1}"
+            title = _coerce_str(task.get("title"), max_len=140) or tid
+            detail = _coerce_str(task.get("detail"), max_len=400)
+            atomic_tasks_out.append(_strip_nulls({"id": tid, "title": title, "detail": detail}))
+
+    # Telemetry (optional)
+    telemetry_artifact = eval_state.get("telemetry") if isinstance(eval_state.get("telemetry"), dict) else {}
+    telemetry = telemetry_artifact.get("telemetry") if isinstance(telemetry_artifact.get("telemetry"), dict) else {}
+    telemetry_notes = _coerce_str_list(telemetry_artifact.get("notes"), max_items=6, max_len=200)
+
+    # Architecture block (runtime-neutral; diagram removed)
+    arch_block = _strip_nulls(
+        {
+            "overview": overview,
+            "agents": architecture.get("agents") if isinstance(architecture.get("agents"), list) else [],
+            "tools": architecture.get("tools") if isinstance(architecture.get("tools"), list) else [],
+            "interactions": architecture.get("interactions") if isinstance(architecture.get("interactions"), list) else [],
+            "memory": architecture.get("memory") if isinstance(architecture.get("memory"), dict) else {},
+            "control_loop": architecture.get("control_loop") if isinstance(architecture.get("control_loop"), dict) else {},
+            "bounded_autonomy": architecture.get("bounded_autonomy") if isinstance(architecture.get("bounded_autonomy"), dict) else {},
+            "output": output_text,
+        }
+    )
+
+    contract = _strip_nulls(
+        {
+            "version": "v1",
+            "generated_at": generated_at,
+            "goal": goal,
+            "kickoff": {
+                "summary": kickoff_summary,
+                "open_questions": open_questions,
+                "risks": risks,
+            },
+            "architecture": arch_block,
+            "research": {
+                "highlights": research_highlights,
+                "citations": citations,
+                "risks": _coerce_str_list(research_state.get("risks"), max_items=8, max_len=160),
+            },
+            "quality": {
+                "critic": {
+                    "notes": critic_notes,
+                    "review_status": _coerce_str((critic_state.get("review") or {}).get("status"), max_len=16)
+                    if isinstance(critic_state.get("review"), dict)
+                    else None,
+                    "hallucination_status": _coerce_str((critic_state.get("hallucination") or {}).get("status"), max_len=16)
+                    if isinstance(critic_state.get("hallucination"), dict)
+                    else None,
+                    "risk_status": _coerce_str((critic_state.get("risk") or {}).get("status"), max_len=16)
+                    if isinstance(critic_state.get("risk"), dict)
+                    else None,
+                },
+                "telemetry": {
+                    "telemetry": telemetry,
+                    "notes": telemetry_notes,
+                    "status": _coerce_str(telemetry_artifact.get("status"), max_len=16),
+                },
+            },
+            "build": {
+                "milestones": milestones_out,
+                "steps": steps_out,
+                "first_tasks": atomic_tasks_out,
+            },
+        }
+    )
+
+    return contract
+
+
 def evals_agent(state: State) -> Dict[str, any]:
     """
     Evals agent - simplified to telemetry collection only.
@@ -2980,11 +3437,17 @@ def evals_agent(state: State) -> Dict[str, any]:
                 eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), note)
         elif notes:
             eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
-
-    # Determine overall status
     eval_state["status"] = telemetry_status if telemetry_status else "completed"
+    existing_design_state = state.get("design_state") if isinstance(state.get("design_state"), dict) else {}
+    updated_design_state = dict(existing_design_state)
+    tmp_state: State = dict(state)  # type: ignore[assignment]
+    tmp_state["eval_state"] = eval_state
+    tmp_state["design_state"] = updated_design_state
+    updated_design_state["asc_v1"] = _build_asc_v1(tmp_state)
+    updated_design_state["asc_v11"] = _build_asc_v11(tmp_state)
 
     return {
         "eval_state": eval_state,
+        "design_state": updated_design_state,
         "run_phase": "done",
     }

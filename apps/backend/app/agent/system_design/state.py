@@ -40,7 +40,6 @@ class State(TypedDict, total=False):
     architecture_json: dict
     agentic_architecture: Dict[str, Any]
     architecture_output: Dict[str, Any]
-    diagram_image_url: str
     metadata: Dict[str, Any]
 
 CRITIC_TARGET = 0.8
