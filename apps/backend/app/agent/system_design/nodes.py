@@ -1988,6 +1988,15 @@ Typical architecture for this domain:
 ## Output Schema:
 Generate a complete architecture as JSON with this structure:
 {{
+    "architecture_class": "hierarchical_orchestrator|supervisor_worker|planner_executor_evaluator_loop|hybrid",
+    "architecture_class_reason": "Required only if architecture_class=hybrid; explain why it's hybrid",
+    "tradeoffs": [
+        {{
+            "decision": "Decision being made",
+            "alternatives": ["Option A", "Option B"],
+            "why": "Why the chosen option fits this goal/constraints"
+        }}
+    ],
     "overview": "Brief 2-3 sentence description of the architecture",
     "agents": [
         {{
@@ -1995,7 +2004,19 @@ Generate a complete architecture as JSON with this structure:
             "name": "GoalSpecificAgentName",
             "responsibility": "What this agent does",
             "tools": ["tool1", "tool2"],
-            "subagents": ["child_agent_id_1", "child_agent_id_2"]
+            "subagents": ["child_agent_id_1", "child_agent_id_2"],
+            "inputs": ["What this agent consumes (messages, artifacts, events)"],
+            "outputs": ["What this agent produces (artifacts, decisions, events)"],
+            "memory_owned": [
+                {{
+                    "type": "short_term|long_term|episodic|semantic",
+                    "purpose": "What this memory is for",
+                    "implementation": "Concrete implementation hint (e.g., Redis, Postgres, vector store)"
+                }}
+            ],
+            "failure_modes": ["Failure mode 1", "Failure mode 2"],
+            "safeguards": ["Safeguard 1", "Safeguard 2"],
+            "degrades_to": "How the system behaves when this agent/tooling fails (fallback mode)"
         }}
     ],
     "tools": [
@@ -2043,6 +2064,8 @@ Generate a complete architecture as JSON with this structure:
 6. `subagents` MUST be a list of agent IDs (strings), not nested objects
 7. `interactions[].source/target` MUST reference existing IDs from `agents[].id` or `tools[].id`
 8. Include enough interactions to represent the true topology (fan-out/fan-in, routing, loops) — avoid a single linear chain unless the system is truly linear
+9. Every agent MUST include: inputs[], outputs[], memory_owned[], failure_modes[], safeguards[], degrades_to.
+10. `architecture_class` MUST be one of the allowed enum values; if `hybrid`, provide `architecture_class_reason`.
 
 Return ONLY the JSON object, no markdown code blocks or other text."""
 
@@ -2082,9 +2105,36 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
             agents = architecture.get("agents", [])
             tools = architecture.get("tools", [])
             interactions = architecture.get("interactions", [])
+            arch_class = architecture.get("architecture_class")
+            arch_class_reason = architecture.get("architecture_class_reason")
+            tradeoffs = architecture.get("tradeoffs", [])
             
             if len(agents) < 2:
                 validation_errors.append("Architecture must have at least 2 agents")
+
+            allowed_arch_classes = {
+                "hierarchical_orchestrator",
+                "supervisor_worker",
+                "planner_executor_evaluator_loop",
+                "hybrid",
+            }
+            if arch_class not in allowed_arch_classes:
+                validation_errors.append(
+                    "architecture_class must be one of: hierarchical_orchestrator|supervisor_worker|planner_executor_evaluator_loop|hybrid"
+                )
+            if arch_class == "hybrid" and not isinstance(arch_class_reason, str):
+                validation_errors.append("architecture_class_reason is required when architecture_class=hybrid")
+
+            if not isinstance(tradeoffs, list) or not tradeoffs:
+                validation_errors.append("tradeoffs must be a non-empty list of explicit trade-offs")
+            else:
+                for t in tradeoffs[:20]:
+                    if not isinstance(t, dict):
+                        validation_errors.append("tradeoffs entries must be objects")
+                        break
+                    if not t.get("decision") or not t.get("why") or not isinstance(t.get("alternatives"), list):
+                        validation_errors.append("tradeoffs entries must include decision, alternatives[], and why")
+                        break
             
             # Check for generic names
             generic_names = {"planner", "executor", "critic", "agent", "worker", "coordinator"}
@@ -2092,6 +2142,37 @@ Return ONLY the JSON object, no markdown code blocks or other text."""
                 name = (agent.get("name") or "").lower()
                 if name in generic_names:
                     validation_errors.append(f"Agent name '{agent.get('name')}' is too generic")
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    continue
+                if not isinstance(agent.get("inputs"), list):
+                    validation_errors.append(f"Agent '{agent.get('id')}' missing inputs[]")
+                if not isinstance(agent.get("outputs"), list):
+                    validation_errors.append(f"Agent '{agent.get('id')}' missing outputs[]")
+                if not isinstance(agent.get("memory_owned"), list):
+                    validation_errors.append(f"Agent '{agent.get('id')}' missing memory_owned[]")
+                if not isinstance(agent.get("failure_modes"), list) or not agent.get("failure_modes"):
+                    validation_errors.append(f"Agent '{agent.get('id')}' must include non-empty failure_modes[]")
+                if not isinstance(agent.get("safeguards"), list) or not agent.get("safeguards"):
+                    validation_errors.append(f"Agent '{agent.get('id')}' must include non-empty safeguards[]")
+                if not isinstance(agent.get("degrades_to"), str) or not agent.get("degrades_to"):
+                    validation_errors.append(f"Agent '{agent.get('id')}' missing degrades_to")
+                mem_owned = agent.get("memory_owned")
+                if isinstance(mem_owned, list):
+                    for mo in mem_owned[:12]:
+                        if not isinstance(mo, dict):
+                            validation_errors.append(f"Agent '{agent.get('id')}' memory_owned entries must be objects")
+                            break
+                        if mo.get("type") not in {"short_term", "long_term", "episodic", "semantic"}:
+                            validation_errors.append(
+                                f"Agent '{agent.get('id')}' memory_owned.type must be short_term|long_term|episodic|semantic"
+                            )
+                            break
+                        if not mo.get("purpose") or not mo.get("implementation"):
+                            validation_errors.append(
+                                f"Agent '{agent.get('id')}' memory_owned entries must include purpose and implementation"
+                            )
+                            break
             for agent in agents:
                 if not isinstance(agent, dict):
                     continue
@@ -2194,6 +2275,15 @@ def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
     worker_id = f"{prefix.lower()}_worker"
     
     return {
+        "architecture_class": "supervisor_worker",
+        "architecture_class_reason": "",
+        "tradeoffs": [
+            {
+                "decision": "Use a simple supervisor/worker split",
+                "alternatives": ["Single agent", "Planner/Executor/Evaluator loop"],
+                "why": "Fallback needs a minimal multi-agent structure that still provides separation of concerns.",
+            }
+        ],
         "overview": f"Architecture for: {goal[:200]}",
         "agents": [
             {
@@ -2202,6 +2292,18 @@ def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
                 "responsibility": "Coordinate the overall workflow and delegate tasks",
                 "tools": ["task_queue", "status_tracker"],
                 "subagents": [worker_id],
+                "inputs": ["User request", "Worker progress/results"],
+                "outputs": ["Task plan", "Delegated work items", "Final response"],
+                "memory_owned": [
+                    {
+                        "type": "short_term",
+                        "purpose": "Track current run state and pending tasks",
+                        "implementation": "In-memory state (or Redis for production)",
+                    }
+                ],
+                "failure_modes": ["Invalid or incomplete delegation", "Losing track of task state"],
+                "safeguards": ["Use structured task format", "Persist run state periodically"],
+                "degrades_to": "Single-agent execution with reduced parallelism",
             },
             {
                 "id": worker_id,
@@ -2209,6 +2311,18 @@ def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
                 "responsibility": "Execute the main processing tasks",
                 "tools": ["data_handler", "output_generator"],
                 "subagents": [],
+                "inputs": ["Delegated task", "Relevant context/artifacts"],
+                "outputs": ["Intermediate results", "Status updates"],
+                "memory_owned": [
+                    {
+                        "type": "episodic",
+                        "purpose": "Record task attempts and outcomes for the current run",
+                        "implementation": "Append-only log (or Postgres table in production)",
+                    }
+                ],
+                "failure_modes": ["Tool call failure", "Timeouts under load"],
+                "safeguards": ["Retry with backoff", "Validate outputs before returning"],
+                "degrades_to": "Return partial results with explicit gaps",
             },
         ],
         "tools": [
@@ -2892,14 +3006,7 @@ def _map_tool_to_catalog(tool_name: str, tool_type: str, catalog: dict) -> Optio
 
 
 def _build_asc_v11(state: State) -> dict[str, Any]:
-    """
-    Build ASC v1.1 - the new format answering all 4 objectives.
-    
-    Objective 1: Architecture Decision
-    Objective 2: Agent Decomposition
-    Objective 3: Interaction & Control Flow
-    Objective 4: Deployability Constraints
-    """
+
     goal = _coerce_str(state.get("goal"), max_len=300) or "System"
     generated_at = datetime.now(timezone.utc).isoformat()
     
@@ -2924,14 +3031,11 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
     plan_scope = state.get("plan_scope") if isinstance(state.get("plan_scope"), dict) else {}
     plan_state = state.get("plan_state") if isinstance(state.get("plan_state"), dict) else {}
     research_state = state.get("research_state") if isinstance(state.get("research_state"), dict) else {}
-    
-    # ==========================================================================
-    # Objective 1: Architecture Decision
-    # ==========================================================================
+
     legacy_agents = architecture.get("agents", [])
     num_agents = len(legacy_agents) if isinstance(legacy_agents, list) else 0
     
-    # Determine architecture type from patterns or control loop
+    # Determine architecture type from patterns or control loop (legacy field)
     control_loop = architecture.get("control_loop", {})
     arch_type = "react"  # default
     if pattern_ids:
@@ -2948,23 +3052,55 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
     blocking_issues = _coerce_str_list(plan_scope.get("blocking_issues"), max_items=8, max_len=160)
     info_issues = _coerce_str_list(plan_scope.get("info_issues"), max_items=8, max_len=160)
     
+    # Strict architecture class (new field)
+    arch_class = architecture.get("architecture_class")
+    if arch_class not in {
+        "hierarchical_orchestrator",
+        "supervisor_worker",
+        "planner_executor_evaluator_loop",
+        "hybrid",
+    }:
+        # Defensive mapping for legacy runs / fallbacks
+        if arch_type in {"supervisor", "supervisor_worker"}:
+            arch_class = "supervisor_worker"
+        elif arch_type in {"plan-and-execute", "planner_executor_evaluator_loop"}:
+            arch_class = "planner_executor_evaluator_loop"
+        else:
+            arch_class = "hierarchical_orchestrator"
+    arch_class_reason = architecture.get("architecture_class_reason") if arch_class == "hybrid" else None
+    tradeoffs = architecture.get("tradeoffs") if isinstance(architecture.get("tradeoffs"), list) else []
+
     decision = {
         "single_vs_multi": "multi" if num_agents > 1 else "single",
         "architecture_type": arch_type,
         "architecture_type_reason": architecture_artifact.get("why") or f"Selected {arch_type} pattern based on goal requirements",
+        "architecture_class": arch_class,
+        "architecture_class_reason": arch_class_reason,
+        "tradeoffs": tradeoffs,
         "confidence": 0.8 if not blocking_issues else 0.5,
         "assumptions": _coerce_str_list(plan_scope.get("assumptions"), max_items=8, max_len=200),
         "missing_info": blocking_issues + info_issues,
         "pattern_influences": pattern_ids[:3],
         "pattern_deviation_notes": [],
     }
-    
-    # ==========================================================================
-    # Objective 2 + 4: Agent Specifications
-    # ==========================================================================
+
     agents_v11 = []
     legacy_tools = architecture.get("tools", [])
     
+    # Precompute reports_to by inverting subagents[] for parent/child clarity
+    parent_of: dict[str, str] = {}
+    if isinstance(legacy_agents, list):
+        for a in legacy_agents:
+            if not isinstance(a, dict):
+                continue
+            pid = a.get("id") or a.get("name", "").lower().replace(" ", "_")
+            subs = a.get("subagents", [])
+            if not pid or not isinstance(subs, list):
+                continue
+            for cid in subs[:20]:
+                if isinstance(cid, str) and cid.strip() and cid.strip() not in parent_of:
+                    parent_of[cid.strip()] = pid
+
     for agent in legacy_agents:
         if not isinstance(agent, dict):
             continue
@@ -2990,28 +3126,48 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         elif any(kw in responsibility for kw in ["simple", "basic", "route", "validate"]):
             model_class = "small"
         
+        inputs = agent.get("inputs") if isinstance(agent.get("inputs"), list) else []
+        outputs = agent.get("outputs") if isinstance(agent.get("outputs"), list) else []
+        mem_owned = agent.get("memory_owned") if isinstance(agent.get("memory_owned"), list) else []
+        mem_specs = []
+        for mo in mem_owned[:12]:
+            if not isinstance(mo, dict):
+                continue
+            mem_type = mo.get("type")
+            if mem_type not in {"short_term", "long_term", "episodic", "semantic"}:
+                continue
+            purpose = _coerce_str(mo.get("purpose"), max_len=200)
+            impl = _coerce_str(mo.get("implementation"), max_len=240)
+            if purpose and impl:
+                mem_specs.append(
+                    {
+                        "type": mem_type,
+                        "purpose": purpose,
+                        "implementation_hint": impl,
+                    }
+                )
+
         agent_spec = {
             "id": agent_id,
             "name": agent.get("name") or agent_id,
             "role": agent.get("responsibility") or "Agent role",
             "boundaries": [agent.get("responsibility") or "Primary responsibility"],
-            "inputs": [],
-            "outputs": [],
-            "reports_to": None,
+            "inputs": _coerce_str_list(inputs, max_items=12, max_len=120),
+            "outputs": _coerce_str_list(outputs, max_items=12, max_len=120),
+            "reports_to": parent_of.get(agent_id),
             "subagents": agent.get("subagents", []),
             "model_class": model_class,
             "model_class_rationale": f"Selected {model_class} based on {agent.get('responsibility', 'role')}",
             "tools": agent_tool_access,
-            "memory": [],
+            "memory": mem_specs,
             "orchestration_constraints": [],
         }
         agents_v11.append(agent_spec)
     
-    # ==========================================================================
-    # Objective 3: Interaction Graph
-    # ==========================================================================
     legacy_interactions = architecture.get("interactions", [])
     
+    agent_ids_v11 = {a.get("id") for a in agents_v11 if isinstance(a, dict) and a.get("id")}
+
     # Build nodes
     graph_nodes = [{"id": "start", "type": "start", "label": "Start"}]
     for agent in agents_v11:
@@ -3023,7 +3179,7 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         })
     graph_nodes.append({"id": "end", "type": "end", "label": "End"})
     
-    # Build edges from legacy interactions
+    # Build edges from legacy interactions (agents-only)
     graph_edges = []
     for interaction in legacy_interactions:
         if not isinstance(interaction, dict):
@@ -3032,6 +3188,14 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         source = interaction.get("source")
         target = interaction.get("target")
         kind = interaction.get("kind", "control").lower()
+
+        # Agents-only: ignore tool endpoints
+        if source not in agent_ids_v11 and source not in {"start", "end"}:
+            continue
+        if target not in agent_ids_v11 and target not in {"start", "end"}:
+            continue
+        if source in {"start", "end"} and target in {"start", "end"}:
+            continue
         
         edge_type = "data" if kind in ["reads", "writes", "returns"] else "control"
         
@@ -3042,6 +3206,41 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
             "label": interaction.get("label") or kind,
             "condition": None,
         })
+
+    # Ensure supervisor/worker relationships are explicit in the graph (control + return paths)
+    existing_pairs = {(e.get("source"), e.get("target"), e.get("edge_type")) for e in graph_edges if isinstance(e, dict)}
+    for a in agents_v11:
+        if not isinstance(a, dict):
+            continue
+        parent_id = a.get("id")
+        subs = a.get("subagents", [])
+        if not parent_id or not isinstance(subs, list):
+            continue
+        for child_id in subs[:20]:
+            if child_id not in agent_ids_v11:
+                continue
+            if (parent_id, child_id, "control") not in existing_pairs:
+                graph_edges.append(
+                    {
+                        "source": parent_id,
+                        "target": child_id,
+                        "edge_type": "control",
+                        "label": "supervises",
+                        "condition": None,
+                    }
+                )
+                existing_pairs.add((parent_id, child_id, "control"))
+            if (child_id, parent_id, "data") not in existing_pairs:
+                graph_edges.append(
+                    {
+                        "source": child_id,
+                        "target": parent_id,
+                        "edge_type": "data",
+                        "label": "reports",
+                        "condition": None,
+                    }
+                )
+                existing_pairs.add((child_id, parent_id, "data"))
     
     # Add start/end edges if not present
     if agents_v11 and not any(e.get("source") == "start" for e in graph_edges):
@@ -3059,7 +3258,7 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
             "label": "Complete",
         })
     
-    # Build loops from control_loop
+    # Build loops from control edges (best-effort)
     loops = []
     termination_conditions = []
     if isinstance(control_loop, dict):
@@ -3073,19 +3272,69 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         "exit_points": ["end"],
         "termination_conditions": termination_conditions,
     }
-    
-    # ==========================================================================
-    # Objective 3: Execution Flow
-    # ==========================================================================
+
+    # Derive execution order from CONTROL edges (agents-only); tolerate cycles by falling back.
+    control_edges = [
+        e
+        for e in graph_edges
+        if isinstance(e, dict)
+        and e.get("edge_type") == "control"
+        and e.get("target") in agent_ids_v11
+        and e.get("source") in (agent_ids_v11 | {"start"})
+    ]
+    indeg: dict[str, int] = {aid: 0 for aid in agent_ids_v11}
+    succ: dict[str, list[str]] = {aid: [] for aid in agent_ids_v11}
+    preds: dict[str, list[str]] = {aid: [] for aid in agent_ids_v11}
+    for e in control_edges:
+        s = e.get("source")
+        t = e.get("target")
+        if s == "start":
+            indeg[t] = indeg.get(t, 0) + 0
+            continue
+        if s in agent_ids_v11 and t in agent_ids_v11:
+            succ.setdefault(s, []).append(t)
+            preds.setdefault(t, []).append(s)
+            indeg[t] = indeg.get(t, 0) + 1
+
+    # Kahn's algorithm
+    q = [aid for aid, d in indeg.items() if d == 0]
+    topo: list[str] = []
+    while q:
+        n = q.pop(0)
+        topo.append(n)
+        for m in succ.get(n, []):
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                q.append(m)
+
+    has_cycle = len(topo) != len(agent_ids_v11)
+    ordered_agents = topo if topo else [a["id"] for a in agents_v11]
+    if has_cycle:
+        ordered_agents = [a["id"] for a in agents_v11]
+        if ordered_agents:
+            loops.append(
+                {
+                    "id": "loop-1",
+                    "name": "Agent loop",
+                    "entry_node": ordered_agents[0],
+                    "exit_node": ordered_agents[-1],
+                    "max_iterations": None,
+                    "termination_conditions": termination_conditions,
+                }
+            )
+
     execution_steps = []
-    for idx, agent in enumerate(agents_v11):
+    for idx, aid in enumerate(ordered_agents):
+        agent_obj = next((a for a in agents_v11 if a.get("id") == aid), None) or {}
+        inbound = preds.get(aid, [])
+        outbound = succ.get(aid, [])
         step = {
             "order": idx + 1,
-            "agent_id": agent["id"],
-            "action": agent["role"],
-            "inputs_from": ["user"] if idx == 0 else [agents_v11[idx - 1]["id"]],
-            "outputs_to": ["user"] if idx == len(agents_v11) - 1 else [agents_v11[idx + 1]["id"]],
-            "can_loop": False,
+            "agent_id": aid,
+            "action": agent_obj.get("role") or "Execute step",
+            "inputs_from": inbound or (["user"] if idx == 0 else []),
+            "outputs_to": outbound or (["user"] if idx == len(ordered_agents) - 1 else []),
+            "can_loop": bool(has_cycle),
             "human_checkpoint": False,
         }
         execution_steps.append(step)
@@ -3095,10 +3344,7 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         "parallel_groups": [],
         "critical_path": list(range(1, len(execution_steps) + 1)),
     }
-    
-    # ==========================================================================
-    # Objective 4: Tooling (grounded to catalog)
-    # ==========================================================================
+ 
     selected_tools = []
     used_tool_ids = set()
     
@@ -3151,18 +3397,30 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         "tools": selected_tools,
     }
     
-    # ==========================================================================
-    # Objective 4: Deployability Matrix
-    # ==========================================================================
+
+    # Map per-agent deployability constraints from architecture JSON (source of truth)
+    legacy_agent_by_id = {}
+    for la in legacy_agents if isinstance(legacy_agents, list) else []:
+        if isinstance(la, dict):
+            lid = la.get("id") or la.get("name", "").lower().replace(" ", "_")
+            if lid:
+                legacy_agent_by_id[lid] = la
+
     deployability_constraints = []
     for agent in agents_v11:
+        la = legacy_agent_by_id.get(agent.get("id") or "")
+        failure_modes = la.get("failure_modes") if isinstance(la, dict) and isinstance(la.get("failure_modes"), list) else ["timeout", "rate_limit"]
+        safeguards = la.get("safeguards") if isinstance(la, dict) and isinstance(la.get("safeguards"), list) else ["Retry with exponential backoff"]
+        degrades_to = la.get("degrades_to") if isinstance(la, dict) and isinstance(la.get("degrades_to"), str) else "Return partial results with explicit gaps"
         constraint = {
             "agent_id": agent["id"],
             "model_class": agent.get("model_class", "mid"),
             "estimated_latency_ms": 2000 if agent.get("model_class") == "frontier" else 500,
             "estimated_cost_per_call": "$0.05" if agent.get("model_class") == "frontier" else "$0.01",
             "scaling_notes": "Horizontal scaling via multiple instances",
-            "failure_modes": ["timeout", "rate_limit"],
+            "failure_modes": _coerce_str_list(failure_modes, max_items=8, max_len=140),
+            "safeguards": _coerce_str_list(safeguards, max_items=8, max_len=140),
+            "degrades_to": _coerce_str(degrades_to, max_len=180) or "Return partial results with explicit gaps",
             "recovery_strategy": "Retry with exponential backoff",
         }
         deployability_constraints.append(constraint)
@@ -3177,9 +3435,7 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         ],
     }
     
-    # ==========================================================================
-    # Product State
-    # ==========================================================================
+
     missing_for_ready = decision.get("missing_info", [])
     assumptions_made = decision.get("assumptions", [])
     
@@ -3190,9 +3446,6 @@ def _build_asc_v11(state: State) -> dict[str, Any]:
         "confidence_score": decision.get("confidence", 0.7),
     }
     
-    # ==========================================================================
-    # Legacy fields for backward compatibility
-    # ==========================================================================
     plan_summary = _coerce_str(state.get("plan"), max_len=1_200) or _coerce_str(plan_state.get("summary"), max_len=1_200)
     overview = _coerce_str(architecture.get("overview"), max_len=600)
     kickoff_summary = plan_summary or overview or f"Architecture starter kit for: {goal}"

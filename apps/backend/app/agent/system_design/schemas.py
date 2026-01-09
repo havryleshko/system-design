@@ -2,208 +2,161 @@
 from typing import TypedDict, Literal, Optional
 
 
-# =============================================================================
-# ASC v1.1 Schema - Agent System Contract
-# =============================================================================
-# The ASC is the single source of truth for Results V2.
-# It must answer the 4 objectives:
-#   1. Architecture Decision: single vs multi-agent, architecture type, rationale
-#   2. Agent Decomposition: agents, boundaries, reporting relationships
-#   3. Interaction & Control Flow: who calls whom, order, data flow, loops/termination
-#   4. Deployability Constraints: per-agent model class, tool access, memory, orchestration
-# =============================================================================
-
-
-# -----------------------------------------------------------------------------
-# Objective 1: Architecture Decision
-# -----------------------------------------------------------------------------
-
+class ArchitectureTradeoff(TypedDict, total=False):
+    decision: str
+    alternatives: list[str]
+    why: str
 class ArchitectureDecision(TypedDict, total=False):
-    """Objective 1: Single vs multi-agent decision with rationale."""
     single_vs_multi: Literal["single", "multi"]
-    architecture_type: str  # e.g., "supervisor", "react", "plan-and-execute", "reflection"
-    architecture_type_reason: str  # Why this architecture type was chosen
-    confidence: float  # 0.0 to 1.0
-    assumptions: list[str]  # Assumptions made due to missing info
-    missing_info: list[str]  # Information that would improve the design
-    pattern_influences: list[str]  # Pattern IDs from agentic_patterns.json that influenced
-    pattern_deviation_notes: list[str]  # Why the design deviates from pattern templates
-
-
-# -----------------------------------------------------------------------------
-# Objective 2 + 4: Agent Specification (Decomposition + Deployability)
-# -----------------------------------------------------------------------------
+    architecture_type: str  
+    architecture_type_reason: str  
+    architecture_class: Literal[
+        "hierarchical_orchestrator",
+        "supervisor_worker",
+        "planner_executor_evaluator_loop",
+        "hybrid",
+    ]
+    architecture_class_reason: str
+    tradeoffs: list[ArchitectureTradeoff]
+    confidence: float 
+    assumptions: list[str]  
+    missing_info: list[str]  
+    pattern_influences: list[str]  
+    pattern_deviation_notes: list[str] 
 
 class AgentToolAccess(TypedDict, total=False):
-    """Tool access specification for an agent."""
-    tool_id: str  # Must reference tool_catalog_v1.json
-    scopes: list[str]  # Auth scopes needed (from catalog)
-    usage_notes: str  # How this agent uses the tool
+
+    tool_id: str  
+    scopes: list[str]  
+    usage_notes: str  
 
 
 class AgentMemorySpec(TypedDict, total=False):
-    """Memory specification for an agent."""
     type: Literal["short_term", "long_term", "episodic", "semantic", "shared"]
     purpose: str
-    implementation_hint: str  # e.g., "Redis for session state"
+    implementation_hint: str  
 
 
 class AgentSpec(TypedDict, total=False):
-    """
-    Agent specification combining Objective 2 (decomposition) and 
-    Objective 4 (deployability constraints).
-    """
-    id: str  # Unique identifier
-    name: str  # Human-readable name
-    role: str  # Primary responsibility
+    id: str  
+    name: str  
+    role: str  
     
-    # Objective 2: Boundaries and relationships
-    boundaries: list[str]  # What this agent is responsible for (and NOT responsible for)
-    inputs: list[str]  # What inputs this agent receives
-    outputs: list[str]  # What outputs this agent produces
-    reports_to: Optional[str]  # Parent agent ID (for hierarchical architectures)
-    subagents: list[str]  # Child agent IDs (for supervisor patterns)
-    
-    # Objective 4: Deployability constraints
+    boundaries: list[str]  
+    inputs: list[str] 
+    outputs: list[str] 
+    reports_to: Optional[str]  
+    subagents: list[str]  
+
     model_class: Literal["frontier", "mid", "small", "embedding", "fine_tuned"]
-    model_class_rationale: str  # Why this model class was chosen
-    tools: list[AgentToolAccess]  # Tools this agent can access
-    memory: list[AgentMemorySpec]  # Memory this agent owns
-    orchestration_constraints: list[str]  # e.g., "must complete within 30s", "requires human approval"
-
-
-# -----------------------------------------------------------------------------
-# Objective 3: Interaction Graph & Control Flow
-# -----------------------------------------------------------------------------
+    model_class_rationale: str  
+    tools: list[AgentToolAccess]  
+    memory: list[AgentMemorySpec] 
+    orchestration_constraints: list[str]  
 
 class GraphNode(TypedDict, total=False):
     """Node in the agent interaction graph."""
     id: str
     type: Literal["agent", "tool", "human", "external", "start", "end"]
     label: str
-    agent_id: Optional[str]  # Reference to AgentSpec.id if type="agent"
+    agent_id: Optional[str]  
 
 
 class GraphEdge(TypedDict, total=False):
-    """Edge in the agent interaction graph."""
-    source: str  # Node ID
-    target: str  # Node ID
-    edge_type: Literal["control", "data"]  # Control flow vs data flow
-    label: str  # Description of what flows
-    condition: Optional[str]  # Conditional edge (e.g., "if approved")
+
+    source: str
+    target: str  
+    edge_type: Literal["control", "data"] 
+    label: str  
+    condition: Optional[str]  
 
 
 class LoopSpec(TypedDict, total=False):
-    """Loop specification for iterative patterns."""
+
     id: str
     name: str
-    entry_node: str  # Node ID where loop starts
-    exit_node: str  # Node ID where loop ends
+    entry_node: str
+    exit_node: str  
     max_iterations: Optional[int]
     termination_conditions: list[str]
 
 
 class InteractionGraph(TypedDict, total=False):
-    """Objective 3: Complete interaction and control flow specification."""
+
     nodes: list[GraphNode]
     edges: list[GraphEdge]
     loops: list[LoopSpec]
-    entry_point: str  # Starting node ID
-    exit_points: list[str]  # Terminal node IDs
-    termination_conditions: list[str]  # Global termination conditions
-
-
-# -----------------------------------------------------------------------------
-# Objective 4: Tool Catalog Integration
-# -----------------------------------------------------------------------------
+    entry_point: str  
+    exit_points: list[str]  
+    termination_conditions: list[str] 
 
 class ToolAlternative(TypedDict, total=False):
-    """Alternative tool with rationale."""
-    tool_id: str  # Must reference tool_catalog_v1.json
-    reason: str  # Why this is a good alternative
+
+    tool_id: str  
+    reason: str  
 
 
 class SelectedTool(TypedDict, total=False):
-    """Tool selected from catalog with deployment details."""
-    id: str  # Must match tool_catalog_v1.json
+
+    id: str  
     display_name: str
     category: str
-    default_choice_reason: str  # Why this was chosen as default
+    default_choice_reason: str  
     alternatives: list[ToolAlternative]
-    auth_config: Optional[dict]  # Auth configuration if needed
-    failure_handling: str  # How to handle failures
-    agent_permissions: dict[str, list[str]]  # agent_id -> list of scopes
+    auth_config: Optional[dict]  
+    failure_handling: str  
+    agent_permissions: dict[str, list[str]]  
 
 
 class ToolingSpec(TypedDict, total=False):
-    """Complete tooling specification for the architecture."""
+
     tool_catalog_version: str  # "v1"
     tools: list[SelectedTool]
 
-
-# -----------------------------------------------------------------------------
-# Objective 4: Deployability Matrix
-# -----------------------------------------------------------------------------
-
 class DeployabilityConstraint(TypedDict, total=False):
-    """Deployability constraint for an agent."""
+
     agent_id: str
     model_class: str
     estimated_latency_ms: Optional[int]
-    estimated_cost_per_call: Optional[str]  # e.g., "$0.01"
+    estimated_cost_per_call: Optional[str]  
     scaling_notes: str
     failure_modes: list[str]
+    safeguards: list[str]
+    degrades_to: str
     recovery_strategy: str
 
 
 class DeployabilityMatrix(TypedDict, total=False):
-    """Objective 4: Complete deployability specification."""
+
     constraints: list[DeployabilityConstraint]
-    orchestration_platform: str  # e.g., "langgraph"
+    orchestration_platform: str  
     orchestration_platform_reason: str
     infrastructure_notes: list[str]
 
 
-# -----------------------------------------------------------------------------
-# Execution Flow (Objective 3 supplement)
-# -----------------------------------------------------------------------------
-
 class ExecutionStep(TypedDict, total=False):
-    """Single step in the execution runbook."""
     order: int
     agent_id: str
-    action: str  # What the agent does
-    inputs_from: list[str]  # Where inputs come from (agent IDs or "user")
-    outputs_to: list[str]  # Where outputs go (agent IDs or "user")
+    action: str  
+    inputs_from: list[str] 
+    outputs_to: list[str]  
     can_loop: bool
-    human_checkpoint: bool  # Requires human approval
+    human_checkpoint: bool  
 
 
 class ExecutionFlow(TypedDict, total=False):
-    """Ordered execution runbook derived from graph."""
+
     steps: list[ExecutionStep]
-    parallel_groups: list[list[str]]  # Groups of step orders that can run in parallel
-    critical_path: list[int]  # Step orders on critical path
-
-
-# -----------------------------------------------------------------------------
-# Product State
-# -----------------------------------------------------------------------------
+    parallel_groups: list[list[str]]  
+    critical_path: list[int]  
 
 class ProductState(TypedDict, total=False):
-    """Product state indicating readiness."""
     status: Literal["ready_to_build", "draft"]
-    missing_for_ready: list[str]  # What's needed to reach ready_to_build
-    assumptions_made: list[str]  # Assumptions that should be validated
-    confidence_score: float  # 0.0 to 1.0
-
-
-# -----------------------------------------------------------------------------
-# Legacy Types (kept for backward compatibility)
-# -----------------------------------------------------------------------------
+    missing_for_ready: list[str] 
+    assumptions_made: list[str]  
+    confidence_score: float  
 
 class AgentRole(TypedDict, total=False):
-    """Legacy: Use AgentSpec instead."""
     id: str
     name: str
     responsibility: str
@@ -212,7 +165,6 @@ class AgentRole(TypedDict, total=False):
 
 
 class ToolSpec(TypedDict, total=False):
-    """Legacy: Use SelectedTool instead."""
     id: str
     name: str
     type: Literal["api", "db", "llm", "search", "file", "code", "other"]
@@ -222,7 +174,6 @@ class ToolSpec(TypedDict, total=False):
 
 
 class InteractionEdge(TypedDict, total=False):
-    """Legacy: Use GraphEdge instead."""
     source: str
     target: str
     kind: str
@@ -270,7 +221,6 @@ class GoalDecomposition(TypedDict, total=False):
 
 
 class ArchitectureOutput(TypedDict, total=False):
-    """Legacy architecture output - kept for backward compatibility."""
     overview: str
     agents: list[AgentRole]
     tools: list[ToolSpec]
@@ -283,10 +233,6 @@ class ArchitectureOutput(TypedDict, total=False):
     implementation_notes: list[str]
     start_simple_recommendation: str
 
-
-# -----------------------------------------------------------------------------
-# ASC v1.1 - Agent System Contract (Complete)
-# -----------------------------------------------------------------------------
 
 class ASCKickoff(TypedDict, total=False):
     summary: str
@@ -318,12 +264,8 @@ class ASCBuild(TypedDict, total=False):
 
 
 class AgentSystemContractV1(TypedDict, total=False):
-    """
-    ASC v1.0 - Legacy format.
-    Use AgentSystemContractV11 for new implementations.
-    """
-    version: str  # "v1"
-    generated_at: str  # ISO-8601 UTC timestamp
+    version: str
+    generated_at: str  
     goal: str
     kickoff: ASCKickoff
     architecture: dict
@@ -333,53 +275,31 @@ class AgentSystemContractV1(TypedDict, total=False):
 
 
 class AgentSystemContractV11(TypedDict, total=False):
-    """
-    ASC v1.1 - Agent System Contract
-    
-    The single source of truth for Results V2, answering all 4 objectives:
-    1. Architecture Decision
-    2. Agent Decomposition  
-    3. Interaction & Control Flow
-    4. Deployability Constraints
-    """
-    version: str  # "v1.1"
-    generated_at: str  # ISO-8601 UTC timestamp
+    version: str 
+    generated_at: str  
     goal: str
     
-    # Product state
     product_state: ProductState
     
-    # Objective 1: Architecture Decision
     decision: ArchitectureDecision
     
-    # Objective 2 + 4: Agent Specifications
     agents: list[AgentSpec]
     
     # Objective 3: Interaction Graph
     graph: InteractionGraph
-    
-    # Objective 3: Execution Flow (derived from graph)
     execution_flow: ExecutionFlow
-    
-    # Objective 4: Tooling (grounded to catalog)
+
     tooling: ToolingSpec
     
-    # Objective 4: Deployability Matrix
     deployability: DeployabilityMatrix
     
-    # Legacy fields for backward compatibility
+
     kickoff: ASCKickoff
     research: ASCResearch
     quality: ASCQuality
     build: ASCBuild
 
-
-# -----------------------------------------------------------------------------
-# Validation Functions
-# -----------------------------------------------------------------------------
-
 def validate_architecture_output(output: dict) -> tuple[bool, list[str]]:
-    """Validate legacy architecture output."""
     errors: list[str] = []
     if not output.get("agents"):
         errors.append("Architecture must have at least one agent")
@@ -402,7 +322,6 @@ def validate_architecture_output(output: dict) -> tuple[bool, list[str]]:
 
 
 def is_generic_architecture(output: dict) -> bool:
-    """Check if architecture uses generic agent names."""
     agents = output.get("agents", [])
     if not agents:
         return True
@@ -414,10 +333,6 @@ def is_generic_architecture(output: dict) -> bool:
 
 
 def validate_asc_v11(asc: dict) -> tuple[bool, list[str]]:
-    """
-    Validate ASC v1.1 contract for completeness.
-    Returns (is_valid, list of errors/warnings).
-    """
     errors: list[str] = []
     
     # Check version
@@ -432,6 +347,10 @@ def validate_asc_v11(asc: dict) -> tuple[bool, list[str]]:
         errors.append("Missing decision.architecture_type (Objective 1)")
     if not decision.get("architecture_type_reason"):
         errors.append("Missing decision.architecture_type_reason (Objective 1)")
+    if not decision.get("architecture_class"):
+        errors.append("Missing decision.architecture_class (Objective 1)")
+    if decision.get("architecture_class") == "hybrid" and not decision.get("architecture_class_reason"):
+        errors.append("Missing decision.architecture_class_reason when decision.architecture_class=hybrid (Objective 1)")
     
     # Check Objective 2: Agents
     agents = asc.get("agents", [])
@@ -481,9 +400,7 @@ def validate_asc_v11(asc: dict) -> tuple[bool, list[str]]:
 
 
 def determine_product_state(asc: dict) -> ProductState:
-    """
-    Determine if ASC is ready_to_build or draft based on completeness.
-    """
+
     is_valid, errors = validate_asc_v11(asc)
     
     decision = asc.get("decision", {})

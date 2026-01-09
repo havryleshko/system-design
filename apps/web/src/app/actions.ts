@@ -131,9 +131,6 @@ export async function startRun(
   return data.run_id;
 }
 
-// =============================================================================
-// Clarifier Chat (LLM-led)
-// =============================================================================
 
 export type ClarifierSessionCreateResponse = {
   session_id: string;

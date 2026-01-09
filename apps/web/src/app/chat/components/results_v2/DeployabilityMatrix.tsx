@@ -7,6 +7,8 @@ type DeployabilityConstraint = {
   estimated_cost_per_call?: string;
   scaling_notes?: string;
   failure_modes?: string[];
+  safeguards?: string[];
+  degrades_to?: string;
   recovery_strategy?: string;
 };
 
@@ -40,14 +42,14 @@ type DeployabilityMatrixProps = {
   agents?: Array<{ id?: string; name?: string }> | null;
 };
 
-const categoryIcons: Record<string, string> = {
-  orchestration: "🔄",
-  db_storage: "🗄️",
-  vector_store: "📊",
-  queue_workflow: "📬",
-  observability: "👁️",
-  deployment_hosting: "☁️",
-  auth_identity: "🔐",
+const categoryBadges: Record<string, string> = {
+  orchestration: "ORCH",
+  db_storage: "DB",
+  vector_store: "VEC",
+  queue_workflow: "QUEUE",
+  observability: "OBS",
+  deployment_hosting: "DEP",
+  auth_identity: "AUTH",
 };
 
 const modelClassColors: Record<string, string> = {
@@ -96,7 +98,18 @@ export default function DeployabilityMatrix({
       {deployability?.orchestration_platform && (
         <div className="mt-6 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-4">
           <div className="flex items-center gap-2">
-            <span className="text-lg">🔄</span>
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5 text-[var(--accent)]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M21 12a9 9 0 0 1-15.55 6.36" />
+              <path d="M3 12a9 9 0 0 1 15.55-6.36" />
+              <path d="M21 16v-4h-4" />
+              <path d="M3 8v4h4" />
+            </svg>
             <div>
               <div className="text-sm font-semibold text-[var(--foreground)]">
                 Orchestration: {deployability.orchestration_platform}
@@ -160,30 +173,87 @@ export default function DeployabilityMatrix({
             </table>
           </div>
 
-          {/* Failure Modes */}
-          {deployability.constraints.some((c) => c.failure_modes?.length) && (
-            <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/5 p-4">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-red-400">
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 8v4m0 4h.01" />
-                </svg>
-                Potential Failure Modes
+          {/* Failure Modes + Safeguards (per agent) */}
+          <div className="mt-6 grid gap-3 md:grid-cols-2">
+            {deployability.constraints.map((c, idx) => (
+              <div
+                key={idx}
+                className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-4"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-[var(--foreground)]">
+                    {getAgentName(c.agent_id ?? "")}
+                  </div>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      modelClassColors[c.model_class ?? "mid"] ?? modelClassColors.mid
+                    }`}
+                  >
+                    {c.model_class ?? "mid"}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                      Failure modes
+                    </div>
+                    {c.failure_modes && c.failure_modes.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {c.failure_modes.slice(0, 10).map((m, midx) => (
+                          <span
+                            key={midx}
+                            className="rounded border border-red-500/25 bg-red-500/5 px-2 py-1 text-xs text-red-400"
+                          >
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-sm text-[var(--foreground-muted)]">Not specified</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                      Safeguards
+                    </div>
+                    {c.safeguards && c.safeguards.length > 0 ? (
+                      <ul className="mt-2 space-y-1">
+                        {c.safeguards.slice(0, 8).map((s, sidx) => (
+                          <li key={sidx} className="flex items-start gap-2 text-sm text-[var(--foreground)]">
+                            <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--accent)]" />
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="mt-1 text-sm text-[var(--foreground-muted)]">Not specified</div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div>
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                        Degrades to
+                      </div>
+                      <div className="mt-1 text-sm text-[var(--foreground)]">
+                        {c.degrades_to ?? "Not specified"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                        Recovery strategy
+                      </div>
+                      <div className="mt-1 text-sm text-[var(--foreground)]">
+                        {c.recovery_strategy ?? "Not specified"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {[...new Set(deployability.constraints.flatMap((c) => c.failure_modes ?? []))].map(
-                  (mode, idx) => (
-                    <span
-                      key={idx}
-                      className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400"
-                    >
-                      {mode}
-                    </span>
-                  )
-                )}
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
 
@@ -208,7 +278,9 @@ export default function DeployabilityMatrix({
                 {/* Tool Header */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">{categoryIcons[tool.category ?? ""] ?? "🔧"}</span>
+                    <span className="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--foreground)]">
+                      {categoryBadges[tool.category ?? ""] ?? "TOOL"}
+                    </span>
                     <div>
                       <div className="font-semibold text-[var(--foreground)]">
                         {tool.display_name ?? tool.id}

@@ -31,6 +31,17 @@ type ASCV11 = {
     single_vs_multi?: "single" | "multi";
     architecture_type?: string;
     architecture_type_reason?: string;
+    architecture_class?:
+      | "hierarchical_orchestrator"
+      | "supervisor_worker"
+      | "planner_executor_evaluator_loop"
+      | "hybrid";
+    architecture_class_reason?: string;
+    tradeoffs?: Array<{
+      decision?: string;
+      alternatives?: string[];
+      why?: string;
+    }>;
     confidence?: number;
     assumptions?: string[];
     missing_info?: string[];
@@ -123,6 +134,8 @@ type ASCV11 = {
       estimated_cost_per_call?: string;
       scaling_notes?: string;
       failure_modes?: string[];
+      safeguards?: string[];
+      degrades_to?: string;
       recovery_strategy?: string;
     }>;
     orchestration_platform?: string;
@@ -186,6 +199,7 @@ export default function ResultsV2({ output, startedAt, values, runStatus }: Resu
   // Section navigation
   const sections = [
     { id: "all", label: "All" },
+    { id: "outputs", label: "Outputs" },
     { id: "decision", label: "Decision" },
     { id: "agents", label: "Agents" },
     { id: "graph", label: "Graph" },
@@ -220,13 +234,13 @@ export default function ResultsV2({ output, startedAt, values, runStatus }: Resu
             )}
           </div>
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setShowDebug((v) => !v)}
-              className="rounded-sm border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
-            >
+          <button
+            type="button"
+            onClick={() => setShowDebug((v) => !v)}
+            className="rounded-sm border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+          >
               {showDebug ? "Hide debug" : "Debug"}
-            </button>
+          </button>
           </div>
         </div>
 
@@ -285,6 +299,38 @@ export default function ResultsV2({ output, startedAt, values, runStatus }: Resu
       {/* ASC v1.1 Sections */}
       {isV11 ? (
         <>
+          {/* Produced Outputs */}
+          {(activeSection === "all" || activeSection === "outputs") && (
+            <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">Produced Outputs</h2>
+              <p className="mt-1 text-sm text-[var(--foreground-muted)]">
+                When the run completes, this system produces:
+              </p>
+              <ul className="mt-4 space-y-2 text-sm text-[var(--foreground)]">
+                <li className="flex items-start gap-2">
+                  <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--accent)]" />
+                  Multi-agent architecture spec
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--accent)]" />
+                  Deployable workflow graph (agents-only) with return paths
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--accent)]" />
+                  Explicit trade-offs
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--accent)]" />
+                  Failure modes and safeguards (per agent)
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--accent)]" />
+                  Implementation-ready agent specs (inputs, outputs, tools, memory ownership)
+                </li>
+              </ul>
+            </section>
+          )}
+
           {/* Objective 1: Architecture Decision */}
           {(activeSection === "all" || activeSection === "decision") && (
             <ArchitectureDecision
@@ -295,7 +341,7 @@ export default function ResultsV2({ output, startedAt, values, runStatus }: Resu
 
           {/* Objective 2 & 4: Agent Specifications */}
           {(activeSection === "all" || activeSection === "agents") && (
-            <AgentCards agents={asc.agents ?? null} />
+            <AgentCards agents={asc.agents ?? null} tooling={asc.tooling ?? null} />
           )}
 
           {/* Objective 3: Agent Graph */}
@@ -326,7 +372,6 @@ export default function ResultsV2({ output, startedAt, values, runStatus }: Resu
         /* Fallback for non-v1.1 or missing ASC */
         <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
           <div className="text-center py-8">
-            <div className="text-4xl mb-4">🏗️</div>
             <h3 className="text-lg font-semibold text-[var(--foreground)]">
               Architecture Data Loading...
             </h3>

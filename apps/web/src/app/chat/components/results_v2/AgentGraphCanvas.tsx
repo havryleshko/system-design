@@ -35,27 +35,20 @@ type AgentGraphCanvasProps = {
     nodes?: AscGraphNode[];
     edges?: AscGraphEdge[];
   };
-  agents?: Array<{ id?: string; name?: string }> | null;
-  tooling?: {
-    tools?: Array<{ id?: string; display_name?: string }>;
-  } | null;
 };
 
 type LayoutDirection = "TB" | "LR";
 
 const NODE_SIZES: Record<string, { w: number; h: number }> = {
   agent: { w: 240, h: 72 },
-  tool: { w: 220, h: 62 },
   start: { w: 120, h: 44 },
   end: { w: 120, h: 44 },
-  external: { w: 220, h: 62 },
-  human: { w: 220, h: 62 },
 };
 
 function safeNodeType(t?: string) {
-  if (!t) return "tool";
-  if (t === "agent" || t === "tool" || t === "start" || t === "end" || t === "external" || t === "human") return t;
-  return "tool";
+  if (!t) return "agent";
+  if (t === "agent" || t === "start" || t === "end") return t;
+  return "agent";
 }
 
 function AgentNode(props: NodeProps) {
@@ -116,11 +109,8 @@ function StartEndNode(props: NodeProps) {
 
 const nodeTypes = {
   agent: AgentNode,
-  tool: ToolNode,
   start: StartEndNode,
   end: StartEndNode,
-  external: ToolNode,
-  human: ToolNode,
 } as const;
 
 function buildLayout(nodes: Node[], edges: Edge[], direction: LayoutDirection): Node[] {
@@ -154,48 +144,46 @@ function buildLayout(nodes: Node[], edges: Edge[], direction: LayoutDirection): 
   });
 }
 
-export default function AgentGraphCanvas({ graph, agents, tooling }: AgentGraphCanvasProps) {
+export default function AgentGraphCanvas({ graph }: AgentGraphCanvasProps) {
   const [direction, setDirection] = useState<LayoutDirection>("TB");
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const rfRef = useRef<ReactFlowInstance | null>(null);
 
   const { nodes, edges } = useMemo(() => {
-    const rawNodes = (graph.nodes ?? []).filter((n) => n && typeof n.id === "string" && n.id.trim());
+    const rawNodes = (graph.nodes ?? [])
+      .filter((n) => n && typeof n.id === "string" && n.id.trim())
+      .filter((n) => safeNodeType(n.type) === "agent" || safeNodeType(n.type) === "start" || safeNodeType(n.type) === "end");
     const rawEdges = (graph.edges ?? []).filter(
       (e) => e && typeof e.source === "string" && typeof e.target === "string" && e.source.trim() && e.target.trim()
     );
 
-    const agentNameById = new Map<string, string>();
-    for (const a of agents ?? []) {
-      if (a?.id && a?.name) agentNameById.set(a.id, a.name);
-    }
-
-    const toolNameById = new Map<string, string>();
-    for (const t of tooling?.tools ?? []) {
-      if (t?.id && t?.display_name) toolNameById.set(t.id, t.display_name);
-    }
-
     const nodeById = new Map<string, AscGraphNode>();
     for (const n of rawNodes) nodeById.set(n.id, n);
 
-    // Inject missing endpoints as derived tool nodes.
-    for (const e of rawEdges) {
-      if (!nodeById.has(e.source)) {
-        nodeById.set(e.source, { id: e.source, type: "tool", label: toolNameById.get(e.source) ?? e.source });
-      }
-      if (!nodeById.has(e.target)) {
-        nodeById.set(e.target, { id: e.target, type: "tool", label: toolNameById.get(e.target) ?? e.target });
+    const allowedIds = new Set(Array.from(nodeById.keys()));
+    const filteredEdges = rawEdges.filter((e) => allowedIds.has(e.source) && allowedIds.has(e.target));
+
+    // Derive hierarchy signal from edges: supervises (control) and reports (data)
+    const supervisesOut = new Set<string>();
+    const supervisesIn = new Set<string>();
+    for (const e of filteredEdges) {
+      const label = (e.label || "").toLowerCase();
+      if (e.edge_type === "control" && label.includes("supervis")) {
+        supervisesOut.add(e.source);
+        supervisesIn.add(e.target);
       }
     }
 
     const rfNodes: Node[] = Array.from(nodeById.values()).map((n) => {
       const t = safeNodeType(n.type);
-      const label = n.label ?? agentNameById.get(n.id) ?? toolNameById.get(n.id) ?? n.id;
+      const label = n.label ?? n.id;
       const subtitle =
         t === "agent"
-          ? "Agent"
-          : t === "tool"
-          ? "Tool"
+          ? supervisesOut.has(n.id)
+            ? "Supervisor"
+            : supervisesIn.has(n.id)
+            ? "Worker"
+            : "Agent"
           : t === "start" || t === "end"
           ? undefined
           : t;
@@ -207,9 +195,10 @@ export default function AgentGraphCanvas({ graph, agents, tooling }: AgentGraphC
       };
     });
 
-    const rfEdges: Edge[] = rawEdges.map((e, idx) => {
+    const rfEdges: Edge[] = filteredEdges.map((e, idx) => {
       const et = e.edge_type === "data" ? "data" : "control";
       const isControl = et === "control";
+      const isReturnPath = et === "data" && (e.label || "").toLowerCase().includes("report");
       return {
         id: `${e.source}__${e.target}__${idx}`,
         source: e.source,
@@ -217,7 +206,9 @@ export default function AgentGraphCanvas({ graph, agents, tooling }: AgentGraphC
         label: showEdgeLabels ? (e.label ?? (isControl ? "control" : "data")) : undefined,
         animated: isControl,
         style: isControl
-          ? { stroke: "var(--accent)", strokeWidth: 1.6 }
+          ? { stroke: "var(--accent)", strokeWidth: 1.8 }
+          : isReturnPath
+          ? { stroke: "var(--accent)", strokeWidth: 1.4, strokeDasharray: "6 4" }
           : { stroke: "var(--foreground-muted)", strokeWidth: 1.4, strokeDasharray: "6 4" },
         labelStyle: { fill: "var(--foreground)", fontSize: 10, fontWeight: 600 },
         labelBgStyle: { fill: "var(--surface)" },
@@ -226,10 +217,12 @@ export default function AgentGraphCanvas({ graph, agents, tooling }: AgentGraphC
       };
     });
 
-    const laidOutNodes = buildLayout(rfNodes, rfEdges, direction);
+    // Layout based on control edges to keep a DAG-like layout even when return paths introduce cycles.
+    const layoutEdges = rfEdges.filter((e) => e.animated);
+    const laidOutNodes = buildLayout(rfNodes, layoutEdges, direction);
     return { nodes: laidOutNodes, edges: rfEdges };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph.nodes, graph.edges, agents, tooling, direction, showEdgeLabels]);
+  }, [graph.nodes, graph.edges, direction, showEdgeLabels]);
 
   const handleInit = useCallback((instance: ReactFlowInstance) => {
     rfRef.current = instance;

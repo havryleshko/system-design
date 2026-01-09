@@ -5,6 +5,17 @@ type ArchitectureDecisionProps = {
     single_vs_multi?: "single" | "multi";
     architecture_type?: string;
     architecture_type_reason?: string;
+    architecture_class?:
+      | "hierarchical_orchestrator"
+      | "supervisor_worker"
+      | "planner_executor_evaluator_loop"
+      | "hybrid";
+    architecture_class_reason?: string;
+    tradeoffs?: Array<{
+      decision?: string;
+      alternatives?: string[];
+      why?: string;
+    }>;
     confidence?: number;
     assumptions?: string[];
     missing_info?: string[];
@@ -33,6 +44,9 @@ export default function ArchitectureDecision({ decision, productState }: Archite
     single_vs_multi,
     architecture_type,
     architecture_type_reason,
+    architecture_class,
+    architecture_class_reason,
+    tradeoffs,
     confidence,
     assumptions,
     missing_info,
@@ -55,6 +69,18 @@ export default function ArchitectureDecision({ decision, productState }: Archite
     "tree-of-thought": "Tree-of-Thought",
     "multi-agent-debate": "Multi-Agent Debate",
   };
+
+  const resolvedArchitectureClass = (() => {
+    if (architecture_class) return architecture_class;
+    // Defensive mapping for older runs that only had architecture_type.
+    const t = (architecture_type || "").toLowerCase();
+    if (t === "supervisor" || t === "supervisor_worker") return "supervisor_worker";
+    if (t === "plan-and-execute" || t === "planner_executor_evaluator_loop") return "planner_executor_evaluator_loop";
+    if (t === "reflection" || t === "react" || t === "tool-use" || t === "mrkl" || t === "self-ask") {
+      return "hierarchical_orchestrator";
+    }
+    return null;
+  })();
 
   return (
     <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
@@ -81,6 +107,31 @@ export default function ArchitectureDecision({ decision, productState }: Archite
 
       {/* Main Decision */}
       <div className="mt-6 grid gap-4 md:grid-cols-2">
+        {/* Architecture Class Card */}
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+            Architecture Class
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-[var(--accent)]/20 px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">
+              {single_vs_multi === "multi" ? "Multi-Agent" : "Single Agent"}
+            </span>
+            <span className="text-sm font-medium text-[var(--foreground)]">
+              <span className="font-mono">
+                {resolvedArchitectureClass ?? "—"}
+              </span>
+            </span>
+          </div>
+          {resolvedArchitectureClass === "hybrid" && architecture_class_reason && (
+            <p className="mt-3 text-sm text-[var(--foreground-muted)]">{architecture_class_reason}</p>
+          )}
+          {!architecture_class && (
+            <p className="mt-3 text-xs text-[var(--foreground-muted)]">
+              Backfilled from legacy runs (architecture_type).
+            </p>
+          )}
+        </div>
+
         {/* Architecture Type Card */}
         <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
@@ -108,35 +159,73 @@ export default function ArchitectureDecision({ decision, productState }: Archite
             </p>
           )}
         </div>
+      </div>
 
-        {/* Confidence Card */}
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
-            Confidence Score
-          </div>
-          <div className="mt-2 flex items-end gap-2">
-            <span className="text-3xl font-bold text-[var(--foreground)]">{confidencePercent}%</span>
-            <span className="mb-1 text-sm text-[var(--foreground-muted)]">
-              {confidencePercent >= 80
-                ? "High confidence"
-                : confidencePercent >= 50
-                ? "Moderate confidence"
-                : "Low confidence"}
-            </span>
-          </div>
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--border)]">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                confidencePercent >= 80
-                  ? "bg-green-500"
-                  : confidencePercent >= 50
-                  ? "bg-amber-500"
-                  : "bg-red-500"
-              }`}
-              style={{ width: `${confidencePercent}%` }}
-            />
-          </div>
+      {/* Confidence Card */}
+      <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--background)] p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+          Confidence Score
         </div>
+        <div className="mt-2 flex items-end gap-2">
+          <span className="text-3xl font-bold text-[var(--foreground)]">{confidencePercent}%</span>
+          <span className="mb-1 text-sm text-[var(--foreground-muted)]">
+            {confidencePercent >= 80
+              ? "High confidence"
+              : confidencePercent >= 50
+              ? "Moderate confidence"
+              : "Low confidence"}
+          </span>
+        </div>
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--border)]">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              confidencePercent >= 80
+                ? "bg-green-500"
+                : confidencePercent >= 50
+                ? "bg-amber-500"
+                : "bg-red-500"
+            }`}
+            style={{ width: `${confidencePercent}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Trade-offs */}
+      <div className="mt-6">
+        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+          Trade-offs
+        </div>
+        {tradeoffs && tradeoffs.length > 0 ? (
+          <div className="mt-3 space-y-3">
+            {tradeoffs.slice(0, 8).map((t, idx) => (
+              <div
+                key={idx}
+                className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-4"
+              >
+                <div className="text-sm font-semibold text-[var(--foreground)]">
+                  {t.decision || "Decision"}
+                </div>
+                {t.alternatives && t.alternatives.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {t.alternatives.slice(0, 6).map((alt, aidx) => (
+                      <span
+                        key={aidx}
+                        className="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--foreground)]"
+                      >
+                        {alt}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {t.why && (
+                  <p className="mt-2 text-sm text-[var(--foreground-muted)]">{t.why}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-[var(--foreground-muted)]">No trade-offs provided for this run.</p>
+        )}
       </div>
 
       {/* Pattern Influences */}
