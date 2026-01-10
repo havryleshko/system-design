@@ -107,11 +107,16 @@ export async function createThread(token: string): Promise<string> {
   return data.thread_id;
 }
 
-export async function startRun(threadId: string, input: string, token: string): Promise<string> {
+export async function startRun(
+  threadId: string,
+  input: string,
+  token: string,
+  extra?: { clarifier_session_id?: string; clarifier_summary?: string }
+): Promise<string> {
   const response = await fetch(backendUrl(`/threads/${threadId}/runs`), {
     method: "POST",
     headers: backendHeaders(token, { json: true }),
-    body: JSON.stringify({ input }),
+    body: JSON.stringify({ input, ...(extra ?? {}) }),
   });
 
   if (!response.ok) {
@@ -124,6 +129,132 @@ export async function startRun(threadId: string, input: string, token: string): 
     throw new Error("Failed to start run: missing run_id");
   }
   return data.run_id;
+}
+
+
+export type ClarifierSessionCreateResponse = {
+  session_id: string;
+  status: "active";
+  assistant_message: string;
+  questions?: Array<{
+    id: string;
+    text: string;
+    priority: "blocking" | "important" | "optional";
+    suggested_answers?: string[];
+  }>;
+  turn_count: number;
+};
+
+export type ClarifierTurnResponse = {
+  status: "active" | "finalized";
+  assistant_message: string;
+  questions?: Array<{
+    id: string;
+    text: string;
+    priority: "blocking" | "important" | "optional";
+    suggested_answers?: string[];
+  }>;
+  turn_count: number;
+};
+
+export type ClarifierFinalizeResponse = {
+  status: "ready" | "draft";
+  final_summary: string;
+  enriched_prompt: string;
+  missing_fields: string[];
+  assumptions: string[];
+};
+
+export type ClarifierSessionMessage = {
+  role: "system" | "assistant" | "user";
+  content: string;
+  created_at?: string | null;
+};
+
+export type ClarifierSessionGetResponse = {
+  session_id: string;
+  thread_id: string;
+  status: "active" | "finalized" | "abandoned";
+  original_input: string;
+  turn_count: number;
+  final_summary?: string | null;
+  enriched_prompt?: string | null;
+  missing_fields: string[];
+  assumptions: string[];
+  messages: ClarifierSessionMessage[];
+};
+
+export async function createClarifierSession(
+  threadId: string,
+  input: string,
+  token: string
+): Promise<ClarifierSessionCreateResponse> {
+  const response = await fetch(backendUrl(`/threads/${threadId}/clarifier/sessions`), {
+    method: "POST",
+    headers: backendHeaders(token, { json: true }),
+    body: JSON.stringify({ input }),
+  });
+
+  if (!response.ok) {
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Failed to create clarifier session: ${msg}`);
+  }
+
+  return (await response.json()) as ClarifierSessionCreateResponse;
+}
+
+export async function sendClarifierTurn(
+  sessionId: string,
+  message: string,
+  token: string
+): Promise<ClarifierTurnResponse> {
+  const response = await fetch(backendUrl(`/clarifier/sessions/${sessionId}/turn`), {
+    method: "POST",
+    headers: backendHeaders(token, { json: true }),
+    body: JSON.stringify({ message }),
+  });
+
+  if (!response.ok) {
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Clarifier message failed: ${msg}`);
+  }
+
+  return (await response.json()) as ClarifierTurnResponse;
+}
+
+export async function finalizeClarifier(
+  sessionId: string,
+  proceedAsDraft: boolean,
+  token: string
+): Promise<ClarifierFinalizeResponse> {
+  const response = await fetch(backendUrl(`/clarifier/sessions/${sessionId}/finalize`), {
+    method: "POST",
+    headers: backendHeaders(token, { json: true }),
+    body: JSON.stringify({ proceed_as_draft: proceedAsDraft }),
+  });
+
+  if (!response.ok) {
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Clarifier finalize failed: ${msg}`);
+  }
+
+  return (await response.json()) as ClarifierFinalizeResponse;
+}
+
+export async function getClarifierSession(
+  sessionId: string,
+  token: string
+): Promise<ClarifierSessionGetResponse> {
+  const response = await fetch(backendUrl(`/clarifier/sessions/${sessionId}`), {
+    headers: backendHeaders(token, { json: true }),
+  });
+
+  if (!response.ok) {
+    const msg = (await extractBackendError(response)) || response.statusText;
+    throw new Error(`Failed to load clarifier session: ${msg}`);
+  }
+
+  return (await response.json()) as ClarifierSessionGetResponse;
 }
 
 export async function getThreadState(threadId: string, token: string): Promise<ThreadState | null> {

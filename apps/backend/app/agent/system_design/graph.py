@@ -24,7 +24,6 @@ from .nodes import (
     github_api_node,
     web_search_node,
     architecture_generator_node,
-    diagram_generator_node,
     output_formatter_node,
     review_node,
     hallucination_check_node,
@@ -46,7 +45,6 @@ _NODE_AGENT_PHASE: dict[str, tuple[str, str]] = {
     "web_search_node": ("Research", "research"),
     "design_agent": ("Design", "design"),
     "architecture_generator_node": ("Design", "design"),
-    "diagram_generator_node": ("Design", "design"),
     "output_formatter_node": ("Design", "design"),
     "critic_agent": ("Critic", "critic"),
     "review_node": ("Critic", "critic"),
@@ -80,7 +78,6 @@ _STATUS_PATHS: dict[str, list[str]] = {
     # Design
     "design_agent": ["design_state", "status"],
     "architecture_generator_node": ["design_state", "architecture", "status"],
-    "diagram_generator_node": ["design_state", "diagram", "status"],
     "output_formatter_node": ["design_state", "output", "status"],
     # Critic
     "critic_agent": ["critic_state", "status"],
@@ -127,7 +124,6 @@ def _extract_node_result(node_name: str, out: dict) -> dict | None:
         "web_search_node": ["research_state", "nodes", "web_search"],
         # Design subnodes
         "architecture_generator_node": ["design_state", "architecture"],
-        "diagram_generator_node": ["design_state", "diagram"],
         "output_formatter_node": ["design_state", "output"],
         # Critic subnodes
         "review_node": ["critic_state", "review"],
@@ -401,7 +397,6 @@ builder.add_node("github_api_node", trace_node("github_api_node", github_api_nod
 builder.add_node("web_search_node", trace_node("web_search_node", web_search_node))
 # Design phase subnodes
 builder.add_node("architecture_generator_node", trace_node("architecture_generator_node", architecture_generator_node))
-builder.add_node("diagram_generator_node", trace_node("diagram_generator_node", diagram_generator_node))
 builder.add_node("output_formatter_node", trace_node("output_formatter_node", output_formatter_node))
 # Critic phase subnodes
 builder.add_node("review_node", trace_node("review_node", review_node))
@@ -421,9 +416,8 @@ builder.add_edge("knowledge_base_node", "research_agent")
 builder.add_edge("github_api_node", "research_agent")
 builder.add_edge("web_search_node", "research_agent")
 
-# Design sequencing: design_agent -> architecture_generator_node -> design_agent -> diagram_generator_node -> design_agent -> output_formatter_node -> design_agent -> orchestrator
+# Design sequencing: design_agent -> architecture_generator_node -> design_agent -> output_formatter_node -> design_agent -> orchestrator
 builder.add_edge("architecture_generator_node", "design_agent")
-builder.add_edge("diagram_generator_node", "design_agent")
 builder.add_edge("output_formatter_node", "design_agent")
 
 # Critic sequencing: critic_agent -> review_node -> critic_agent -> hallucination_check_node -> critic_agent -> risk_node -> critic_agent -> orchestrator
@@ -516,28 +510,22 @@ def _route_from_research_agent(state: State) -> Literal["pattern_selector_node",
     return "orchestrator"
 
 
-def _route_from_design_agent(state: State) -> Literal["architecture_generator_node", "diagram_generator_node", "output_formatter_node", "orchestrator"]:
+def _route_from_design_agent(state: State) -> Literal["architecture_generator_node", "output_formatter_node", "orchestrator"]:
     design_state = state.get("design_state") or {}
     
     # Check status of each subnode
     architecture_status = design_state.get("architecture", {}).get("status", "").lower() if isinstance(design_state.get("architecture"), dict) else ""
-    diagram_status = design_state.get("diagram", {}).get("status", "").lower() if isinstance(design_state.get("diagram"), dict) else ""
     output_status = design_state.get("output", {}).get("status", "").lower() if isinstance(design_state.get("output"), dict) else ""
     
     architecture_completed = architecture_status == "completed" or architecture_status == "skipped"
-    diagram_completed = diagram_status == "completed" or diagram_status == "skipped"
     output_completed = output_status == "completed" or output_status == "skipped"
     
     # Route to architecture_generator_node first if not completed
     if not architecture_completed:
         return "architecture_generator_node"
     
-    # Route to diagram_generator_node if architecture is done but diagram is not
-    if architecture_completed and not diagram_completed:
-        return "diagram_generator_node"
-    
-    # Route to output_formatter_node if diagram is done but output is not
-    if architecture_completed and diagram_completed and not output_completed:
+    # Route to output_formatter_node if architecture is done but output is not
+    if architecture_completed and not output_completed:
         return "output_formatter_node"
     
     # All are done, route to orchestrator
@@ -627,7 +615,6 @@ builder.add_conditional_edges(
     _route_from_design_agent,
     {
         "architecture_generator_node": "architecture_generator_node",
-        "diagram_generator_node": "diagram_generator_node",
         "output_formatter_node": "output_formatter_node",
         "orchestrator": "orchestrator",
     },
