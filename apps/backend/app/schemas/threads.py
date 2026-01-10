@@ -52,6 +52,7 @@ class ClarifierSessionCreateResponse(BaseModel):
     session_id: str
     status: Literal["active"]
     assistant_message: str
+    questions: Optional[List[Dict[str, Any]]] = None  # v2 expects 0 or 1 question
     turn_count: int
 
 
@@ -62,6 +63,7 @@ class ClarifierTurnRequest(BaseModel):
 class ClarifierTurnResponse(BaseModel):
     status: Literal["active", "finalized"]
     assistant_message: str
+    questions: Optional[List[Dict[str, Any]]] = None  # v2 expects 0 or 1 question
     turn_count: int
 
 

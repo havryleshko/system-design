@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, Sequence
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from pydantic import BaseModel
 from .state import State
 try:  
     from langchain_openai import ChatOpenAI  
@@ -651,6 +652,133 @@ def call_brain_json(
         if data is None:
             raise ValueError("LLM response was not valid JSON")
         return data
+
+
+def call_brain_structured(
+    messages: list[any],
+    schema: type[BaseModel],
+    *,
+    state: Optional[State] = None,
+    run_id: str | None = None,
+    node: str | None = None,
+    retries: int = 2,
+) -> BaseModel:
+    original_ms = normalise(messages)
+
+    # Mirror call_brain's memory injection behavior
+    prompt_msg: Optional[BaseMessage] = None
+    for candidate in reversed(original_ms):
+        if isinstance(candidate, HumanMessage):
+            prompt_msg = candidate
+            break
+
+    sys_m = [m for m in original_ms if isinstance(m, SystemMessage)]
+    other_m = [m for m in original_ms if not isinstance(m, SystemMessage)]
+    recent: list[BaseMessage] = []
+    metadata: Dict[str, Any] = {}
+    if state is not None:
+        state_messages = state.get("messages", []) or []
+        if state_messages:
+            recent = normalise(state_messages[-15:])
+        metadata = state.get("metadata", {}) or {}
+
+    user_id = metadata.get("user_id") if metadata else None
+    thread_id = metadata.get("thread_id") if metadata else None
+    process_id = thread_id or run_id or (metadata.get("run_id") if metadata else None)
+
+    episodic_messages: list[BaseMessage] = load_long_term_messages(
+        user_id=user_id,
+        process_id=process_id,
+        limit=12,
+    )
+    semantic_messages: list[BaseMessage] = []
+    if prompt_msg and user_id:
+        query_text = get_content(prompt_msg)
+        if query_text and len(query_text.strip()) > 10:
+            try:
+                semantic_messages = search_semantic_memory(
+                    user_id=user_id,
+                    query=query_text,
+                    limit=10,
+                )
+            except Exception as exc:
+                logger.warning("Semantic search failed, using episodic only: %s", exc)
+
+    memory_messages: list[BaseMessage] = []
+    seen_content: set[str] = set()
+    for msg in episodic_messages:
+        content = get_content(msg)
+        if content and content not in seen_content:
+            seen_content.add(content)
+            memory_messages.append(msg)
+    for msg in semantic_messages:
+        content = get_content(msg)
+        if content and content not in seen_content:
+            seen_content.add(content)
+            memory_messages.append(msg)
+
+    if memory_messages:
+        ms = sys_m + memory_messages + recent + other_m
+    elif recent:
+        ms = sys_m + recent + other_m
+    else:
+        ms = sys_m + other_m
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, retries + 1)):
+        try:
+            brain = make_brain()
+            raw_msg = None
+            try:
+                runnable = brain.with_structured_output(schema, include_raw=True)
+                out = runnable.invoke(ms)
+                raw_msg = out.get("raw")
+                parsed = out.get("parsed")
+                parsing_error = out.get("parsing_error")
+                if parsing_error:
+                    raise parsing_error
+            except TypeError:
+                # Older langchain versions may not support include_raw
+                runnable = brain.with_structured_output(schema)
+                parsed = runnable.invoke(ms)
+
+            if not isinstance(parsed, schema):
+                # Defensive: coerce if LC returns dict
+                parsed = schema.model_validate(parsed)
+
+            # Best-effort memory + token logging when we have the raw message
+            if raw_msg is not None:
+                record_long_term_memory(
+                    user_id=user_id,
+                    process_id=process_id,
+                    prompt=prompt_msg,
+                    response=raw_msg,
+                    run_id=run_id,
+                    node=node,
+                )
+                if run_id and node:
+                    log_token_usage(run_id, node, raw_msg)
+            return parsed
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max(1, retries + 1) - 1:
+                # Repair retry: add a system nudge describing the validation/parsing failure.
+                # This avoids hardcoded fallbacks while still recovering from schema drift.
+                err_txt = trim_snippet(str(exc), max_chars=900) if "trim_snippet" in globals() else str(exc)[:900]
+                ms = ms + [
+                    SystemMessage(
+                        content=(
+                            "Your last response did not match the required tool schema and could not be parsed.\n"
+                            "Fix the output and try again. Do NOT change the schema. Return a valid tool call.\n"
+                            f"Validation/parsing error: {err_txt}"
+                        )
+                    )
+                ]
+                continue
+            raise
+
+    # Unreachable, but keeps type checkers happy
+    raise last_exc or RuntimeError("call_brain_structured failed")
 
 
 def log_token_usage(run_id: str, node: str, response: BaseMessage) -> None:

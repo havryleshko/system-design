@@ -6,66 +6,80 @@ import app.agent.system_design.clarifier as clarifier
 
 
 def test_clarifier_engine_questions(monkeypatch) -> None:
-    def fake_call_brain_json(messages, **kwargs):
-        return {
-            "version": "v1",
-            "type": "questions",
-            "assistant_message": "Q1?",
-            "questions": [{"id": "q1", "text": "What is your SLA?", "priority": "blocking"}],
-            "missing_fields": ["sla"],
-            "assumptions": [],
-        }
+    def fake_call_brain_structured(messages, schema, **kwargs):
+        return clarifier.ClarifierStructuredOutput(
+            version="v1",
+            type="question",
+            assistant_message="What is your SLA?",
+            question=clarifier.ClarifierQuestion(
+                id="q1",
+                text="What is your SLA?",
+                priority="blocking",
+                suggested_answers=["99.9%", "99.99%", "best effort"],
+            ),
+            missing_fields=["sla"],
+            assumptions=[],
+        )
 
-    monkeypatch.setattr(clarifier, "call_brain_json", fake_call_brain_json)
+    monkeypatch.setattr(clarifier, "call_brain_structured", fake_call_brain_structured)
 
-    out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_final=False)
+    out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_stop=False)
     assert out.kind == "active"
-    assert "Q1" in out.assistant_message
+    assert "SLA" in out.assistant_message
+    assert out.questions and out.questions[0]["id"] == "q1"
+    assert "99.9%" in out.questions[0]["suggested_answers"]
 
 
-def test_clarifier_engine_final(monkeypatch) -> None:
-    def fake_call_brain_json(messages, **kwargs):
-        return {
-            "version": "v1",
-            "type": "final",
-            "status": "ready",
-            "assistant_message": "Done.",
-            "final_summary": "Summary",
-            "missing_fields": [],
-            "assumptions": [],
-            "enriched_prompt": "Prompt\n\nClarifier Summary:\nSummary",
-        }
+def test_clarifier_engine_stop(monkeypatch) -> None:
+    def fake_call_brain_structured(messages, schema, **kwargs):
+        return clarifier.ClarifierStructuredOutput(
+            version="v1",
+            type="stop",
+            assistant_message="Thanks — I have enough to proceed.",
+            reason="Enough context collected.",
+            missing_fields=[],
+            assumptions=[],
+        )
 
-    monkeypatch.setattr(clarifier, "call_brain_json", fake_call_brain_json)
+    monkeypatch.setattr(clarifier, "call_brain_structured", fake_call_brain_structured)
 
-    out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=2, force_final=True)
+    out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=2, force_stop=True)
     assert out.kind == "finalized"
-    assert out.final_status == "ready"
-    assert out.final_summary == "Summary"
-    assert "Clarifier Summary" in (out.enriched_prompt or "")
+    assert out.stop_reason == "Enough context collected."
 
 
-def test_clarifier_engine_fallback_on_exception(monkeypatch) -> None:
-    def fake_call_brain_json(messages, **kwargs):
+def test_clarifier_engine_retry_then_error(monkeypatch) -> None:
+    def fake_call_brain_structured(messages, schema, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(clarifier, "call_brain_json", fake_call_brain_json)
+    monkeypatch.setattr(clarifier, "call_brain_structured", fake_call_brain_structured)
 
-    out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_final=False)
-    assert out.kind == "active"
-    assert "deployment" in out.assistant_message.lower()
+    try:
+        clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_stop=False)
+        assert False, "Expected exception"
+    except RuntimeError:
+        assert True
 
 
-def test_clarifier_engine_fallback_on_invalid_payload(monkeypatch) -> None:
-    def fake_call_brain_json(messages, **kwargs):
-        # Missing required `assistant_message` should force validation failure and fallback.
-        return {"type": "questions"}
-
-    monkeypatch.setattr(clarifier, "call_brain_json", fake_call_brain_json)
-
-    out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_final=False)
-    assert out.kind == "active"
-    # Should fall back to a safe concrete question
-    assert "scale" in out.assistant_message.lower()
+def test_build_enriched_prompt_pairs_and_stop_reason() -> None:
+    enriched = clarifier.build_enriched_prompt(
+        "Build X",
+        [
+            {"role": "assistant", "content": "What is your SLA?"},
+            {"role": "user", "content": "99.9%"},
+            {"role": "assistant", "content": "Any data residency requirements?"},
+            {"role": "user", "content": "EU only"},
+        ],
+        stop_reason="Enough context collected.",
+    )
+    assert "Original request:" in enriched
+    assert "Build X" in enriched
+    assert "Clarifier Q/A:" in enriched
+    assert "1) Q: What is your SLA?" in enriched
+    assert "A: 99.9%" in enriched
+    assert "2) Q: Any data residency requirements?" in enriched
+    assert "A: EU only" in enriched
+    assert "Stop reason:" in enriched
+    assert "Enough context collected." in enriched
 
 

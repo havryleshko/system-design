@@ -8,11 +8,19 @@ import {
   type ClarifierSessionMessage,
 } from "@/app/actions";
 
+type ClarifierQuestion = {
+  id: string;
+  text: string;
+  priority: "blocking" | "important" | "optional";
+  suggested_answers?: string[];
+};
+
 type ClarifierChatModalProps = {
   isOpen: boolean;
   sessionId: string | null;
   token: string | null;
   initialAssistantMessage: string;
+  initialQuestions?: ClarifierQuestion[];
   onClose: () => void;
   onReadyToStart: (result: { enrichedPrompt: string; finalSummary: string; sessionId: string }) => void;
 };
@@ -30,6 +38,7 @@ export default function ClarifierChatModal({
   sessionId,
   token,
   initialAssistantMessage,
+  initialQuestions,
   onClose,
   onReadyToStart,
 }: ClarifierChatModalProps) {
@@ -38,7 +47,9 @@ export default function ClarifierChatModal({
   const [isSending, setIsSending] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
   const [finalized, setFinalized] = useState<ClarifierFinalizeResponse | null>(null);
+  const [activeQuestions, setActiveQuestions] = useState<ClarifierQuestion[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const sendLatchRef = useRef(false);
 
   const canSend = Boolean(isOpen && sessionId && token && !isSending && input.trim() && !finalized);
 
@@ -51,11 +62,12 @@ export default function ClarifierChatModal({
         created_at: nowIso(),
       },
     ]);
+    setActiveQuestions(initialQuestions ?? []);
     setInput("");
     setIsSending(false);
     setTurnCount(0);
     setFinalized(null);
-  }, [isOpen, initialAssistantMessage]);
+  }, [isOpen, initialAssistantMessage, initialQuestions]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -89,8 +101,10 @@ export default function ClarifierChatModal({
 
   const handleSend = useCallback(async () => {
     if (!sessionId || !token) return;
+    if (sendLatchRef.current) return;
     const text = input.trim();
     if (!text) return;
+    sendLatchRef.current = true;
 
     setInput("");
     appendMessage({ role: "user", content: text, created_at: nowIso() });
@@ -100,6 +114,7 @@ export default function ClarifierChatModal({
       const result = await sendClarifierTurn(sessionId, text, token);
       setTurnCount(result.turn_count);
       appendMessage({ role: "assistant", content: result.assistant_message, created_at: nowIso() });
+      setActiveQuestions(result.questions ?? []);
 
       if (result.status === "finalized") {
         await doFinalize(false);
@@ -109,8 +124,21 @@ export default function ClarifierChatModal({
       appendMessage({ role: "assistant", content: `Error: ${msg}`, created_at: nowIso() });
     } finally {
       setIsSending(false);
+      sendLatchRef.current = false;
     }
   }, [appendMessage, doFinalize, input, sessionId, token]);
+
+  const handleChipClick = useCallback((value: string) => {
+    const v = (value || "").trim();
+    if (!v) return;
+    setInput((prev) => {
+      const p = (prev || "").trim();
+      if (!p) return v;
+      // Avoid duplicating if already present
+      if (p.split("\n").map((s) => s.trim()).includes(v)) return prev;
+      return `${prev}\n${v}`.trim();
+    });
+  }, []);
 
   const handleStart = useCallback(() => {
     if (!finalized || !sessionId) return;
@@ -135,7 +163,7 @@ export default function ClarifierChatModal({
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-[var(--foreground)]">{title}</div>
             <div className="mt-0.5 text-xs text-[var(--foreground-muted)]">
-              Turn {turnCount}/8 • Ask questions, or start as draft anytime.
+              Turn {turnCount}/5 • Ask questions, or start as draft anytime.
             </div>
           </div>
           <button
@@ -171,6 +199,36 @@ export default function ClarifierChatModal({
         <div className="border-t border-[var(--border)] bg-[var(--surface)] p-4">
           {!finalized ? (
             <div className="flex flex-col gap-2">
+              {activeQuestions.length > 0 && (
+                <div className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                    Suggested answers
+                  </div>
+                  <div className="space-y-3">
+                    {(() => {
+                      const q = activeQuestions[0];
+                      if (!q) return null;
+                      return (
+                        <div key={q.id} className="space-y-2">
+                          <div className="text-xs text-[var(--foreground)]">{q.text}</div>
+                          <div className="flex flex-wrap gap-2">
+                            {(q.suggested_answers ?? []).slice(0, 4).map((ans, idx) => (
+                              <button
+                                key={`${q.id}-${idx}`}
+                                type="button"
+                                onClick={() => handleChipClick(ans)}
+                                className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs text-[var(--foreground)] hover:border-[var(--accent)]"
+                              >
+                                {ans}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}

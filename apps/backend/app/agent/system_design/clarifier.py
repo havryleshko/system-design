@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, model_validator
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 
-from app.agent.system_design.nodes import call_brain_json
+from app.agent.system_design.nodes import call_brain_structured
 
 
-MAX_TURNS = 8
+MAX_TURNS = 5
 MAX_MESSAGE_CHARS = 4_000
 MAX_SESSION_CHARS = 40_000
 
@@ -18,57 +18,90 @@ class ClarifierQuestion(BaseModel):
     id: str
     text: str
     priority: Literal["blocking", "important", "optional"] = "important"
+    suggested_answers: list[str] = Field(
+        default_factory=list,
+        min_length=3,
+        max_length=4,
+        description="3-4 suggested user answers (short, concrete).",
+    )
 
 
-class ClarifierQuestionsPayload(BaseModel):
+class ClarifierQuestionTurnPayload(BaseModel):
     version: Literal["v1"] = "v1"
-    type: Literal["questions"] = "questions"
+    type: Literal["question"] = "question"
     assistant_message: str
-    questions: list[ClarifierQuestion] = Field(default_factory=list)
+    question: ClarifierQuestion
     missing_fields: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
 
 
-class ClarifierFinalPayload(BaseModel):
+class ClarifierStopPayload(BaseModel):
     version: Literal["v1"] = "v1"
-    type: Literal["final"] = "final"
-    status: Literal["ready", "draft"] = "draft"
+    type: Literal["stop"] = "stop"
     assistant_message: str
-    final_summary: str
+    reason: str
     missing_fields: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
-    enriched_prompt: str
 
 
-ClarifierLLMOutput = ClarifierQuestionsPayload | ClarifierFinalPayload
+class ClarifierStructuredOutput(BaseModel):
+    version: Literal["v1"] = "v1"
+    type: Literal["question", "stop"]
+    assistant_message: str
+
+    # question-turn fields
+    question: Optional[ClarifierQuestion] = None
+
+    # stop fields
+    reason: Optional[str] = None
+
+    # shared optional metadata
+    missing_fields: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_by_type(self) -> "ClarifierStructuredOutput":
+        if self.type == "question":
+            if self.question is None:
+                raise ValueError("question is required when type=question")
+            return self
+        # stop
+        if self.reason is None:
+            raise ValueError("reason is required when type=stop")
+        if not (self.reason or "").strip():
+            raise ValueError("reason must be non-empty when type=stop")
+        return self
 
 
 @dataclass(frozen=True)
 class ClarifierEngineResult:
     kind: Literal["active", "finalized"]
     assistant_message: str
-    final_status: Optional[Literal["ready", "draft"]] = None
-    final_summary: Optional[str] = None
-    enriched_prompt: Optional[str] = None
+    questions: list[dict[str, Any]] = field(default_factory=list)
+    stop_reason: Optional[str] = None
     missing_fields: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
 
 
-def _system_prompt(*, force_final: bool) -> str:
+def _system_prompt(*, force_stop: bool) -> str:
     return (
         "You are an intake clarifier for an agentic system design tool.\n"
         "Your job is to ask ONLY clarifying questions needed to design and implement the system.\n"
         "Rules:\n"
-        "- Ask 1-3 questions at a time.\n"
+        "- Ask EXACTLY 1 question at a time.\n"
+        "- Provide EXACTLY 3-4 suggested user answers (short, concrete).\n"
+        "- The question should be the highest-impact missing info needed for a high-quality architecture blueprint.\n"
         "- Prefer concrete requirements (numbers, SLAs, constraints).\n"
         "- Avoid long explanations.\n"
+        "- The assistant_message must be short.\n"
+        "- You MAY return type=stop when you judge there is enough context collected to proceed.\n"
         "- Output MUST be valid JSON ONLY. No markdown.\n"
         "- JSON must match one of these shapes:\n"
-        "  (A) Questions:\n"
-        "    {\"version\":\"v1\",\"type\":\"questions\",\"assistant_message\":\"...\",\"questions\":[{\"id\":\"...\",\"text\":\"...\",\"priority\":\"blocking|important|optional\"}],\"missing_fields\":[...],\"assumptions\":[...]}\n"
-        "  (B) Final:\n"
-        "    {\"version\":\"v1\",\"type\":\"final\",\"status\":\"ready|draft\",\"assistant_message\":\"...\",\"final_summary\":\"...\",\"missing_fields\":[...],\"assumptions\":[...],\"enriched_prompt\":\"...\"}\n"
-        + ("- You MUST return type=final in this response.\n" if force_final else "")
+        "  (A) Question:\n"
+        "    {\"version\":\"v1\",\"type\":\"question\",\"assistant_message\":\"...\",\"question\":{\"id\":\"...\",\"text\":\"...\",\"priority\":\"blocking|important|optional\",\"suggested_answers\":[\"...\", \"...\", \"...\"]},\"missing_fields\":[...],\"assumptions\":[...]}\n"
+        "  (B) Stop:\n"
+        "    {\"version\":\"v1\",\"type\":\"stop\",\"assistant_message\":\"...\",\"reason\":\"...\",\"missing_fields\":[...],\"assumptions\":[...]}\n"
+        + ("- You MUST return type=stop in this response.\n" if force_stop else "")
     )
 
 
@@ -106,16 +139,16 @@ def run_clarifier(
     original_input: str,
     transcript: list[dict[str, Any]],
     turn_count: int,
-    force_final: bool,
+    force_stop: bool,
 ) -> ClarifierEngineResult:
-    # Enforce max turns by forcing final output.
+    # Enforce max turns by forcing a stop.
     if turn_count >= MAX_TURNS:
-        force_final = True
+        force_stop = True
 
     original_input = _truncate(original_input.strip(), MAX_SESSION_CHARS)
 
     convo: list[BaseMessage] = []
-    convo.append(SystemMessage(content=_system_prompt(force_final=force_final)))
+    convo.append(SystemMessage(content=_system_prompt(force_stop=force_stop)))
     convo.append(HumanMessage(content=f"Original request:\n{original_input}"))
 
     for msg in transcript:
@@ -127,42 +160,91 @@ def run_clarifier(
 
     convo = _cap_messages_for_context(convo, MAX_SESSION_CHARS)
 
-    try:
-        raw = call_brain_json(convo, state=None, run_id=None, node="clarifier")
-    except Exception:
-        # Safe fallback: one concrete question.
+    payload = call_brain_structured(convo, ClarifierStructuredOutput, state=None, run_id=None, node="clarifier", retries=2)
+
+    if payload.type == "stop":
         return ClarifierEngineResult(
-            kind="active",
-            assistant_message="What is the target deployment environment (cloud provider/region, or on-prem)?",
-            missing_fields=[],
-            assumptions=[],
+            kind="finalized",
+            assistant_message=payload.assistant_message,
+            questions=[],
+            stop_reason=payload.reason,
+            missing_fields=payload.missing_fields,
+            assumptions=payload.assumptions,
         )
 
-    try:
-        if raw.get("type") == "final":
-            parsed = ClarifierFinalPayload.model_validate(raw)
-            return ClarifierEngineResult(
-                kind="finalized",
-                assistant_message=parsed.assistant_message,
-                final_status=parsed.status,
-                final_summary=parsed.final_summary,
-                enriched_prompt=parsed.enriched_prompt,
-                missing_fields=parsed.missing_fields,
-                assumptions=parsed.assumptions,
-            )
-        parsed = ClarifierQuestionsPayload.model_validate(raw)
-        return ClarifierEngineResult(
-            kind="active",
-            assistant_message=parsed.assistant_message,
-            missing_fields=parsed.missing_fields,
-            assumptions=parsed.assumptions,
-        )
-    except ValidationError:
-        return ClarifierEngineResult(
-            kind="active",
-            assistant_message="What scale should we design for (users, requests/sec, and data volume)?",
-            missing_fields=[],
-            assumptions=[],
-        )
+    # Question turn: expose as a single-element list for the existing API/UI
+    qd = (payload.question or ClarifierQuestion(id="q", text=payload.assistant_message, suggested_answers=[])).model_dump()
+    assistant_message = (payload.assistant_message or "").strip() or str(qd.get("text") or "")
+    return ClarifierEngineResult(
+        kind="active",
+        assistant_message=assistant_message,
+        questions=[qd],
+        missing_fields=payload.missing_fields,
+        assumptions=payload.assumptions,
+    )
+
+
+def build_enriched_prompt(
+    original_input: str,
+    transcript: list[dict[str, Any]],
+    *,
+    stop_reason: str | None = None,
+) -> str:
+    """
+    Deterministically build the run input from:
+    - the original request
+    - Clarifier assistant->user Q/A pairs from the persisted transcript
+    - optional stop reason
+    """
+    original = (original_input or "").strip()
+    lines: list[str] = []
+    lines.append("Original request:")
+    lines.append(original)
+    lines.append("")
+    lines.append("Clarifier Q/A:")
+
+    # Build assistant->user pairs in transcript order.
+    qa_pairs: list[tuple[str, str]] = []
+    pending_q: str | None = None
+    pending_a: list[str] = []
+
+    for msg in (transcript or []):
+        role = str(msg.get("role") or "").lower()
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+
+        if role == "assistant":
+            if pending_q is not None:
+                qa_pairs.append((pending_q, "\n".join(pending_a).strip()))
+            pending_q = content
+            pending_a = []
+            continue
+
+        if role == "user":
+            if pending_q is None:
+                # User message without a prior assistant question: ignore for deterministic Q/A.
+                continue
+            pending_a.append(content)
+            continue
+
+        # Ignore system/unknown roles.
+
+    if pending_q is not None:
+        qa_pairs.append((pending_q, "\n".join(pending_a).strip()))
+
+    if not qa_pairs:
+        lines.append("(none)")
+    else:
+        for i, (q, a) in enumerate(qa_pairs, start=1):
+            lines.append(f"{i}) Q: {q}")
+            lines.append(f"   A: {a if a else '(no answer)'}")
+
+    if stop_reason and stop_reason.strip():
+        lines.append("")
+        lines.append("Stop reason:")
+        lines.append(stop_reason.strip())
+
+    return "\n".join(lines).strip() + "\n"
 
 

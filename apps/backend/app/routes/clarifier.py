@@ -17,12 +17,12 @@ from app.schemas.threads import (
 )
 from app.services import threads as thread_service
 from app.services import clarifier as clarifier_service
-from app.agent.system_design.clarifier import run_clarifier
+from app.agent.system_design.clarifier import build_enriched_prompt, run_clarifier
 
 
 clarifier_router = APIRouter(tags=["clarifier"])
 
-MAX_TURNS = 8
+MAX_TURNS = 5
 MAX_MESSAGE_CHARS = 4_000
 
 
@@ -58,12 +58,15 @@ async def create_clarifier_session(
     session_id = clarifier_service.create_session(user_id=str(user_id), thread_id=thread_id, original_input=original_input)
 
     # Generate the first assistant message immediately.
-    engine = run_clarifier(
-        original_input=original_input,
-        transcript=[],
-        turn_count=0,
-        force_final=False,
-    )
+    try:
+        engine = run_clarifier(
+            original_input=original_input,
+            transcript=[],
+            turn_count=0,
+            force_stop=False,
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Clarifier failed to produce a valid response. Please try again.")
     clarifier_service.append_message(
         session_id=session_id,
         user_id=str(user_id),
@@ -75,6 +78,7 @@ async def create_clarifier_session(
         session_id=session_id,
         status="active",
         assistant_message=engine.assistant_message,
+        questions=engine.questions or None,
         turn_count=0,
     )
 
@@ -141,12 +145,15 @@ async def clarifier_turn(
     transcript_rows = clarifier_service.list_messages(session_id=session_id, user_id=str(user_id), limit=200)
     transcript = [{"role": r["role"], "content": r["content"]} for r in transcript_rows]
 
-    engine = run_clarifier(
-        original_input=str(sess.get("original_input") or ""),
-        transcript=transcript,
-        turn_count=new_turn_count,
-        force_final=False,
-    )
+    try:
+        engine = run_clarifier(
+            original_input=str(sess.get("original_input") or ""),
+            transcript=transcript,
+            turn_count=new_turn_count,
+            force_stop=new_turn_count >= MAX_TURNS,
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Clarifier failed to produce a valid response. Please resend your last answer.")
     clarifier_service.append_message(
         session_id=session_id,
         user_id=str(user_id),
@@ -155,18 +162,31 @@ async def clarifier_turn(
     )
 
     if engine.kind == "finalized":
+        stop_reason = str(engine.stop_reason or "").strip() or "Enough context collected to proceed."
+        original = str(sess.get("original_input") or "").strip()
+        enriched_prompt = build_enriched_prompt(original, transcript, stop_reason=stop_reason)
         clarifier_service.finalize_session(
             session_id=session_id,
             user_id=str(user_id),
-            status=str(engine.final_status or "draft"),
-            final_summary=str(engine.final_summary or ""),
-            enriched_prompt=str(engine.enriched_prompt or ""),
+            status="ready",
+            final_summary=stop_reason,
+            enriched_prompt=enriched_prompt,
             missing_fields=engine.missing_fields or [],
             assumptions=engine.assumptions or [],
         )
-        return ClarifierTurnResponse(status="finalized", assistant_message=engine.assistant_message, turn_count=new_turn_count)
+        return ClarifierTurnResponse(
+            status="finalized",
+            assistant_message=engine.assistant_message,
+            questions=None,
+            turn_count=new_turn_count,
+        )
 
-    return ClarifierTurnResponse(status="active", assistant_message=engine.assistant_message, turn_count=new_turn_count)
+    return ClarifierTurnResponse(
+        status="active",
+        assistant_message=engine.assistant_message,
+        questions=engine.questions or None,
+        turn_count=new_turn_count,
+    )
 
 
 @clarifier_router.post(
@@ -187,10 +207,34 @@ async def finalize_clarifier(
 
     if str(sess.get("status")) == "finalized":
         final_status = str(sess.get("final_status") or "draft")
+        final_summary = str(sess.get("final_summary") or "").strip()
+        enriched_prompt = str(sess.get("enriched_prompt") or "").strip()
+        if enriched_prompt:
+            return ClarifierFinalizeResponse(
+                status="ready" if final_status == "ready" else "draft",
+                final_summary=final_summary,
+                enriched_prompt=enriched_prompt,
+                missing_fields=sess.get("missing_fields") or [],
+                assumptions=sess.get("assumptions") or [],
+            )
+        # Defensive: if we were finalized without an enriched_prompt, rebuild deterministically.
+        transcript_rows = clarifier_service.list_messages(session_id=session_id, user_id=str(user_id), limit=200)
+        transcript = [{"role": r["role"], "content": r["content"]} for r in transcript_rows]
+        original = str(sess.get("original_input") or "").strip()
+        rebuilt = build_enriched_prompt(original, transcript, stop_reason=final_summary or None)
+        clarifier_service.finalize_session(
+            session_id=session_id,
+            user_id=str(user_id),
+            status=final_status,
+            final_summary=final_summary or "Proceeding as draft. Requirements captured from clarifier chat.",
+            enriched_prompt=rebuilt,
+            missing_fields=sess.get("missing_fields") or [],
+            assumptions=sess.get("assumptions") or [],
+        )
         return ClarifierFinalizeResponse(
             status="ready" if final_status == "ready" else "draft",
-            final_summary=str(sess.get("final_summary") or ""),
-            enriched_prompt=str(sess.get("enriched_prompt") or ""),
+            final_summary=final_summary or "Proceeding as draft. Requirements captured from clarifier chat.",
+            enriched_prompt=rebuilt,
             missing_fields=sess.get("missing_fields") or [],
             assumptions=sess.get("assumptions") or [],
         )
@@ -198,26 +242,12 @@ async def finalize_clarifier(
     transcript_rows = clarifier_service.list_messages(session_id=session_id, user_id=str(user_id), limit=200)
     transcript = [{"role": r["role"], "content": r["content"]} for r in transcript_rows]
 
-    # Force final output.
-    engine = run_clarifier(
-        original_input=str(sess.get("original_input") or ""),
-        transcript=transcript,
-        turn_count=int(sess.get("turn_count") or 0),
-        force_final=True,
-    )
-    clarifier_service.append_message(
-        session_id=session_id,
-        user_id=str(user_id),
-        role="assistant",
-        content=_truncate(engine.assistant_message, MAX_MESSAGE_CHARS),
-    )
-
-    # Ensure we always finalize; if engine didn't, create a minimal summary.
-    final_summary = str(engine.final_summary or "Proceeding as draft. Requirements captured from clarifier chat.")
-    enriched_prompt = str(engine.enriched_prompt or (str(sess.get("original_input") or "") + "\n\nClarifier Summary:\n" + final_summary))
-    final_status = str(engine.final_status or ("draft" if payload.proceed_as_draft else "draft"))
-    if payload.proceed_as_draft:
-        final_status = "draft"
+    original = str(sess.get("original_input") or "").strip()
+    final_status = "draft" if payload.proceed_as_draft else "ready"
+    final_summary = str(sess.get("final_summary") or "").strip()
+    if not final_summary:
+        final_summary = "Proceeding as draft. Requirements captured from clarifier chat." if final_status == "draft" else "Enough context collected to proceed."
+    enriched_prompt = build_enriched_prompt(original, transcript, stop_reason=str(sess.get("final_summary") or "").strip() or None)
 
     clarifier_service.finalize_session(
         session_id=session_id,
@@ -225,16 +255,16 @@ async def finalize_clarifier(
         status=final_status,
         final_summary=final_summary,
         enriched_prompt=enriched_prompt,
-        missing_fields=engine.missing_fields or [],
-        assumptions=engine.assumptions or [],
+        missing_fields=sess.get("missing_fields") or [],
+        assumptions=sess.get("assumptions") or [],
     )
 
     return ClarifierFinalizeResponse(
         status="draft" if final_status == "draft" else "ready",
         final_summary=final_summary,
         enriched_prompt=enriched_prompt,
-        missing_fields=engine.missing_fields or [],
-        assumptions=engine.assumptions or [],
+        missing_fields=sess.get("missing_fields") or [],
+        assumptions=sess.get("assumptions") or [],
     )
 
 

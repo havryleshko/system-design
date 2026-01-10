@@ -144,6 +144,9 @@ export default function ChatClient() {
   const [showClarifier, setShowClarifier] = useState(false);
   const [clarifierSessionId, setClarifierSessionId] = useState<string | null>(null);
   const [clarifierAssistantMessage, setClarifierAssistantMessage] = useState("");
+  const [clarifierQuestions, setClarifierQuestions] = useState<
+    Array<{ id: string; text: string; priority: "blocking" | "important" | "optional"; suggested_answers?: string[] }>
+  >([]);
 
   const themeVars = useMemo(
     () => ({
@@ -368,6 +371,7 @@ export default function ChatClient() {
       const created = await createClarifierSession(currentThreadId, prompt, token);
       setClarifierSessionId(created.session_id);
       setClarifierAssistantMessage(created.assistant_message);
+      setClarifierQuestions(created.questions ?? []);
       setShowClarifier(true);
     } catch (err) {
       console.error("Submit error:", err);
@@ -376,19 +380,24 @@ export default function ChatClient() {
     }
   };
 
-  const executeRun = async (
+  const executeRun = useCallback(async (
     prompt: string,
     token: string,
     extra?: { clarifier_session_id?: string; clarifier_summary?: string }
   ) => {
     try {
+      const trimmed = (prompt ?? "").trim();
+      if (!trimmed) {
+        setError("Cannot start run: missing input prompt.");
+        return;
+      }
       resetSession();
       setError(null);
       setIsRunning(true);
       setRunStatus("running");
       setStartedAt(new Date());
       setProgress(0);
-      setSubmittedQuestion(prompt);
+      setSubmittedQuestion(trimmed);
 
       // Create thread if needed
       let currentThreadId = threadId;
@@ -397,7 +406,7 @@ export default function ChatClient() {
         setThreadId(currentThreadId);
       }
 
-      const newRunId = await startRun(currentThreadId, prompt, token, extra);
+      const newRunId = await startRun(currentThreadId, trimmed, token, extra);
       setRunId(newRunId);
 
       attachWebSocket(currentThreadId, newRunId, token);
@@ -412,24 +421,30 @@ export default function ChatClient() {
       }
       stopAll();
     }
-  };
+  }, [attachWebSocket, createThread, resetSession, startRun, stopAll, threadId]);
 
   const handleClarifierClose = useCallback(() => {
     setShowClarifier(false);
     setClarifierSessionId(null);
     setClarifierAssistantMessage("");
+    setClarifierQuestions([]);
   }, []);
 
   const handleClarifierReadyToStart = useCallback(
     (result: { enrichedPrompt: string; finalSummary: string; sessionId: string }) => {
       setShowClarifier(false);
       if (!session?.access_token) return;
+      const trimmed = (result.enrichedPrompt ?? "").trim();
+      if (!trimmed) {
+        setError("Clarifier produced an empty prompt. Please finalize again or restart the clarifier.");
+        return;
+      }
       executeRun(result.enrichedPrompt, session.access_token, {
         clarifier_session_id: result.sessionId,
         clarifier_summary: result.finalSummary,
       });
     },
-    [session?.access_token]
+    [executeRun, session?.access_token]
   );
 
   const handleCancel = useCallback(() => {
@@ -787,6 +802,7 @@ export default function ChatClient() {
         sessionId={clarifierSessionId}
         token={session?.access_token ?? null}
         initialAssistantMessage={clarifierAssistantMessage}
+        initialQuestions={clarifierQuestions}
         onClose={handleClarifierClose}
         onReadyToStart={handleClarifierReadyToStart}
       />

@@ -67,6 +67,8 @@ async def start_run(
     owner = thread.get("user_id")
     if not owner or str(owner) != str(user_id):
         raise HTTPException(status_code=403, detail="Forbidden")
+    if not (payload.input or "").strip():
+        raise HTTPException(status_code=400, detail="Input is required")
     try:
         run_id = thread_service.start_run(
             thread_id,

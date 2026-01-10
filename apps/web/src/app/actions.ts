@@ -136,12 +136,24 @@ export type ClarifierSessionCreateResponse = {
   session_id: string;
   status: "active";
   assistant_message: string;
+  questions?: Array<{
+    id: string;
+    text: string;
+    priority: "blocking" | "important" | "optional";
+    suggested_answers?: string[];
+  }>;
   turn_count: number;
 };
 
 export type ClarifierTurnResponse = {
   status: "active" | "finalized";
   assistant_message: string;
+  questions?: Array<{
+    id: string;
+    text: string;
+    priority: "blocking" | "important" | "optional";
+    suggested_answers?: string[];
+  }>;
   turn_count: number;
 };
 
