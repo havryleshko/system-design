@@ -42,6 +42,7 @@ except ImportError:
     def get_total_tokens(run_id: str) -> int:
         return 0
 from app.schemas.runs import RunEvent
+from app.agent.llm import call_llm_structured
 try:
     from app.services.langgraph_store import (
         load_long_term_messages,
@@ -2197,182 +2198,142 @@ Generate a complete architecture as JSON with this structure:
 
 Return ONLY the JSON object, no markdown code blocks or other text."""
 
-    # Call LLM with retry logic
+    # Call LLM using structured output to avoid JSON parse failures.
+    # This is the root cause of fallback architectures (invalid JSON / truncation).
+    from .schemas import ArchitectureSpec, validate_architecture_output, is_generic_architecture
     max_retries = 2
+
+    def _goal_specific_minimal_architecture(goal_text: str) -> dict[str, Any]:
+        # Deterministic, goal-specific fallback (avoid generic Coordinator/Worker).
+        goal_l = (goal_text or "").lower()
+        prefix = "Data"
+        if any(k in goal_l for k in ["moon", "lunar", "orbital", "space"]):
+            prefix = "LunarData"
+        elif "email" in goal_l:
+            prefix = "Email"
+        elif "code" in goal_l or "repo" in goal_l:
+            prefix = "Code"
+        return {
+            "architecture_class": "hierarchical_orchestrator",
+            "architecture_class_reason": "",
+            "tradeoffs": [
+                {
+                    "decision": "Use a small specialist team",
+                    "alternatives": ["Single agent"],
+                    "why": "Separation of concerns improves reliability.",
+                }
+            ],
+            "overview": f"Architecture for: {goal_text[:200]}",
+            "agents": [
+                {
+                    "id": f"{prefix.lower()}_ingestor",
+                    "name": f"{prefix}Ingestor",
+                    "responsibility": "Ingest and normalize inputs",
+                    "tools": [],
+                    "subagents": [],
+                    "inputs": ["raw inputs"],
+                    "outputs": ["normalized artifacts"],
+                    "memory_owned": [],
+                    "failure_modes": [],
+                    "safeguards": [],
+                    "degrades_to": "Pass-through",
+                },
+                {
+                    "id": f"{prefix.lower()}_analyzer",
+                    "name": f"{prefix}Analyzer",
+                    "responsibility": "Analyze and extract key signals",
+                    "tools": [],
+                    "subagents": [],
+                    "inputs": ["normalized artifacts"],
+                    "outputs": ["analysis artifacts"],
+                    "memory_owned": [],
+                    "failure_modes": [],
+                    "safeguards": [],
+                    "degrades_to": "Heuristic analysis",
+                },
+                {
+                    "id": f"{prefix.lower()}_dispatcher",
+                    "name": f"{prefix}Dispatcher",
+                    "responsibility": "Package and route outputs to downstream systems",
+                    "tools": [],
+                    "subagents": [],
+                    "inputs": ["analysis artifacts"],
+                    "outputs": ["final package"],
+                    "memory_owned": [],
+                    "failure_modes": [],
+                    "safeguards": [],
+                    "degrades_to": "Deliver partial results",
+                },
+            ],
+            "tools": [],
+            "interactions": [
+                {
+                    "source": f"{prefix.lower()}_ingestor",
+                    "target": f"{prefix.lower()}_analyzer",
+                    "kind": "routes",
+                    "label": "Normalized data",
+                },
+                {
+                    "source": f"{prefix.lower()}_analyzer",
+                    "target": f"{prefix.lower()}_dispatcher",
+                    "kind": "returns",
+                    "label": "Analysis results",
+                },
+            ],
+            "memory": {},
+            "control_loop": {
+                "flow": f"START -> {prefix}Ingestor -> {prefix}Analyzer -> {prefix}Dispatcher -> END",
+                "termination_conditions": ["All required outputs produced"],
+            },
+            "bounded_autonomy": {"constraints": [], "permission_gates": [], "human_in_loop": []},
+            "implementation_notes": ["Minimal fallback used because architecture model call failed."],
+            "start_simple_recommendation": "Implement the three-agent pipeline first; expand roles as needed.",
+        }
+
     architecture: dict[str, Any] = {}
-    for attempt in range(max_retries + 1):
-        try:
-            brain = make_brain()
-            messages = [
-                SystemMessage(content="You are an expert system architect specializing in agentic AI systems. Generate precise, goal-specific architectures. Return only valid JSON."),
-                HumanMessage(content=prompt),
-            ]
-            response = brain.invoke(messages)
-            response_text = response.content.strip()
-            
-            # Track tokens
-            if hasattr(response, "response_metadata"):
-                usage = response.response_metadata.get("token_usage", {})
-                record_node_tokens(
-                    run_id,
-                    "architecture_generator_node",
-                    usage.get("prompt_tokens", 0),
-                    usage.get("completion_tokens", 0),
-                    usage.get("total_tokens", 0),
+    try:
+        messages = [
+            SystemMessage(
+                content=(
+                    "You are an expert system architect specializing in agentic AI systems.\n"
+                    "Return a response that matches the required schema. Do not include markdown or extra text."
                 )
-            
-            # Parse response - handle markdown code blocks
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                response_text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-            
-            architecture = json.loads(response_text)
-            
-            # Validate architecture
-            validation_errors = []
-            agents = architecture.get("agents", [])
-            tools = architecture.get("tools", [])
-            interactions = architecture.get("interactions", [])
-            arch_class = architecture.get("architecture_class")
-            arch_class_reason = architecture.get("architecture_class_reason")
-            tradeoffs = architecture.get("tradeoffs", [])
-            
-            if len(agents) < 2:
-                validation_errors.append("Architecture must have at least 2 agents")
+            ),
+            HumanMessage(content=prompt),
+        ]
 
-            allowed_arch_classes = {
-                "hierarchical_orchestrator",
-                "supervisor_worker",
-                "planner_executor_evaluator_loop",
-                "hybrid",
-            }
-            if arch_class not in allowed_arch_classes:
-                validation_errors.append(
-                    "architecture_class must be one of: hierarchical_orchestrator|supervisor_worker|planner_executor_evaluator_loop|hybrid"
-                )
-            if arch_class == "hybrid" and not isinstance(arch_class_reason, str):
-                validation_errors.append("architecture_class_reason is required when architecture_class=hybrid")
+        spec = call_llm_structured(messages, ArchitectureSpec, retries=max_retries)
+        architecture = spec.model_dump()
 
-            if not isinstance(tradeoffs, list) or not tradeoffs:
-                validation_errors.append("tradeoffs must be a non-empty list of explicit trade-offs")
-            else:
-                for t in tradeoffs[:20]:
-                    if not isinstance(t, dict):
-                        validation_errors.append("tradeoffs entries must be objects")
-                        break
-                    if not t.get("decision") or not t.get("why") or not isinstance(t.get("alternatives"), list):
-                        validation_errors.append("tradeoffs entries must include decision, alternatives[], and why")
-                        break
-            
-            # Check for generic names
-            generic_names = {"planner", "executor", "critic", "agent", "worker", "coordinator"}
-            for agent in agents:
-                name = (agent.get("name") or "").lower()
-                if name in generic_names:
-                    validation_errors.append(f"Agent name '{agent.get('name')}' is too generic")
-            for agent in agents:
-                if not isinstance(agent, dict):
-                    continue
-                if not isinstance(agent.get("inputs"), list):
-                    validation_errors.append(f"Agent '{agent.get('id')}' missing inputs[]")
-                if not isinstance(agent.get("outputs"), list):
-                    validation_errors.append(f"Agent '{agent.get('id')}' missing outputs[]")
-                if not isinstance(agent.get("memory_owned"), list):
-                    validation_errors.append(f"Agent '{agent.get('id')}' missing memory_owned[]")
-                if not isinstance(agent.get("failure_modes"), list) or not agent.get("failure_modes"):
-                    validation_errors.append(f"Agent '{agent.get('id')}' must include non-empty failure_modes[]")
-                if not isinstance(agent.get("safeguards"), list) or not agent.get("safeguards"):
-                    validation_errors.append(f"Agent '{agent.get('id')}' must include non-empty safeguards[]")
-                if not isinstance(agent.get("degrades_to"), str) or not agent.get("degrades_to"):
-                    validation_errors.append(f"Agent '{agent.get('id')}' missing degrades_to")
-                mem_owned = agent.get("memory_owned")
-                if isinstance(mem_owned, list):
-                    for mo in mem_owned[:12]:
-                        if not isinstance(mo, dict):
-                            validation_errors.append(f"Agent '{agent.get('id')}' memory_owned entries must be objects")
-                            break
-                        if mo.get("type") not in {"short_term", "long_term", "episodic", "semantic"}:
-                            validation_errors.append(
-                                f"Agent '{agent.get('id')}' memory_owned.type must be short_term|long_term|episodic|semantic"
-                            )
-                            break
-                        if not mo.get("purpose") or not mo.get("implementation"):
-                            validation_errors.append(
-                                f"Agent '{agent.get('id')}' memory_owned entries must include purpose and implementation"
-                            )
-                            break
-            for agent in agents:
-                if not isinstance(agent, dict):
-                    continue
-                raw_subagents = agent.get("subagents")
-                if raw_subagents is None:
-                    agent["subagents"] = []
-                    continue
-                if isinstance(raw_subagents, list):
-                    normalized: list[str] = []
-                    for entry in raw_subagents:
-                        if isinstance(entry, str) and entry.strip():
-                            normalized.append(entry.strip())
-                        elif isinstance(entry, dict):
-                            cid = (entry.get("id") or entry.get("name") or "").strip()
-                            if cid:
-                                normalized.append(cid)
-                    agent["subagents"] = normalized[:10]
-                else:
-                    agent["subagents"] = []
-            agent_ids = {a.get("id") for a in agents if isinstance(a, dict) and a.get("id")}
-            tool_ids = {t.get("id") for t in tools if isinstance(t, dict) and t.get("id")}
-            valid_ids = agent_ids | tool_ids
-            if not isinstance(interactions, list) or not interactions:
-                validation_errors.append("Architecture must include a non-empty interactions[] list (explicit edges)")
-            else:
-                bad_edges = 0
-                for e in interactions[:120]:
-                    if not isinstance(e, dict):
-                        bad_edges += 1
-                        continue
-                    src = e.get("source")
-                    tgt = e.get("target")
-                    if not isinstance(src, str) or not isinstance(tgt, str):
-                        bad_edges += 1
-                        continue
-                    if src not in valid_ids or tgt not in valid_ids:
-                        bad_edges += 1
-                if bad_edges:
-                    validation_errors.append(f"interactions[] has {bad_edges} invalid edge(s) (bad/missing endpoints)")
-            
-            if validation_errors and attempt < max_retries:
-                notes.append(f"Attempt {attempt + 1} validation failed: {validation_errors}")
-                # Add stronger instruction for retry
-                prompt += f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n" + "\n".join(validation_errors) + "\n\nFix these issues in your response."
-                continue
-            elif validation_errors:
-                notes.append(f"Validation warnings (final attempt): {validation_errors}")
-                break
-            notes.append(f"Generated architecture with {len(agents)} agents and {len(architecture.get('tools', []))} tools")
-            break
-            
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse architecture JSON (attempt {attempt + 1}): {e}")
-            if attempt < max_retries:
-                notes.append(f"JSON parse error on attempt {attempt + 1}, retrying")
-                prompt += "\n\nIMPORTANT: Your previous response was not valid JSON. Return ONLY a valid JSON object."
-                continue
-            notes.append(f"JSON parse error after {max_retries + 1} attempts")
-            architecture = _build_fallback_architecture(goal, selected_patterns)
-            notes.append("Using fallback architecture due to parse errors")
-            break
-        except Exception as e:
-            logger.warning(f"LLM call failed in architecture_generator_node: {e}")
-            notes.append(f"LLM error: {str(e)[:100]}")
-            architecture = _build_fallback_architecture(goal, selected_patterns)
-            notes.append("Using fallback architecture due to LLM error")
-            break
-    else:
-        # Loop exhausted without break (shouldn't normally happen but keep defensive fallback)
-        if not architecture:
-            architecture = _build_fallback_architecture(goal, selected_patterns)
-            notes.append("Fallback architecture generated after retries exhausted")
+        # If still too generic, nudge once more (semantic retry).
+        if is_generic_architecture(architecture):
+            spec = call_llm_structured(
+                messages
+                + [
+                    SystemMessage(
+                        content=(
+                            "Your last architecture was too generic (names like coordinator/worker/planner).\n"
+                            "Make names and responsibilities goal-specific. Keep the same schema."
+                        )
+                    )
+                ],
+                ArchitectureSpec,
+                retries=1,
+            )
+            architecture = spec.model_dump()
+
+        ok, errs = validate_architecture_output(architecture)
+        if not ok and errs:
+            notes.append(f"Architecture validation warnings: {errs[:6]}")
+
+        agents = architecture.get("agents", []) if isinstance(architecture, dict) else []
+        tools = architecture.get("tools", []) if isinstance(architecture, dict) else []
+        notes.append(f"Generated architecture with {len(agents)} agents and {len(tools)} tools")
+    except Exception as e:
+        logger.warning(f"architecture_generator_node structured call failed: {e}")
+        notes.append(f"LLM structured error: {str(e)[:140]}")
+        architecture = _goal_specific_minimal_architecture(goal)
+        notes.append("Using goal-specific minimal architecture due to structured output failure")
     
     result = {
         "status": "completed" if architecture.get("agents") else "skipped",
@@ -2510,149 +2471,141 @@ def _build_fallback_architecture(goal: str, selected_patterns: list) -> dict:
 
 
 def output_formatter_node(state: State) -> Dict[str, Any]:
-    design_state = state.get("design_state") or {}
-    goal = _coerce_str(state.get("goal"), max_len=300) or "System"
-    
-    # Get architecture from design_state
-    architecture_data = design_state.get("architecture") or {}
-    architecture = architecture_data.get("architecture") or state.get("architecture_output") or {}
-    
-    notes: list[str] = []
-    
-    # Extract architecture components
-    overview = architecture.get("overview", "Architecture design for the specified goal.")
-    agents = architecture.get("agents", [])
-    tools = architecture.get("tools", [])
-    memory = architecture.get("memory", {})
-    control_loop = architecture.get("control_loop", {})
-    bounded_autonomy = architecture.get("bounded_autonomy", {})
-    implementation_notes = architecture.get("implementation_notes", [])
-    start_simple = architecture.get("start_simple_recommendation", "")
-    
-    # Build markdown output
-    output_parts = []
-    
-    # Title and Overview
-    output_parts.append(f"# Architecture Design: {goal}\n")
-    output_parts.append(f"## Overview\n{overview}\n")
-    
-    # Agents Table
-    output_parts.append("## Agents\n")
-    if agents:
-        output_parts.append("| Agent | Responsibility | Tools |")
-        output_parts.append("|-------|----------------|-------|")
-        for agent in agents:
-            name = agent.get("name", "Unknown")
-            responsibility = agent.get("responsibility", "")[:100]
-            agent_tools = ", ".join(agent.get("tools", [])[:3]) or "None"
-            output_parts.append(f"| **{name}** | {responsibility} | {agent_tools} |")
-        output_parts.append("")
+    from datetime import datetime, timezone
+    import re
+
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _to_id(text: str) -> str:
+        raw = (text or "").strip().lower()
+        raw = re.sub(r"[^a-z0-9]+", "_", raw)
+        raw = raw.strip("_")
+        return raw or "agent"
+
+    goal = _coerce_str(state.get("goal"), max_len=500) or "System"
+    design_state = state.get("design_state") if isinstance(state.get("design_state"), dict) else {}
+    architecture_data = design_state.get("architecture") if isinstance(design_state.get("architecture"), dict) else {}
+    architecture = architecture_data.get("architecture") if isinstance(architecture_data.get("architecture"), dict) else None
+    if not architecture:
+        architecture = state.get("architecture_output") if isinstance(state.get("architecture_output"), dict) else {}
+
+    agents_raw = architecture.get("agents") if isinstance(architecture, dict) else []
+    interactions_raw = architecture.get("interactions") if isinstance(architecture, dict) else []
+
+    blueprint_agents: list[dict] = []
+    agent_ids: list[str] = []
+
+    if isinstance(agents_raw, list):
+        for a in agents_raw:
+            if not isinstance(a, dict):
+                continue
+            name = _coerce_str(a.get("name"), max_len=80) or "Agent"
+            aid = _coerce_str(a.get("id"), max_len=64) or _to_id(name)
+            responsibility = _coerce_str(a.get("responsibility"), max_len=240) or ""
+
+            if aid in agent_ids:
+                # De-dupe deterministically
+                suffix = 2
+                while f"{aid}_{suffix}" in agent_ids:
+                    suffix += 1
+                aid = f"{aid}_{suffix}"
+
+            agent_ids.append(aid)
+            blueprint_agents.append(
+                {
+                    "id": aid,
+                    "name": name,
+                    "role": responsibility or f"Contributes to: {goal[:160]}",
+                    "responsibilities": [responsibility] if responsibility else [],
+                }
+            )
+
+    # Choose a “main” agent for a minimal control path
+    main_agent_id = agent_ids[0] if agent_ids else None
+    for a in blueprint_agents:
+        nm = (a.get("name") or "").lower()
+        if "coordinator" in nm or "supervisor" in nm:
+            main_agent_id = a.get("id")
+            break
+
+    # Graph nodes: use stable node ids to avoid collisions with start/end
+    node_for_agent: dict[str, str] = {aid: f"agent_{aid}" for aid in agent_ids}
+    nodes: list[dict] = [{"id": "start", "type": "start", "label": "Start"}, {"id": "end", "type": "end", "label": "End"}]
+    for a in blueprint_agents:
+        aid = a["id"]
+        nodes.append(
+            {
+                "id": node_for_agent[aid],
+                "type": "agent",
+                "label": a.get("name") or aid,
+                "agent_id": aid,
+            }
+        )
+
+    edges: list[dict] = []
+
+    # Map existing interactions agent->agent into edges (ignore tool nodes for now)
+    if isinstance(interactions_raw, list):
+        for it in interactions_raw:
+            if not isinstance(it, dict):
+                continue
+            src = _coerce_str(it.get("source"), max_len=64)
+            tgt = _coerce_str(it.get("target"), max_len=64)
+            kind_raw = _coerce_str(it.get("kind"), max_len=32) or ""
+            label = _coerce_str(it.get("label"), max_len=120)
+            if not src or not tgt:
+                continue
+            if src not in node_for_agent or tgt not in node_for_agent:
+                continue
+
+            kind = "control"
+            if "return" in kind_raw or "result" in kind_raw:
+                kind = "data"
+            if "hitl" in kind_raw or "human" in kind_raw:
+                kind = "hitl"
+            # treat delegation as control
+            if "delegat" in kind_raw or "supervis" in kind_raw:
+                kind = "control"
+
+            edges.append(
+                {
+                    "source": node_for_agent[src],
+                    "target": node_for_agent[tgt],
+                    "kind": kind,
+                    "label": label or None,
+                }
+            )
+
+    # Guarantee a minimal control path so the UI can always render something.
+    if main_agent_id:
+        edges.append({"source": "start", "target": node_for_agent[main_agent_id], "kind": "control", "label": "start"})
+        edges.append({"source": node_for_agent[main_agent_id], "target": "end", "kind": "control", "label": "finish"})
     else:
-        output_parts.append("*No agents defined in architecture.*\n")
-    
-    # Tools Table
-    output_parts.append("## Tools\n")
-    if tools:
-        output_parts.append("| Tool | Type | I/O Schema | Failure Handling |")
-        output_parts.append("|------|------|------------|------------------|")
-        for tool in tools:
-            name = tool.get("name", "Unknown")
-            tool_type = tool.get("type", "other")
-            io_schema = tool.get("io_schema", "")[:50]
-            failure = tool.get("failure_handling", "")[:40]
-            output_parts.append(f"| **{name}** | {tool_type} | {io_schema} | {failure} |")
-        output_parts.append("")
-    else:
-        output_parts.append("*No tools defined in architecture.*\n")
-    
-    # Memory Architecture
-    output_parts.append("## Memory Architecture\n")
-    if memory:
-        for mem_type, mem_config in memory.items():
-            if isinstance(mem_config, dict):
-                purpose = mem_config.get("purpose", "")
-                impl = mem_config.get("implementation", "")
-                output_parts.append(f"### {mem_type.replace('_', ' ').title()}")
-                output_parts.append(f"- **Purpose:** {purpose}")
-                output_parts.append(f"- **Implementation:** {impl}\n")
-    else:
-        output_parts.append("*No memory architecture defined.*\n")
-    
-    # Control Loop
-    output_parts.append("## Control Loop\n")
-    if control_loop:
-        flow = control_loop.get("flow", "Not specified")
-        termination = control_loop.get("termination_conditions", [])
-        output_parts.append(f"**Flow:** `{flow}`\n")
-        if termination:
-            output_parts.append("**Termination Conditions:**")
-            for cond in termination:
-                output_parts.append(f"- {cond}")
-        output_parts.append("")
-    else:
-        output_parts.append("*No control loop defined.*\n")
-    
-    # Bounded Autonomy (Safety)
-    output_parts.append("## Safety & Bounded Autonomy\n")
-    if bounded_autonomy:
-        constraints = bounded_autonomy.get("constraints", [])
-        permission_gates = bounded_autonomy.get("permission_gates", [])
-        human_in_loop = bounded_autonomy.get("human_in_loop", [])
-        
-        if constraints:
-            output_parts.append("### Constraints")
-            output_parts.append("| Constraint | Value | Action on Breach |")
-            output_parts.append("|------------|-------|------------------|")
-            for c in constraints:
-                if isinstance(c, dict):
-                    output_parts.append(f"| {c.get('constraint', '')} | {c.get('value', '')} | {c.get('action_on_breach', '')} |")
-            output_parts.append("")
-        
-        if permission_gates:
-            output_parts.append("### Permission Gates (Require Approval)")
-            for gate in permission_gates:
-                output_parts.append(f"- {gate}")
-            output_parts.append("")
-        
-        if human_in_loop:
-            output_parts.append("### Human-in-the-Loop Scenarios")
-            for scenario in human_in_loop:
-                output_parts.append(f"- {scenario}")
-            output_parts.append("")
-    else:
-        output_parts.append("*No safety constraints defined.*\n")
-    
-    # Implementation Notes
-    output_parts.append("## Implementation Notes\n")
-    if implementation_notes:
-        for note in implementation_notes:
-            output_parts.append(f"- {note}")
-        output_parts.append("")
-    else:
-        output_parts.append("*No implementation notes provided.*\n")
-    
-    # Start Simple Recommendation
-    if start_simple:
-        output_parts.append("## Getting Started\n")
-        output_parts.append(f"> **Recommendation:** {start_simple}\n")
-    
-    # Combine all parts
-    output = "\n".join(output_parts)
-    notes.append(f"Formatted output with {len(agents)} agents, {len(tools)} tools")
-    
-    result = {
-        "status": "completed",
-        "formatted_output": output,
-        "notes": notes,
+        edges.append({"source": "start", "target": "end", "kind": "control", "label": "finish"})
+
+    blueprint = {
+        "version": "v1",
+        "generated_at": _now_iso(),
+        "goal": goal,
+        "agents": blueprint_agents,
+        "graph": {
+            "nodes": nodes,
+            "edges": edges,
+            "entry_point": "start",
+            "exit_points": ["end"],
+        },
     }
-    
-    # Store result in design_state.output for design_agent to aggregate
-    existing_design_state = state.get("design_state") or {}
-    existing_design_state["output"] = result
-    
+
+    # Keep design_state.output only as a status marker for pipeline routing; do not persist formatted output.
+    existing_design_state = state.get("design_state") if isinstance(state.get("design_state"), dict) else {}
+    updated_design_state = dict(existing_design_state)
+    updated_design_state["output"] = {"status": "completed", "notes": ["Built blueprint output (canonical)."]}
+
     return {
-        "design_state": existing_design_state,
-        "output": output,
+        "design_state": updated_design_state,
+        "blueprint": blueprint,
+        "output": "",
     }
 
 
@@ -3819,16 +3772,7 @@ def evals_agent(state: State) -> Dict[str, any]:
         elif notes:
             eval_state["notes"] = _append_eval_note(eval_state.get("notes", []), notes)
     eval_state["status"] = telemetry_status if telemetry_status else "completed"
-    existing_design_state = state.get("design_state") if isinstance(state.get("design_state"), dict) else {}
-    updated_design_state = dict(existing_design_state)
-    tmp_state: State = dict(state)  # type: ignore[assignment]
-    tmp_state["eval_state"] = eval_state
-    tmp_state["design_state"] = updated_design_state
-    updated_design_state["asc_v1"] = _build_asc_v1(tmp_state)
-    updated_design_state["asc_v11"] = _build_asc_v11(tmp_state)
-
     return {
         "eval_state": eval_state,
-        "design_state": updated_design_state,
         "run_phase": "done",
     }

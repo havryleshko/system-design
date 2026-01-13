@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import CubeLoader from "./CubeLoader";
-import ResultsV2 from "./ResultsV2";
+import Results from "./Results";
 import PlaceholderTab from "./PlaceholderTab";
 
 type TabId = "results" | "notebook" | "reasoning" | "download";
@@ -32,7 +32,6 @@ export default function AgentDashboard({
   runStatus,
   onCancel,
   onShare,
-  onNewAnalysis,
 }: AgentDashboardProps) {
   const [showBanner, setShowBanner] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("results");
@@ -56,9 +55,6 @@ export default function AgentDashboard({
     if (finalMarkdown) return finalMarkdown;
     const valuesOutput = typeof (values as any)?.output === "string" ? ((values as any).output as string) : null;
     if (valuesOutput) return valuesOutput;
-    const designOutput = (values?.design_state as any)?.output?.formatted_output;
-    if (typeof designOutput === "string") return designOutput;
-    
     return null;
   };
   
@@ -138,19 +134,17 @@ export default function AgentDashboard({
       case "results":
 
         return (
-          <ResultsV2
-            output={output}
-            startedAt={startedAt}
+          <Results
             values={values}
             runStatus={runStatus}
           />
         );
       case "notebook":
-        return <PlaceholderTab title="Notebook" note="Tab reset for Results V2 rebuild." />;
+        return <PlaceholderTab title="Notebook" note="Soon" />;
       case "reasoning":
-        return <PlaceholderTab title="Reasoning" note="Tab reset for Results V2 rebuild." />;
+        return <PlaceholderTab title="Reasoning" note="Soon" />;
       case "download":
-        return <PlaceholderTab title="Download" note="Exports will be rebuilt after Results V2." />;
+        return <PlaceholderTab title="Download" note="Soon" />;
       default:
         return null;
     }
@@ -285,21 +279,6 @@ export default function AgentDashboard({
             </svg>
             Share
           </button>
-
-          {/* New Analysis Button (only show when results are ready) */}
-          {isComplete && onNewAnalysis && (
-            <button
-              type="button"
-              onClick={onNewAnalysis}
-              className="flex items-center gap-1.5 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition-all hover:shadow-[0_0_12px_rgba(139,90,43,0.3)]"
-            >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14" />
-                <path d="M5 12h14" />
-              </svg>
-              New Analysis
-            </button>
-          )}
         </div>
 
         {/* Tab Bar */}

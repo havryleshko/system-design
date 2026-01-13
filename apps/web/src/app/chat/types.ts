@@ -71,4 +71,53 @@ export type ClarifierPrompt = {
   threadId: string | null;
 };
 
+export type BlueprintToolAccess = {
+  tool_id: string;
+  scopes?: string[];
+  usage_notes?: string | null;
+};
+
+export type BlueprintAgent = {
+  id: string;
+  name: string;
+  role: string;
+  responsibilities?: string[];
+  inputs?: string[];
+  outputs?: string[];
+  reports_to?: string | null;
+  subagents?: string[];
+  model?: string | null;
+  tools?: BlueprintToolAccess[];
+};
+
+export type BlueprintGraphNode = {
+  id: string;
+  type?: "agent" | "start" | "end";
+  label?: string;
+  agent_id?: string | null;
+};
+
+export type BlueprintGraphEdge = {
+  source: string;
+  target: string;
+  kind?: "control" | "data" | "hitl";
+  label?: string;
+  condition?: string;
+};
+
+export type BlueprintGraph = {
+  nodes: BlueprintGraphNode[];
+  edges: BlueprintGraphEdge[];
+  entry_point?: string | null;
+  exit_points?: string[];
+};
+
+export type Blueprint = {
+  version: "v1";
+  generated_at: string;
+  goal: string;
+  agents: BlueprintAgent[];
+  graph: BlueprintGraph;
+};
+
 

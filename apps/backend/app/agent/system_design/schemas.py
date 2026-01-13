@@ -1,5 +1,7 @@
 
-from typing import TypedDict, Literal, Optional
+from typing import TypedDict, Literal, Optional, List
+
+from pydantic import BaseModel, Field
 
 
 class ArchitectureTradeoff(TypedDict, total=False):
@@ -272,6 +274,66 @@ class AgentSystemContractV1(TypedDict, total=False):
     research: ASCResearch
     quality: ASCQuality
     build: ASCBuild
+
+
+# ---------------------------------------------------------------------------
+# ArchitectureSpec (structured output for architecture_generator_node)
+# ---------------------------------------------------------------------------
+
+
+class ArchitectureMemoryOwned(BaseModel):
+    type: Literal["short_term", "long_term", "episodic", "semantic"] = "short_term"
+    purpose: str = ""
+    implementation: str = ""
+
+
+class ArchitectureAgent(BaseModel):
+    id: str = Field(..., description="unique agent id")
+    name: str = Field(..., description="goal-specific agent name")
+    responsibility: str = Field(..., description="what this agent does")
+    tools: List[str] = Field(default_factory=list)
+    subagents: List[str] = Field(default_factory=list)
+    inputs: List[str] = Field(default_factory=list)
+    outputs: List[str] = Field(default_factory=list)
+    memory_owned: List[ArchitectureMemoryOwned] = Field(default_factory=list)
+    failure_modes: List[str] = Field(default_factory=list)
+    safeguards: List[str] = Field(default_factory=list)
+    degrades_to: str = ""
+
+
+class ArchitectureTool(BaseModel):
+    id: str
+    name: str
+    type: str = "other"
+    io_schema: str = ""
+    failure_handling: str = ""
+
+
+class ArchitectureInteraction(BaseModel):
+    source: str
+    target: str
+    kind: str = "delegates"
+    label: Optional[str] = None
+
+
+class ArchitectureSpec(BaseModel):
+    architecture_class: Literal[
+        "hierarchical_orchestrator",
+        "supervisor_worker",
+        "planner_executor_evaluator_loop",
+        "hybrid",
+    ]
+    architecture_class_reason: str = ""
+    tradeoffs: List[ArchitectureTradeoff] = Field(default_factory=list)
+    overview: str = ""
+    agents: List[ArchitectureAgent] = Field(default_factory=list)
+    tools: List[ArchitectureTool] = Field(default_factory=list)
+    interactions: List[ArchitectureInteraction] = Field(default_factory=list)
+    memory: dict = Field(default_factory=dict)
+    control_loop: dict = Field(default_factory=dict)
+    bounded_autonomy: dict = Field(default_factory=dict)
+    implementation_notes: List[str] = Field(default_factory=list)
+    start_simple_recommendation: str = ""
 
 
 class AgentSystemContractV11(TypedDict, total=False):

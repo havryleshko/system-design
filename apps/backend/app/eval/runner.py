@@ -1,9 +1,5 @@
-"""Batch evaluation runner for the system design agent."""
-
 from __future__ import annotations
-
 import argparse
-import importlib
 import json
 import sys
 from dataclasses import asdict
@@ -12,21 +8,13 @@ from typing import Iterable, List
 from uuid import uuid4
 from app.eval.judge import LLMJudge
 from app.eval.scenarios import Scenario, ScenarioResult, load_scenarios
-
-
-def _invoke_graph(state: dict):
-    graph_module = importlib.import_module("app.agent.system_design.graph")
-    graph = getattr(graph_module, "graph")
-    return graph.invoke(state)
+from app.agent.blueprint.generate import generate_blueprint
 
 
 def run_scenario(scenario: Scenario, judge: LLMJudge) -> ScenarioResult:
-    initial_state = {
-        "messages": [{"role": "user", "content": scenario.prompt}],
-        "metadata": {"run_id": str(uuid4())},
-    }
-    result_state = _invoke_graph(initial_state)
-    output = str(result_state.get("output") or "").strip()
+    _ = uuid4()  
+    blueprint = generate_blueprint(goal=scenario.prompt)
+    output = json.dumps(blueprint.model_dump(), ensure_ascii=False, indent=2)
     judgement = judge.judge(scenario.prompt, output, scenario.success_criteria)
     return ScenarioResult(
         scenario=scenario,

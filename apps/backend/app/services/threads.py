@@ -99,6 +99,28 @@ def _serialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _minimal_values_from_langgraph_state(*, goal: str, state_values: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Persist/send ONLY the canonical Results contract.
+    We intentionally drop all internal pipeline artifacts (design_state, traces, etc.).
+    """
+    blueprint = state_values.get("blueprint")
+    if not isinstance(blueprint, dict):
+        blueprint = {
+            "version": "v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "goal": goal,
+            "agents": [],
+            "graph": {"nodes": [{"id": "start", "type": "start", "label": "Start"}, {"id": "end", "type": "end", "label": "End"}], "edges": [{"source": "start", "target": "end", "kind": "control", "label": "finish"}], "entry_point": "start", "exit_points": ["end"]},
+        }
+    output = ""
+    return {
+        "goal": goal,
+        "blueprint": blueprint,
+        "output": output,
+    }
+
+
 async def _persist_failed_final_state(
     *,
     thread_id: str,
@@ -141,7 +163,11 @@ async def _persist_failed_final_state(
         )
     values["reasoning_trace"] = trace
 
-    serialized_values = _serialize_state(values)
+    # Persist minimal values even on failure (no ASC, no design_state).
+    goal = str(values.get("goal") or "")
+    minimal = _minimal_values_from_langgraph_state(goal=goal, state_values=values if isinstance(values, dict) else {})
+    minimal["error"] = error_message
+    serialized_values = _serialize_state(minimal)
     _run_execute(
         """
         update runs
@@ -387,10 +413,24 @@ async def _execute_run_body(
         "recursion_limit": 100,
     }
 
+    # IMPORTANT: checkpointer is keyed by thread_id, so state persists across runs.
+    # Reset run-scoped fields to avoid inheriting run_phase="done" / stale artifacts.
     initial_state = {
         "messages": [HumanMessage(content=user_input)],
         "goal": user_input,
         "metadata": meta,
+        "run_phase": "planner",
+        "output": "",
+        "design_state": {},
+        "research_state": {},
+        "plan_state": {},
+        "plan_scope": {},
+        "critic_state": {},
+        "eval_state": {},
+        "orchestrator": {},
+        "selected_patterns": [],
+        "reasoning_trace": [],
+        "blueprint": {},
     }
     _run_execute(
         "update runs set status = 'running', updated_at = now() where run_id = %s",
@@ -475,31 +515,10 @@ async def _execute_run_body(
             )
         final_state = await compiled_graph.ainvoke(initial_state, config=config)
 
-    # Extract final output
-    output = None
-    values = {}
-
-    if isinstance(final_state, dict):
-        values = final_state
-
-        output = final_state.get("output")
-        if not (isinstance(output, str) and output.strip()):
-            design_state = final_state.get("design_state", {})
-            design_output = design_state.get("output", {})
-            if isinstance(design_output, dict):
-                formatted = design_output.get("formatted_output")
-                if isinstance(formatted, str) and formatted.strip():
-                    output = formatted
-            if not output:
-                messages = final_state.get("messages", [])
-                if messages:
-                    last_msg = messages[-1]
-                    if hasattr(last_msg, "content"):
-                        output = str(last_msg.content)
-                    elif isinstance(last_msg, dict) and "content" in last_msg:
-                        output = str(last_msg["content"])
-
-    serialized_values = _serialize_state(values)
+    # Persist minimal values only: {goal, blueprint, output}
+    values: Dict[str, Any] = final_state if isinstance(final_state, dict) else {}
+    minimal_values = _minimal_values_from_langgraph_state(goal=user_input, state_values=values)
+    serialized_values = _serialize_state(minimal_values)
 
     _run_execute(
         """
@@ -519,7 +538,7 @@ async def _execute_run_body(
         await ws_queue.put({
             "type": "values-updated",
             "values": serialized_values,
-            "output": output,
+            "output": "",
             "run_id": run_id,
         })
 
@@ -532,8 +551,8 @@ async def _execute_run_body(
 
     return {
         "status": "completed",
-        "values": values,
-        "output": output,
+        "values": minimal_values,
+        "output": "",
     }
 
 
@@ -563,20 +582,8 @@ def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
 
     output = None
     if isinstance(final_state, dict):
-        output = final_state.get("output")
-        if not output:
-            design_state = final_state.get("design_state", {})
-            design_output = design_state.get("output", {})
-            if isinstance(design_output, dict):
-                output = design_output.get("formatted_output")
-        if not output and final_state.get("messages"):
-            messages = final_state.get("messages", [])
-            if messages:
-                last_msg = messages[-1]
-                if hasattr(last_msg, "content"):
-                    output = str(last_msg.content)
-                elif isinstance(last_msg, dict) and "content" in last_msg:
-                    output = str(last_msg["content"])
+        out = final_state.get("output")
+        output = out if isinstance(out, str) and out.strip() else None
 
     return {
         "thread_id": thread_id,
