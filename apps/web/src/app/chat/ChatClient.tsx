@@ -466,6 +466,12 @@ export default function ChatClient() {
     setError(null); // Clear any previous errors
   }, [resetSession]);
 
+  // Handler to start a brand new thread (same as new analysis, but also clears threadId)
+  const handleNewThread = useCallback(() => {
+    resetSession({ clearThread: true });
+    setError(null);
+  }, [resetSession]);
+
   // Handler to load a thread from the sidebar
   const handleSelectThread = useCallback(async (selectedThreadId: string) => {
     if (!session?.access_token) return;
@@ -530,6 +536,21 @@ export default function ChatClient() {
             </svg>
           </button>
         </div>
+
+          <button
+            type="button"
+            onClick={handleNewThread}
+            aria-label="Start a new thread"
+            className={`mb-3 inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-3 py-2 text-sm font-semibold text-white transition-all hover:shadow-[0_0_16px_rgba(139,90,43,0.3)] ${
+              collapsed ? "h-10 w-10 px-0" : "w-full"
+            }`}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
+            {!collapsed && <span>New thread</span>}
+          </button>
 
           <ThreadList
             token={session?.access_token ?? null}
@@ -622,6 +643,21 @@ export default function ChatClient() {
             </svg>
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={handleNewThread}
+          aria-label="Start a new thread"
+          className={`mb-3 inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-sm border border-[var(--accent)] bg-[var(--accent)] px-3 py-2 text-sm font-semibold text-white transition-all hover:shadow-[0_0_16px_rgba(139,90,43,0.3)] ${
+            collapsed ? "h-10 w-10 px-0" : "w-full"
+          }`}
+        >
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+          {!collapsed && <span>New thread</span>}
+        </button>
 
         <ThreadList
           token={session?.access_token ?? null}

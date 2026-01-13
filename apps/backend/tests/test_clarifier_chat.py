@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import types
 
-import app.agent.system_design.clarifier as clarifier
+import app.agent.clarifier as clarifier
 
 
 def test_clarifier_engine_questions(monkeypatch) -> None:
-    def fake_call_brain_structured(messages, schema, **kwargs):
+    def fake_call_llm_structured(messages, schema, **kwargs):
         return clarifier.ClarifierStructuredOutput(
             version="v1",
             type="question",
@@ -21,7 +21,7 @@ def test_clarifier_engine_questions(monkeypatch) -> None:
             assumptions=[],
         )
 
-    monkeypatch.setattr(clarifier, "call_brain_structured", fake_call_brain_structured)
+    monkeypatch.setattr(clarifier, "call_llm_structured", fake_call_llm_structured)
 
     out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_stop=False)
     assert out.kind == "active"
@@ -31,7 +31,7 @@ def test_clarifier_engine_questions(monkeypatch) -> None:
 
 
 def test_clarifier_engine_stop(monkeypatch) -> None:
-    def fake_call_brain_structured(messages, schema, **kwargs):
+    def fake_call_llm_structured(messages, schema, **kwargs):
         return clarifier.ClarifierStructuredOutput(
             version="v1",
             type="stop",
@@ -41,7 +41,7 @@ def test_clarifier_engine_stop(monkeypatch) -> None:
             assumptions=[],
         )
 
-    monkeypatch.setattr(clarifier, "call_brain_structured", fake_call_brain_structured)
+    monkeypatch.setattr(clarifier, "call_llm_structured", fake_call_llm_structured)
 
     out = clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=2, force_stop=True)
     assert out.kind == "finalized"
@@ -49,10 +49,10 @@ def test_clarifier_engine_stop(monkeypatch) -> None:
 
 
 def test_clarifier_engine_retry_then_error(monkeypatch) -> None:
-    def fake_call_brain_structured(messages, schema, **kwargs):
+    def fake_call_llm_structured(messages, schema, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(clarifier, "call_brain_structured", fake_call_brain_structured)
+    monkeypatch.setattr(clarifier, "call_llm_structured", fake_call_llm_structured)
 
     try:
         clarifier.run_clarifier(original_input="Build X", transcript=[], turn_count=0, force_stop=False)

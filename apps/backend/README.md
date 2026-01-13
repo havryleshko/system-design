@@ -1,10 +1,14 @@
 # Backend (FastAPI + LangGraph)
 
-LangGraph-powered API that orchestrates the system-design agent, handles Supabase-authenticated requests, and persists state/memory in Postgres.
+LangGraph-powered FastAPI API that:
+- accepts Supabase-authenticated requests
+- runs a multi-stage LangGraph pipeline (planner/research/design/critic/evals)
+- persists state with a Postgres checkpointer/store
+- returns a minimal UI contract: `values = { goal, blueprint, output }`
 
 ## Requirements
 - Python 3.12+
-- Postgres database URL for LangGraph store/checkpointer (Supabase Postgres works)
+- Postgres database URL (Supabase Postgres works)
 
 ## Setup
 1. Copy env template: `cp env.example .env`
@@ -22,7 +26,8 @@ LangGraph-powered API that orchestrates the system-design agent, handles Supabas
   # uvicorn app.main:app --reload
   ```
   - health endpoints: `GET /`, `GET /health/checkpointer`
-- **LangGraph Studio / langgraph dev**:
+
+- **LangGraph Studio / langgraph dev** (optional):
   ```bash
   langgraph dev
   # uses langgraph.json (graph: system_design_agent, env: .env, auth: app.auth:auth)
@@ -34,7 +39,7 @@ See `env.example` for the canonical list. Key values:
 | Variable | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY` | LLM calls |
-| `LANGGRAPH_PG_URL` | Required Postgres URL for LangGraph store/checkpointer |
+| `LANGGRAPH_PG_URL` | Required Postgres URL for LangGraph checkpointer/store and threads/runs persistence |
 | `SUPABASE_ANON_KEY` | Sent as `apikey` header when fetching JWKS |
 | `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` | Used to derive JWKS URL if not explicitly provided |
 | `SUPABASE_JWKS_URL` | Explicit JWKS endpoint (`https://<project>.supabase.co/auth/v1/.well-known/jwks.json`) |
@@ -47,12 +52,10 @@ See `env.example` for the canonical list. Key values:
 - Tokens are verified using `SUPABASE_JWT_SECRET` (HS256) or JWKS (ES256). Missing configuration results in `401 Authentication not configured`.
 
 ### LangGraph persistence
-- `LANGGRAPH_PG_URL` is mandatory. The backend calls `langgraph-checkpoint-postgres`’s `setup()` on startup to validate connectivity.
-- Memory/checkpointer partitioning depends on run metadata: always pass `user_id`, `thread_id`, and `run_id` when triggering runs in Studio or via the API.
+- `LANGGRAPH_PG_URL` is mandatory. `/health/checkpointer` verifies DB connectivity.
+- Persistence depends on `thread_id` (checkpointer key). The backend resets run-scoped fields at run start to avoid stale state reuse.
 
 ## Deploying
 - **VM (recommended for MVP)**: run FastAPI behind HTTPS (Caddy recommended) and set env vars from `env.example`.
-- **LangGraph Cloud / Studio** (optional): point to `langgraph.json`; ensure env vars are configured per workspace.
-
-After deploying, hit `/health/checkpointer` to verify database access, then run through `/threads/:id/runs/:run_id/resume` to ensure persistence works end-to-end.
+ 
 

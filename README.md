@@ -1,11 +1,11 @@
-# System Design Agent (LangGraph + Next.js)
+# System Design Agent (LangGraph + FastAPI + Next.js)
 
 ![Architecture](docs/arch.png)
 
-Build and run a system-design assistant that generates an architecture write-up plus structured outputs (`architecture_json`, `design_brief`) from a prompt. The backend is a LangGraph-powered agent with persistence; the web app is a Next.js UI.
+Build and run a system-design assistant that converts a use case prompt into a concrete **multi-agent architecture blueprint**. The backend is a **LangGraph-orchestrated** pipeline; the web app renders the blueprint primarily **visually (ReactFlow)** plus a small set of essential specifications.
 
 ## What’s in this repo
-- **`apps/backend`**: Python backend (LangGraph agent + API + Supabase JWT auth + Postgres checkpointer/store).
+- **`apps/backend`**: Python backend (FastAPI + LangGraph pipeline + Supabase JWT auth + Postgres checkpointer/store).
 - **`apps/web`**: Next.js UI (Supabase auth, optional Stripe billing hooks).
 - **`supabase/migrations`**: Database schema/migrations for Supabase/Postgres.
 
@@ -13,7 +13,7 @@ Build and run a system-design assistant that generates an architecture write-up 
 ### Prerequisites
 - **Python**: 3.12+ recommended
 - **Node**: recent LTS + **pnpm**
-- **Postgres**: a database URL for LangGraph persistence (Supabase Postgres works)
+- **Postgres**: a database URL for backend persistence (Supabase Postgres works)
 
 ### 1) Configure environment variables
 - **Backend**: copy `apps/backend/env.example` → `apps/backend/.env`
@@ -32,7 +32,7 @@ You have two useful modes:
 - **FastAPI mode (local API on `:8000`)**:
   - `cd apps/backend && make run`
   - Health endpoints: `GET /` and `GET /health/checkpointer`
-- **LangGraph Studio / LangGraph API mode**:
+- **LangGraph Studio / langgraph dev mode** (optional):
   - `cd apps/backend && langgraph dev`
   - This uses `apps/backend/langgraph.json` (graph: `system_design_agent`, env: `.env`, auth: `app.auth:auth`)
 
@@ -40,16 +40,10 @@ You have two useful modes:
 - `cd apps/web && pnpm dev`
 - Set `NEXT_PUBLIC_BACKEND_URL` if your backend is not running at `http://localhost:8000`.
 
-## Quickstart (LangGraph Studio)
-1) Set required env vars (see **Environment** below).  
-2) Launch LangGraph Studio pointing at the compiled graph (`apps/backend/langgraph.json`).  
-3) In Studio, set run metadata (`user_id`, `thread_id`, `run_id`) — persistence/memory depend on these.  
-4) Run the graph. The final response includes user-facing markdown in `output`; structured results live in `architecture_json` and `design_brief`.
-
 ## Environment
 ### Required (backend)
 - **`OPENAI_API_KEY`**
-- **`LANGGRAPH_PG_URL`**: Postgres for LangGraph store/checkpointer (required; the backend will fail fast if missing)
+- **`LANGGRAPH_PG_URL`**: Postgres for LangGraph checkpointer/store and threads/runs persistence (required; the backend will fail fast if missing)
 
 ### Required (Supabase auth)
 The backend validates Supabase JWTs.
@@ -71,13 +65,9 @@ The backend validates Supabase JWTs.
 - **`GITHUB_TOKEN`**: enables GitHub enrichment
 - **Stripe (web billing hooks)**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`
 
-## Persistence & memory
-- Episodic + semantic memory are stored via LangGraph’s Postgres store/checkpointer.
-- Persistence is gated by `metadata.user_id` (and `thread_id`/`run_id`); ensure these are set in Studio run metadata.
-
-## Agent flow (high level)
-Planner → Research → Design → Critic → Evals → Output formatter  
-The formatter emits user-facing markdown in `output` plus `architecture_json` and `design_brief` in state.
+## Output (high level)
+- The backend persists/sends a single structured object: `values.blueprint` (plus `goal` and `output`).
+- The frontend Results tab renders the blueprint graph via ReactFlow and lists agents/specs.
 
 ## Deployment notes
 - **Backend (FastAPI on a VM)**: deploy behind HTTPS (Caddy recommended) and ensure backend env vars are set. See `DEPLOY_DO.md`.
