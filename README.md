@@ -1,7 +1,7 @@
 ![Architecture Diagram](./docs/architecture.png)
 
 ### Overview
-This system is an experimental generator for multi-agent architecture blueprints, defining agent roles, tool configurations, and communication topologies using a self-correcting multi-agent orchestration pipeline. Built on LangGraph
+Generator for multi-agent architecture blueprints, defining agent roles, tool configurations, and communication topologies using a self-correcting multi-agent orchestration pipeline. Built on LangGraph
 
 ### Problem statement
 Engineers cannot reliably translate an agentic workflow idea into a correct deployable multi-agent system
@@ -32,4 +32,4 @@ Multi-agent design suffers from a high-dimensional search space: the optimal con
 3. In agentic systems, the graph structure is effectively the "compiled" logic; validating edges for reachability is as important as validating the prompts within the nodes.
 4. Every AI system has fundamentals, everything else is features. The industry is now in experimental mode, meaning this system will be unstable, I/O issue
 
-## Project is frozen for the time being but pull requests and tests are welcome
+## Pull requests and tests are welcome
